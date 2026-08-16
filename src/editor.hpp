@@ -77,6 +77,7 @@ public:
     Spotlight,
     Marker,
     Rectangle,
+    Ellipse,
     Redact,
     Text,
     Ocr,

@@ -50,6 +50,7 @@ struct Annotation {
     Highlighter,
     Marker,
     Rectangle,
+    Ellipse,
     Text,
     Redaction,
     Spotlight

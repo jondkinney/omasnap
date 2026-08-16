@@ -14,7 +14,7 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   capture stays in the window picker; Omasnap never substitutes a crop of the desktop.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
 - Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
-  rectangles, numbered markers, editable Neucha text, and secure redaction with
+  rectangles, ellipses, numbered markers, editable Neucha text, and secure redaction with
   opaque or randomized non-spatial mosaic output.
 - Per-layer preset or custom colors (including highlighter ink), undo/redo history,
   OCR-region capture,
@@ -247,13 +247,14 @@ Install the corresponding Tesseract language data before adding a language to
 | `I` | Eyedropper in the color popover · sample the image as the custom color |
 | `C` | Numbered marker |
 | `R` | Rectangle |
+| `E` | Ellipse |
 | `D` | Redact; press again to toggle randomized pixelation or solid redaction |
 | `T` | Neucha text |
 | `O` | Drag an OCR region and copy recognized text |
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size |
-| Hold `Shift` while dragging | Make rectangles and spotlights 1:1; snap lines and arrows to 45° |
+| Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap lines and arrows to 45° |
 | Double-click text | Reopen text editing |
 | `Delete` | Delete selected layer |
 | `Ctrl+Z` | Undo |

@@ -315,6 +315,12 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
     return;
   }
 
+  if (annotation.kind == Annotation::Kind::Ellipse) {
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QRectF(annotation.start, annotation.end).normalized());
+    return;
+  }
+
   if (annotation.kind == Annotation::Kind::Line) {
     painter.drawLine(annotation.start, annotation.end);
     return;
