@@ -256,6 +256,7 @@ Install the corresponding Tesseract language data before adding a language to
 | `1`–`6` | Set annotation color |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius) |
 | Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap lines and arrows to 45° |
+| Hold `Alt` while dragging | Center rectangles, ellipses, and spotlights on the press point; add `Shift` for a centered square/circle |
 | Double-click text | Reopen text editing |
 | `Delete` | Delete selected layer |
 | `Ctrl+Z` | Undo |
