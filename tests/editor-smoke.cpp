@@ -1152,9 +1152,10 @@ bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
 
   const Annotation toolbar =
       textAnnotation({325, 180}, QStringLiteral("Toolbar"));
-  // 118,92 is the arrow tool button: the toolbar row sits above the capture.
+  // 99,92 is the arrow tool button: the toolbar row sits above the capture,
+  // and the extra ellipse slot rescales the row to 21 buttons.
   QTest::keyClicks(QApplication::focusWidget(), toolbar.text);
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(118, 92));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(99, 92));
   QTest::mouseMove(&editor, QPoint(400, 300), 10);
   application.processEvents();
   if (!snapshotMatches(renderCapture(capture, selection, {clicked, toolbar},
@@ -1948,6 +1949,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
+/** Runs the interaction and rendering smoke checks. */
 /** Checks that a modifier left over from the launch binding is not believed.
  *  A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
  *  leaves that modifier held as the overlay takes keyboard focus. Its release
@@ -2297,6 +2299,190 @@ bool runEyedropperSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Runs the interaction and rendering smoke checks. */
+bool runEllipseRenderingCheck(QString &error) {
+  error = QStringLiteral("Ellipse rendering check failed");
+  CaptureData capture;
+  capture.monitor.scale = 1.0;
+  capture.monitor.pixelSize = {200, 100};
+  capture.source = QImage(200, 100, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::transparent);
+  capture.previewSize = capture.source.size();
+
+  Annotation ellipse;
+  ellipse.kind = Annotation::Kind::Ellipse;
+  ellipse.color = QColor(QStringLiteral("#ff375f"));
+  ellipse.size = 4;
+  ellipse.start = {20, 20};
+  ellipse.end = {180, 80};
+  const QImage rendered = renderCapture(capture, QRectF(0, 0, 200, 100),
+                                        {ellipse}, BackgroundStyle::None);
+  if (rendered.isNull())
+    return false;
+  // Stroke lands on the ellipse (bounding-box edge midpoints)...
+  for (const QPoint &onStroke :
+       {QPoint(100, 20), QPoint(100, 80), QPoint(20, 50), QPoint(180, 50)}) {
+    if (rendered.pixelColor(onStroke).alpha() < 200) {
+      error = QStringLiteral("Ellipse stroke missing at bounding-box edge");
+      return false;
+    }
+  }
+  // ...but not on the bounding-box corners (a rectangle would paint these)...
+  for (const QPoint &corner :
+       {QPoint(22, 22), QPoint(178, 22), QPoint(22, 78), QPoint(178, 78)}) {
+    if (rendered.pixelColor(corner).alpha() != 0) {
+      error = QStringLiteral("Ellipse painted its bounding-box corner");
+      return false;
+    }
+  }
+  // ...and the interior stays hollow.
+  if (rendered.pixelColor(100, 50).alpha() != 0) {
+    error = QStringLiteral("Ellipse interior was not hollow");
+    return false;
+  }
+  return true;
+}
+
+bool runEllipseToolSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+
+  // 600x400 selection shown 1:1 at widget offset (100, 105).
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const auto ellipseAnnotation = [](const QPointF &start, const QPointF &end) {
+    Annotation ellipse;
+    ellipse.kind = Annotation::Kind::Ellipse;
+    ellipse.start = start;
+    ellipse.end = end;
+    ellipse.color = QColor(QStringLiteral("#ff375f"));
+    ellipse.size = 4;
+    return ellipse;
+  };
+
+  QTest::keyClick(&editor, Qt::Key_E);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("E did not select the ellipse tool");
+    return false;
+  }
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(400, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(400, 300));
+  application.processEvents();
+  const Annotation ellipse = ellipseAnnotation({100, 95}, {300, 195});
+  if (!snapshotMatches(expected({ellipse}))) {
+    error = QStringLiteral("Dragged ellipse did not render as an ellipse");
+    return false;
+  }
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("Ellipse tool did not stay active after drawing");
+    return false;
+  }
+
+  // Shift keeps the bounding box 1:1 (a circle), extending the short axis.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                    QPoint(500, 200));
+  QTest::mouseMove(&editor, QPoint(560, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                      QPoint(560, 300));
+  application.processEvents();
+  const Annotation circle = ellipseAnnotation({400, 95}, {500, 195});
+  if (!snapshotMatches(expected({ellipse, circle}))) {
+    error = QStringLiteral("Shift-drag did not create a circle");
+    return false;
+  }
+
+  // Hollow hit-test: the bounding-box corner and the interior miss, the
+  // stroke hits (Delete only removes a selected layer).
+  QTest::keyClick(&editor, Qt::Key_V);
+  application.processEvents();
+  for (const QPoint &miss : {QPoint(203, 203), QPoint(300, 250)}) {
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, miss);
+    QTest::keyClick(&editor, Qt::Key_Delete);
+    application.processEvents();
+    if (!snapshotMatches(expected({ellipse, circle}))) {
+      error = QStringLiteral("Ellipse hit-test selected outside its stroke");
+      return false;
+    }
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected({circle}))) {
+    error = QStringLiteral("Ellipse stroke click did not select the layer");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({ellipse, circle}))) {
+    error = QStringLiteral("Undo did not restore the deleted ellipse");
+    return false;
+  }
+
+  // Selected ellipse moves with its whole (hollow) body like other layers.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::mouseMove(&editor, QPoint(320, 230), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(320, 230));
+  application.processEvents();
+  if (!snapshotMatches(
+          expected({ellipseAnnotation({120, 125}, {320, 225}), circle}))) {
+    error = QStringLiteral("Selected ellipse did not move");
+    return false;
+  }
+
+  // The toolbar button arms the tool too: ninth slot of 36 px buttons with
+  // 4 px gaps, the 840 px bar (kToolbarWidth) scaled to fit the 800 px window.
+  QTest::keyClick(&editor, Qt::Key_Escape);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::ArrowCursor) {
+    error = QStringLiteral("Escape did not return to Select");
+    return false;
+  }
+  constexpr qreal toolbarWidth = 840.0;
+  const qreal scale = std::min<qreal>(1.0, (800.0 - 16.0) / toolbarWidth);
+  const qreal toolbarX = (800.0 - toolbarWidth * scale) / 2.0;
+  const QPointF button(toolbarX + (8 * 40 + 18) * scale,
+                       105 - 36 * scale - 10 + 18 * scale);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, button.toPoint());
+  QTest::mouseMove(&editor, QPoint(300, 300), 20);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("Ellipse toolbar button did not arm the tool");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -2387,6 +2573,14 @@ int main(int argc, char **argv) {
   if (!runSelectOutsideCanvasSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 106;
+  }
+  if (!runEllipseRenderingCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 108;
+  }
+  if (!runEllipseToolSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 109;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

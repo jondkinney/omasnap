@@ -3,9 +3,9 @@
 Omasnap is a super fast, native Wayland screenshot and annotation overlay,
 built primarily for [Omarchy](https://omarchy.org) on Hyprland. It captures
 region, window, or full monitor, then opens an annotation editor with vector
-layers (arrows, lines, freehand, highlighter, rectangles, numbered markers,
-text, OCR). Finished captures go to clipboard, `~/Pictures/Screenshots`, or a
-pinned always-on-top layer surface.
+layers (arrows, lines, freehand, highlighter, rectangles, ellipses, numbered
+markers, text, OCR). Finished captures go to clipboard,
+`~/Pictures/Screenshots`, or a pinned always-on-top layer surface.
 
 ## Project principles
 

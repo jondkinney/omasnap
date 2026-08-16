@@ -86,6 +86,7 @@ public:
     Spotlight,
     Marker,
     Rectangle,
+    Ellipse,
     Redact,
     Cut,
     Text,

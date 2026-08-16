@@ -62,6 +62,8 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
                      QStringLiteral("1"));
   } else if (action == QStringLiteral("tool-rectangle")) {
     painter.drawRoundedRect(QRectF(4, 4, 16, 16), 2, 2);
+  } else if (action == QStringLiteral("tool-ellipse")) {
+    painter.drawEllipse(QRectF(3, 6, 18, 12));
   } else if (action == QStringLiteral("tool-redact")) {
     QPainterPath shield;
     shield.moveTo(12, 3);
