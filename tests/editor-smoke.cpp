@@ -909,6 +909,32 @@ bool runCreationConstraintCheck(QString &error) {
     error = QStringLiteral("Creation constraint changed an unrelated tool");
     return false;
   }
+
+
+  // Alt mirrors the end point through the press point so the shape is
+  // centered there; composed with Shift it yields a centered square/circle.
+  for (const CaptureEditor::Tool tool :
+       {CaptureEditor::Tool::Rectangle, CaptureEditor::Tool::Ellipse,
+        CaptureEditor::Tool::Spotlight}) {
+    if (centeredCreationStart(tool, start, QPointF(40, 30)) !=
+        QPointF(-20, -10)) {
+      error = QStringLiteral("Centered creation did not mirror the start");
+      return false;
+    }
+    if (centeredCreationStart(tool, start, square) != QPointF(-20, -20)) {
+      error = QStringLiteral(
+          "Centered creation did not compose with the 1:1 constraint");
+      return false;
+    }
+  }
+  for (const CaptureEditor::Tool tool :
+       {CaptureEditor::Tool::Arrow, CaptureEditor::Tool::Line,
+        CaptureEditor::Tool::Redact, CaptureEditor::Tool::Freehand}) {
+    if (centeredCreationStart(tool, start, QPointF(40, 30)) != start) {
+      error = QStringLiteral("Centered creation changed an unrelated tool");
+      return false;
+    }
+  }
   return true;
 }
 
@@ -2743,6 +2769,142 @@ bool runShapeFillToolSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+bool runCenteredCreationSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const auto shape = [](Annotation::Kind kind, const QPointF &start,
+                        const QPointF &end) {
+    Annotation annotation;
+    annotation.kind = kind;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+
+  // Alt held from the press: the ellipse is centered on the press point
+  // (widget (400,300) = annotation (300,195)) with the cursor on its corner.
+  QTest::keyClick(&editor, Qt::Key_E);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::AltModifier, QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(500, 350), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::AltModifier,
+                      QPoint(500, 350));
+  application.processEvents();
+  const Annotation centeredEllipse =
+      shape(Annotation::Kind::Ellipse, {200, 145}, {400, 245});
+  if (!snapshotMatches(expected({centeredEllipse}))) {
+    error = QStringLiteral("Alt-drag did not center the ellipse");
+    return false;
+  }
+
+  // Alt+Shift: centered square whose half-extent is the longer drag axis.
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton,
+                    Qt::AltModifier | Qt::ShiftModifier, QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(460, 340), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton,
+                      Qt::AltModifier | Qt::ShiftModifier, QPoint(460, 340));
+  application.processEvents();
+  const Annotation centeredSquare =
+      shape(Annotation::Kind::Rectangle, {240, 135}, {360, 255});
+  if (!snapshotMatches(expected({centeredEllipse, centeredSquare}))) {
+    error = QStringLiteral("Alt+Shift-drag did not create a centered square");
+    return false;
+  }
+
+  // Alt pressed mid-drag applies; released before the mouse it does not.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(250, 230), 20);
+  QTest::keyPress(&editor, Qt::Key_Alt);
+  application.processEvents();
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::AltModifier,
+                      QPoint(250, 230));
+  QTest::keyRelease(&editor, Qt::Key_Alt);
+  application.processEvents();
+  const Annotation midDrag =
+      shape(Annotation::Kind::Rectangle, {50, 65}, {150, 125});
+  if (!snapshotMatches(expected({centeredEllipse, centeredSquare, midDrag}))) {
+    error = QStringLiteral("Alt pressed mid-drag did not center the shape");
+    return false;
+  }
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::AltModifier, QPoint(600, 200));
+  QTest::mouseMove(&editor, QPoint(650, 230), 20);
+  QTest::keyRelease(&editor, Qt::Key_Alt);
+  application.processEvents();
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(650, 230));
+  application.processEvents();
+  const Annotation released =
+      shape(Annotation::Kind::Rectangle, {500, 95}, {550, 125});
+  if (!snapshotMatches(
+          expected({centeredEllipse, centeredSquare, midDrag, released}))) {
+    error = QStringLiteral("Alt released before the mouse still centered");
+    return false;
+  }
+
+  // Spotlight (Omasnap's own drag-rectangle shape) centers the same way.
+  QTest::keyClick(&editor, Qt::Key_S);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::AltModifier, QPoint(600, 400));
+  QTest::mouseMove(&editor, QPoint(660, 440), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::AltModifier,
+                      QPoint(660, 440));
+  application.processEvents();
+  Annotation spotlight =
+      shape(Annotation::Kind::Spotlight, {440, 255}, {560, 335});
+  spotlight.magnification = 2.0;
+  spotlight.spotlightShape = SpotlightShape::Ellipse;
+  if (!snapshotMatches(expected(
+          {centeredEllipse, centeredSquare, midDrag, released, spotlight}))) {
+    error = QStringLiteral("Alt-drag did not center the spotlight");
+    return false;
+  }
+
+  // Alt leaves lines alone.
+  QTest::keyClick(&editor, Qt::Key_L);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::AltModifier, QPoint(200, 400));
+  QTest::mouseMove(&editor, QPoint(300, 450), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::AltModifier,
+                      QPoint(300, 450));
+  application.processEvents();
+  const Annotation line = shape(Annotation::Kind::Line, {100, 295}, {200, 345});
+  if (!snapshotMatches(expected({centeredEllipse, centeredSquare, midDrag,
+                                 released, spotlight, line}))) {
+    error = QStringLiteral("Alt changed a line's start point");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -2833,6 +2995,10 @@ int main(int argc, char **argv) {
   if (!runSelectOutsideCanvasSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 106;
+  }
+  if (!runCenteredCreationSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 112;
   }
   if (!runShapeFillRenderingCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;

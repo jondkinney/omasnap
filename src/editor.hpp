@@ -8,6 +8,7 @@
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QLineF>
 #include <QWidget>
 
 class QKeyEvent;
@@ -181,6 +182,7 @@ private:
   [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
+  [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
 
   void acceptText();
   void applyCustomColor(const QPointF &position);
@@ -235,6 +237,7 @@ private:
   bool creationConstraintActive_ = false;
   bool marqueeSelecting_ = false;
   bool marqueeAdditive_ = false;
+  bool creationCenteredActive_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
   // Cut tool live-drag state. cutDragStart_/cutBandLo_/cutBandHi_ and
@@ -343,3 +346,7 @@ private:
 [[nodiscard]] QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
                                                   const QPointF &start,
                                                   const QPointF &end);
+/** Start point that centers a drag-created shape on `center` given `end`. */
+[[nodiscard]] QPointF centeredCreationStart(CaptureEditor::Tool tool,
+                                            const QPointF &center,
+                                            const QPointF &end);

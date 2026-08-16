@@ -78,6 +78,11 @@ bool supportsCreationConstraint(CaptureEditor::Tool tool) {
          tool == CaptureEditor::Tool::Spotlight;
 }
 
+bool supportsCenteredCreation(CaptureEditor::Tool tool) {
+  return tool == CaptureEditor::Tool::Rectangle ||
+         tool == CaptureEditor::Tool::Ellipse ||
+         tool == CaptureEditor::Tool::Spotlight;
+}
 
 QString toolAction(CaptureEditor::Tool tool) {
   switch (tool) {
@@ -324,6 +329,13 @@ QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
     return start + QPointF(std::cos(angle) * length, std::sin(angle) * length);
   }
   return end;
+}
+
+QPointF centeredCreationStart(CaptureEditor::Tool tool, const QPointF &center,
+                              const QPointF &end) {
+  if (!supportsCenteredCreation(tool))
+    return center;
+  return center * 2.0 - end;
 }
 
 CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
@@ -756,6 +768,17 @@ void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
   scheduleSnapshot();
 }
 
+QLineF CaptureEditor::creationSpan(const QPointF &rawEnd) const {
+  const QPointF end =
+      creationConstraintActive_
+          ? constrainedCreationEndpoint(tool_, dragStart_, rawEnd)
+          : rawEnd;
+  const QPointF start = creationCenteredActive_
+                            ? centeredCreationStart(tool_, dragStart_, end)
+                            : dragStart_;
+  return {start, end};
+}
+
 void CaptureEditor::toggleShapeFill() {
   fillShapes_ = !fillShapes_;
   selectedAnnotation_ = -1;
@@ -1078,13 +1101,13 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   const QString fillHint = fillShapes_ ? QStringLiteral("filled") : QString();
   add(36, QStringLiteral("tool-rectangle"), fillHint,
       QStringLiteral("Rectangle · R · %1 · R again toggles fill · Size %2 · "
-                     "Wheel · Alt+Wheel %3 · Shift makes square")
+                     "Wheel · Alt+Wheel %3 · Shift square · Alt centered")
           .arg(fillName(fillShapes_))
           .arg(qRound(annotationSize_))
           .arg(cornerName(cornerRadius_)));
   add(36, QStringLiteral("tool-ellipse"), fillHint,
       QStringLiteral("Ellipse · E · %1 · E again toggles fill · Size %2 · "
-                     "Wheel · Shift makes circle")
+                     "Wheel · Shift circle · Alt centered")
           .arg(fillName(fillShapes_))
           .arg(qRound(annotationSize_)));
   add(36, QStringLiteral("tool-redact"), {},
@@ -1178,6 +1201,7 @@ void CaptureEditor::cancelActiveDragForHistory() {
     applyEditState(dragStartState_);
   dragging_ = false;
   creationConstraintActive_ = false;
+  creationCenteredActive_ = false;
   interaction_ = Interaction::None;
   dragStartStateValid_ = false;
   dragChanged_ = false;
@@ -1377,6 +1401,7 @@ void CaptureEditor::handleEscape() {
   dragStartStateValid_ = false;
   dragChanged_ = false;
   creationConstraintActive_ = false;
+  creationCenteredActive_ = false;
   dragging_ = false;
   interaction_ = Interaction::None;
   colorPaletteOpen_ = false;
@@ -1696,6 +1721,13 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     update();
     return;
   }
+  if (event->key() == Qt::Key_Alt && phase_ == Phase::Edit && dragging_ &&
+      supportsCenteredCreation(tool_)) {
+    creationCenteredActive_ = true;
+    event->accept();
+    update();
+    return;
+  }
   if (event->key() == Qt::Key_Escape) {
     handleEscape();
     return;
@@ -1900,6 +1932,12 @@ void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
   if (event->key() == Qt::Key_Shift && creationConstraintActive_) {
     creationConstraintActive_ = false;
+    event->accept();
+    update();
+    return;
+  }
+  if (event->key() == Qt::Key_Alt && creationCenteredActive_) {
+    creationCenteredActive_ = false;
     event->accept();
     update();
     return;
@@ -2393,6 +2431,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     dragging_ = true;
     creationConstraintActive_ = supportsCreationConstraint(tool_) &&
                                 heldModifiers(event->modifiers()).testFlag(Qt::ShiftModifier);
+    creationCenteredActive_ = supportsCenteredCreation(tool_) &&
+                              heldModifiers(event->modifiers()).testFlag(Qt::AltModifier);
     if (tool_ == Tool::Redact) {
       activeRedactionSeed_ = QRandomGenerator::system()->generate();
       if (activeRedactionSeed_ == 0)
@@ -2526,11 +2566,11 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     return;
   }
 
-  const QPointF rawEnd = toAnnotationPoint(event->position());
-  const QPointF end = creationConstraintActive_
-                          ? constrainedCreationEndpoint(tool_, dragStart_, rawEnd)
-                          : rawEnd;
+  const QLineF span = creationSpan(toAnnotationPoint(event->position()));
+  const QPointF start = span.p1();
+  const QPointF end = span.p2();
   creationConstraintActive_ = false;
+  creationCenteredActive_ = false;
   if (tool_ == Tool::Freehand || tool_ == Tool::Highlighter) {
     if (freehandPoints_.isEmpty() ||
         QLineF(freehandPoints_.last(), end).length() >= 1.0)
@@ -2575,7 +2615,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     update();
     return;
   }
-  const QRectF draggedRect(dragStart_, end);
+  const QRectF draggedRect(start, end);
   const bool validRedaction =
       tool_ != Tool::Redact ||
       (draggedRect.normalized().width() >= kMinimumRedactionExtent &&
@@ -2598,7 +2638,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       if (tool_ == Tool::Rectangle)
         annotation.cornerRadius = cornerRadius_;
     }
-    annotation.start = dragStart_;
+    annotation.start = start;
     annotation.end = end;
     annotation.color = annotationColor();
     annotation.size = annotationSize_;
@@ -2942,26 +2982,21 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       preview.kind = tool_ == Tool::Highlighter ? Annotation::Kind::Highlighter
                                                 : Annotation::Kind::Freehand;
       preview.points = freehandPoints_;
-    } else if (tool_ == Tool::Spotlight) {
-      preview.kind = Annotation::Kind::Spotlight;
-      preview.start = dragStart_;
-      const QPointF end = toAnnotationPoint(cursor_);
-      preview.end = creationConstraintActive_
-                        ? constrainedCreationEndpoint(tool_, dragStart_, end)
-                        : end;
-      preview.magnification = spotlightMagnification_;
-      preview.spotlightShape = spotlightShape_;
     } else {
-      preview.kind = dragShapeKind(tool_);
-      if (tool_ == Tool::Rectangle || tool_ == Tool::Ellipse)
-        preview.filled = fillShapes_;
-      if (tool_ == Tool::Rectangle)
-        preview.cornerRadius = cornerRadius_;
-      preview.start = dragStart_;
-      const QPointF end = toAnnotationPoint(cursor_);
-      preview.end = creationConstraintActive_
-                        ? constrainedCreationEndpoint(tool_, dragStart_, end)
-                        : end;
+      if (tool_ == Tool::Spotlight) {
+        preview.kind = Annotation::Kind::Spotlight;
+        preview.magnification = spotlightMagnification_;
+        preview.spotlightShape = spotlightShape_;
+      } else {
+        preview.kind = dragShapeKind(tool_);
+        if (tool_ == Tool::Rectangle || tool_ == Tool::Ellipse)
+          preview.filled = fillShapes_;
+        if (tool_ == Tool::Rectangle)
+          preview.cornerRadius = cornerRadius_;
+      }
+      const QLineF span = creationSpan(toAnnotationPoint(cursor_));
+      preview.start = span.p1();
+      preview.end = span.p2();
     }
     preview.color = tool_ == Tool::Ocr ? QColor(Qt::white) : annotationColor();
     preview.size = tool_ == Tool::Ocr ? 2.0 : annotationSize_;
