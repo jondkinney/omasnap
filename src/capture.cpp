@@ -309,15 +309,25 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
   painter.setPen(pen);
   painter.setBrush(annotation.color);
 
-  if (annotation.kind == Annotation::Kind::Rectangle) {
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(QRectF(annotation.start, annotation.end).normalized());
-    return;
-  }
-
-  if (annotation.kind == Annotation::Kind::Ellipse) {
-    painter.setBrush(Qt::NoBrush);
-    painter.drawEllipse(QRectF(annotation.start, annotation.end).normalized());
+  if (annotation.kind == Annotation::Kind::Rectangle ||
+      annotation.kind == Annotation::Kind::Ellipse) {
+    // Filled shapes are a flat silhouette of the shape (no stroke), hollow
+    // ones a stroke band centered on its outline.
+    const QRectF bounds = QRectF(annotation.start, annotation.end).normalized();
+    if (annotation.filled)
+      painter.setPen(Qt::NoPen);
+    else
+      painter.setBrush(Qt::NoBrush);
+    if (annotation.kind == Annotation::Kind::Ellipse) {
+      painter.drawEllipse(bounds);
+    } else if (annotation.cornerRadius > 0.0) {
+      const qreal radius =
+          std::min({annotation.cornerRadius, bounds.width() / 2.0,
+                    bounds.height() / 2.0});
+      painter.drawRoundedRect(bounds, radius, radius);
+    } else {
+      painter.drawRect(bounds);
+    }
     return;
   }
 

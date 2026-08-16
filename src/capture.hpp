@@ -64,6 +64,8 @@ struct Annotation {
   qreal size = 4.0;
   int number = 0;
   QVector<QPointF> points;
+  bool filled = false;
+  qreal cornerRadius = 0.0;
   RedactionStyle redactionStyle = RedactionStyle::Pixelate;
   qreal magnification = 2.0;
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;

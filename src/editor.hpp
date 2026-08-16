@@ -14,6 +14,14 @@ class QPaintEvent;
 class QWheelEvent;
 
 class QPainter;
+
+/// Corner radius for the dashed selection box around `annotation`, drawn
+/// `inset` px outside its bounds. A rounded rectangle inside a square box
+/// reads as a mistake, and while the radius is being set the box is the only
+/// thing large enough to see it change on. 0 for every other kind.
+[[nodiscard]] qreal selectionBoundsRadius(const Annotation &annotation,
+                                          qreal inset);
+
 class CaptureEditor final : public QWidget {
   Q_OBJECT
 public:
@@ -170,6 +178,7 @@ private:
   void runOcr(const QRectF &localSelection = {});
   void setStatus(QString status);
   void scaleSelectedAnnotation(qreal factor);
+  void toggleShapeFill();
   void undoEdit();
   void updatePointerCursor();
 
@@ -200,6 +209,8 @@ private:
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
+  bool fillShapes_ = false;
+  qreal cornerRadius_ = 0.0;
   int textSizeIndex_ = 1;
   qreal spotlightMagnification_ = 2.0;
   SpotlightShape spotlightShape_ = SpotlightShape::Ellipse;
