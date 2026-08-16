@@ -130,6 +130,18 @@ Annotation::Kind dragShapeKind(CaptureEditor::Tool tool) {
   }
 }
 
+constexpr qreal kCornerRadiusStep = 2.0;
+constexpr qreal kMaximumCornerRadius = 24.0;
+
+QString fillName(bool filled) {
+  return filled ? QStringLiteral("Filled") : QStringLiteral("Hollow");
+}
+
+QString cornerName(qreal radius) {
+  return radius > 0.0 ? QStringLiteral("%1 px corners").arg(qRound(radius))
+                      : QStringLiteral("square corners");
+}
+
 QString redactionStyleName(RedactionStyle style) {
   return style == RedactionStyle::Solid ? QStringLiteral("Solid")
                                         : QStringLiteral("Pixelate");
@@ -636,23 +648,28 @@ int CaptureEditor::annotationAt(const QPointF &point) const {
     } else {
       const QRectF bounds = annotationBounds(annotation);
       if (annotation.kind == Annotation::Kind::Rectangle) {
+        // Filled rectangles hit anywhere inside; hollow ones only on the
+        // stroke band.
         const qreal tolerance = std::max<qreal>(7.0, annotation.size + 3.0);
         const QRectF outer =
             bounds.adjusted(-tolerance, -tolerance, tolerance, tolerance);
+        if (annotation.filled)
+          return outer.contains(point);
         const QRectF inner =
             bounds.adjusted(tolerance, tolerance, -tolerance, -tolerance);
         return outer.contains(point) &&
                (inner.isEmpty() || !inner.contains(point));
       }
       if (annotation.kind == Annotation::Kind::Ellipse) {
-        // Hollow ellipse: only a band around the outline is a hit, like the
-        // rectangle ring above.
+        // Same rule for ellipses: filled hits the silhouette, hollow only a
+        // band around the outline.
         const qreal tolerance = std::max<qreal>(7.0, annotation.size + 3.0);
         QPainterPath outline;
         outline.addEllipse(bounds);
         QPainterPathStroker band;
         band.setWidth(tolerance * 2.0);
-        return band.createStroke(outline).contains(point);
+        return band.createStroke(outline).contains(point) ||
+               (annotation.filled && outline.contains(point));
       }
       if (bounds.adjusted(-7, -7, 7, 7).contains(point))
         return true;
@@ -737,6 +754,15 @@ void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
   setStatus(QStringLiteral("Selected layer · wheel zoom %1%")
                 .arg(qRound(factor * 100)));
   scheduleSnapshot();
+}
+
+void CaptureEditor::toggleShapeFill() {
+  fillShapes_ = !fillShapes_;
+  selectedAnnotation_ = -1;
+  setStatus(QStringLiteral("%1 shapes · %2 again toggles fill")
+                .arg(fillName(fillShapes_))
+                .arg(tool_ == Tool::Ellipse ? QStringLiteral("E")
+                                            : QStringLiteral("R")));
 }
 
 QRectF CaptureEditor::colorPaletteRect() const {
@@ -1049,10 +1075,18 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   add(36, QStringLiteral("tool-marker"), {},
       QStringLiteral("Number marker · C · Size %1 · Wheel")
           .arg(qRound(annotationSize_)));
-  add(36, QStringLiteral("tool-rectangle"), {},
-      QStringLiteral("Rectangle · R · Shift makes square"));
-  add(36, QStringLiteral("tool-ellipse"), {},
-      QStringLiteral("Ellipse · E · Shift makes circle"));
+  const QString fillHint = fillShapes_ ? QStringLiteral("filled") : QString();
+  add(36, QStringLiteral("tool-rectangle"), fillHint,
+      QStringLiteral("Rectangle · R · %1 · R again toggles fill · Size %2 · "
+                     "Wheel · Alt+Wheel %3 · Shift makes square")
+          .arg(fillName(fillShapes_))
+          .arg(qRound(annotationSize_))
+          .arg(cornerName(cornerRadius_)));
+  add(36, QStringLiteral("tool-ellipse"), fillHint,
+      QStringLiteral("Ellipse · E · %1 · E again toggles fill · Size %2 · "
+                     "Wheel · Shift makes circle")
+          .arg(fillName(fillShapes_))
+          .arg(qRound(annotationSize_)));
   add(36, QStringLiteral("tool-redact"), {},
       QStringLiteral("Redact · D · %1 · D again toggles")
           .arg(redactionStyleName(redactionStyle_)));
@@ -1558,11 +1592,16 @@ void CaptureEditor::handleToolbar(const QString &action) {
     tool_ = Tool::Highlighter;
   else if (action == QStringLiteral("tool-marker"))
     tool_ = Tool::Marker;
-  else if (action == QStringLiteral("tool-rectangle"))
-    tool_ = Tool::Rectangle;
-  else if (action == QStringLiteral("tool-ellipse"))
-    tool_ = Tool::Ellipse;
-  else if (action == QStringLiteral("tool-spotlight")) {
+  else if (action == QStringLiteral("tool-rectangle") ||
+           action == QStringLiteral("tool-ellipse")) {
+    const Tool shape = action == QStringLiteral("tool-rectangle")
+                           ? Tool::Rectangle
+                           : Tool::Ellipse;
+    if (tool_ == shape)
+      toggleShapeFill();
+    else
+      tool_ = shape;
+  } else if (action == QStringLiteral("tool-spotlight")) {
     if (tool_ == Tool::Spotlight) {
       spotlightShape_ = spotlightShape_ == SpotlightShape::Ellipse
                             ? SpotlightShape::Rectangle
@@ -1760,10 +1799,27 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     tool_ = Tool::Highlighter;
   } else if (event->key() == Qt::Key_C || event->key() == Qt::Key_M) {
     tool_ = Tool::Marker;
-  } else if (event->key() == Qt::Key_R) {
-    tool_ = Tool::Rectangle;
-  } else if (event->key() == Qt::Key_E) {
-    tool_ = Tool::Ellipse;
+  } else if (event->key() == Qt::Key_R || event->key() == Qt::Key_E) {
+    const bool rectangle = event->key() == Qt::Key_R;
+    const Tool shape = rectangle ? Tool::Rectangle : Tool::Ellipse;
+    if (!dragging_ && selectedAnnotation_ >= 0 &&
+        selectedAnnotation_ < annotations_.size() &&
+        annotations_.at(selectedAnnotation_).kind == dragShapeKind(shape)) {
+      recordEdit();
+      Annotation &selected = annotations_[selectedAnnotation_];
+      selected.filled = !selected.filled;
+      setStatus(
+          QStringLiteral("Selected %1: %2 · %3 again toggles fill")
+              .arg(rectangle ? QStringLiteral("rectangle")
+                             : QStringLiteral("ellipse"))
+              .arg(fillName(selected.filled).toLower())
+              .arg(rectangle ? QStringLiteral("R") : QStringLiteral("E")));
+      scheduleSnapshot();
+    } else if (tool_ == shape) {
+      toggleShapeFill();
+    } else {
+      tool_ = shape;
+    }
   } else if (event->key() == Qt::Key_S) {
     if (tool_ == Tool::Spotlight) {
       spotlightShape_ = spotlightShape_ == SpotlightShape::Ellipse
@@ -2537,6 +2593,10 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       annotation.spotlightShape = spotlightShape_;
     } else {
       annotation.kind = dragShapeKind(tool_);
+      if (tool_ == Tool::Rectangle || tool_ == Tool::Ellipse)
+        annotation.filled = fillShapes_;
+      if (tool_ == Tool::Rectangle)
+        annotation.cornerRadius = cornerRadius_;
     }
     annotation.start = dragStart_;
     annotation.end = end;
@@ -2564,7 +2624,10 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     QWidget::wheelEvent(event);
     return;
   }
-  const int step = event->angleDelta().y() > 0 ? 1 : -1;
+  // Some stacks report a modified wheel on the horizontal axis; read
+  // whichever axis moved.
+  const QPoint delta = event->angleDelta();
+  const int step = (delta.y() != 0 ? delta.y() : delta.x()) > 0 ? 1 : -1;
   if (tool_ == Tool::Select && selectedAnnotation_ >= 0 &&
       selectedAnnotation_ < annotations_.size()) {
     scaleSelectedAnnotation(step > 0 ? 1.1 : 1.0 / 1.1);
@@ -2591,9 +2654,17 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
       setStatus(QStringLiteral("Spotlight magnification · %1× · wheel adjusts")
                     .arg(spotlightMagnification_, 0, 'f', 1));
     }
+  } else if (tool_ == Tool::Rectangle &&
+             event->modifiers().testFlag(Qt::AltModifier)) {
+    // Alt+wheel is the rectangle's secondary control: corner rounding.
+    cornerRadius_ = std::clamp(cornerRadius_ + step * kCornerRadiusStep, 0.0,
+                               kMaximumCornerRadius);
+    setStatus(QStringLiteral("Rectangle · %1 · Alt+wheel adjusts")
+                  .arg(cornerName(cornerRadius_)));
   } else if (tool_ == Tool::Arrow || tool_ == Tool::Line ||
              tool_ == Tool::Freehand || tool_ == Tool::Highlighter ||
-             tool_ == Tool::Marker) {
+             tool_ == Tool::Marker || tool_ == Tool::Rectangle ||
+             tool_ == Tool::Ellipse) {
     annotationSize_ = std::clamp(annotationSize_ + step, 2.0, 12.0);
     setStatus(QStringLiteral("Size %1 · mouse wheel changes size")
                   .arg(qRound(annotationSize_)));
@@ -2764,6 +2835,14 @@ void CaptureEditor::paintSelect(QPainter &painter) {
   drawMeasureBadge(painter, rect(), cursor_, measurementText());
 }
 
+qreal selectionBoundsRadius(const Annotation &annotation, qreal inset) {
+  if (annotation.kind != Annotation::Kind::Rectangle || annotation.cornerRadius <= 0.0)
+    return 0.0;
+  // Concentric with the shape: a rounded rect offset outward by `inset` keeps
+  // the same centres, so its radius grows by the same amount.
+  return annotation.cornerRadius + inset;
+}
+
 void CaptureEditor::paintEdit(QPainter &painter) {
   painter.setCompositionMode(QPainter::CompositionMode_Source);
   painter.fillRect(rect(), QColor(0, 0, 0, 160));
@@ -2874,6 +2953,10 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       preview.spotlightShape = spotlightShape_;
     } else {
       preview.kind = dragShapeKind(tool_);
+      if (tool_ == Tool::Rectangle || tool_ == Tool::Ellipse)
+        preview.filled = fillShapes_;
+      if (tool_ == Tool::Rectangle)
+        preview.cornerRadius = cornerRadius_;
       preview.start = dragStart_;
       const QPointF end = toAnnotationPoint(cursor_);
       preview.end = creationConstraintActive_
@@ -2940,7 +3023,14 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       painter.setPen(
           QPen(QColor(255, 255, 255, 220), 1.0 / scale, Qt::DashLine));
       painter.setBrush(Qt::NoBrush);
-      painter.drawRect(bounds);
+      const qreal boxRadius =
+          multiple ? 0.0
+                   : selectionBoundsRadius(
+                         annotations_.at(selectedAnnotation_), 4.0);
+      if (boxRadius > 0.0)
+        painter.drawRoundedRect(bounds, boxRadius, boxRadius);
+      else
+        painter.drawRect(bounds);
     }
     if (!multiple) {
       const Annotation &selected = annotations_.at(selectedAnnotation_);
@@ -3104,6 +3194,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   } else if (tool_ == Tool::Arrow || tool_ == Tool::Line ||
              tool_ == Tool::Freehand || tool_ == Tool::Highlighter ||
              tool_ == Tool::Marker || tool_ == Tool::Redact ||
+             tool_ == Tool::Rectangle || tool_ == Tool::Ellipse ||
              tool_ == Tool::Text) {
     const QString selectedAction = toolAction(tool_);
     for (const ToolbarButton &button : buttons) {
@@ -3117,6 +3208,16 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         } else if (tool_ == Tool::Redact) {
           tooltip = QStringLiteral("Redact · %1 · D toggles style")
                         .arg(redactionStyleName(redactionStyle_));
+        } else if (tool_ == Tool::Rectangle) {
+          tooltip = QStringLiteral("Rectangle · %1 · Size %2 · Scroll wheel · "
+                                   "Alt+Wheel %3")
+                        .arg(fillName(fillShapes_))
+                        .arg(qRound(annotationSize_))
+                        .arg(cornerName(cornerRadius_));
+        } else if (tool_ == Tool::Ellipse) {
+          tooltip = QStringLiteral("Ellipse · %1 · Size %2 · Scroll wheel")
+                        .arg(fillName(fillShapes_))
+                        .arg(qRound(annotationSize_));
         } else {
           tooltip = QStringLiteral("Size %1 · Scroll wheel")
                         .arg(qRound(annotationSize_));

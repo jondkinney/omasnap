@@ -61,8 +61,12 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     painter.drawText(QRectF(4, 4, 16, 16), Qt::AlignCenter,
                      QStringLiteral("1"));
   } else if (action == QStringLiteral("tool-rectangle")) {
+    if (label == QStringLiteral("filled"))
+      painter.setBrush(color);
     painter.drawRoundedRect(QRectF(4, 4, 16, 16), 2, 2);
   } else if (action == QStringLiteral("tool-ellipse")) {
+    if (label == QStringLiteral("filled"))
+      painter.setBrush(color);
     painter.drawEllipse(QRectF(3, 6, 18, 12));
   } else if (action == QStringLiteral("tool-redact")) {
     QPainterPath shield;

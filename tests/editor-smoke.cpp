@@ -2483,6 +2483,266 @@ bool runEllipseToolSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+bool runShapeFillRenderingCheck(QString &error) {
+  error = QStringLiteral("Shape fill rendering check failed");
+  CaptureData capture;
+  capture.monitor.scale = 1.0;
+  capture.monitor.pixelSize = {200, 100};
+  capture.source = QImage(200, 100, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::transparent);
+  capture.previewSize = capture.source.size();
+  const auto render = [&](Annotation shape) {
+    shape.color = QColor(QStringLiteral("#ff375f"));
+    shape.size = 4;
+    shape.start = {20, 20};
+    shape.end = {180, 80};
+    return renderCapture(capture, QRectF(0, 0, 200, 100), {shape},
+                         BackgroundStyle::None);
+  };
+
+  Annotation filledRectangle;
+  filledRectangle.kind = Annotation::Kind::Rectangle;
+  filledRectangle.filled = true;
+  const QImage filled = render(filledRectangle);
+  if (filled.pixelColor(100, 50).alpha() != 255 ||
+      filled.pixelColor(21, 21).alpha() != 255 ||
+      filled.pixelColor(10, 50).alpha() != 0) {
+    error = QStringLiteral("Filled rectangle did not paint a flat silhouette");
+    return false;
+  }
+
+  Annotation roundedRectangle;
+  roundedRectangle.kind = Annotation::Kind::Rectangle;
+  roundedRectangle.cornerRadius = 12;
+  const QImage rounded = render(roundedRectangle);
+  if (rounded.pixelColor(21, 21).alpha() != 0 ||
+      rounded.pixelColor(100, 20).alpha() < 200 ||
+      rounded.pixelColor(20, 50).alpha() < 200 ||
+      rounded.pixelColor(100, 50).alpha() != 0) {
+    error = QStringLiteral("Rounded rectangle did not clip its corners");
+    return false;
+  }
+
+  Annotation filledEllipse;
+  filledEllipse.kind = Annotation::Kind::Ellipse;
+  filledEllipse.filled = true;
+  const QImage ellipse = render(filledEllipse);
+  if (ellipse.pixelColor(100, 50).alpha() != 255 ||
+      ellipse.pixelColor(22, 22).alpha() != 0) {
+    error = QStringLiteral("Filled ellipse did not fill its silhouette only");
+    return false;
+  }
+
+  // The selection box follows the corners, so the radius can be seen while it
+  // is being set rather than judged against a square frame around it.
+  Annotation roundedBox;
+  roundedBox.kind = Annotation::Kind::Rectangle;
+  roundedBox.cornerRadius = 8.0;
+  if (selectionBoundsRadius(roundedBox, 4.0) != 12.0) {
+    error = QStringLiteral("Selection box did not stay concentric with a "
+                           "rounded rectangle");
+    return false;
+  }
+  Annotation squareBox;
+  squareBox.kind = Annotation::Kind::Rectangle;
+  if (selectionBoundsRadius(squareBox, 4.0) != 0.0) {
+    error = QStringLiteral("Selection box rounded a square rectangle");
+    return false;
+  }
+  Annotation ellipseBox;
+  ellipseBox.kind = Annotation::Kind::Ellipse;
+  ellipseBox.cornerRadius = 8.0;
+  if (selectionBoundsRadius(ellipseBox, 4.0) != 0.0) {
+    error = QStringLiteral("Selection box rounded a kind that has no corners");
+    return false;
+  }
+  return true;
+}
+
+bool runShapeFillToolSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const auto shape = [](Annotation::Kind kind, const QPointF &start,
+                        const QPointF &end, bool filled, qreal radius = 0) {
+    Annotation annotation;
+    annotation.kind = kind;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.filled = filled;
+    annotation.cornerRadius = radius;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+  const auto drag = [&](const QPoint &from, const QPoint &to) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(&editor, to, 20);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, to);
+    application.processEvents();
+  };
+  const auto wheel = [&](int steps,
+                         Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    for (int step = 0; step < std::abs(steps); ++step) {
+      QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {},
+                        {0, steps > 0 ? 120 : -120}, Qt::NoButton, modifiers,
+                        Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&editor, &event);
+    }
+    application.processEvents();
+  };
+  const auto shapeSized = [&shape](Annotation::Kind kind, const QPointF &start,
+                                   const QPointF &end, bool filled,
+                                   qreal radius, qreal size) {
+    Annotation annotation = shape(kind, start, end, filled, radius);
+    annotation.size = size;
+    return annotation;
+  };
+
+  // R arms a hollow rectangle; the wheel sets its stroke size like every
+  // other tool; R again toggles fill for the next shapes.
+  QTest::keyClick(&editor, Qt::Key_R);
+  wheel(1);
+  drag(QPoint(200, 200), QPoint(400, 300));
+  const Annotation hollow = shapeSized(Annotation::Kind::Rectangle, {100, 95},
+                                       {300, 195}, false, 0, 5);
+  if (!snapshotMatches(expected({hollow}))) {
+    error = QStringLiteral("Rectangle did not start hollow at wheel size 5");
+    return false;
+  }
+  wheel(-1);
+  QTest::keyClick(&editor, Qt::Key_R);
+  drag(QPoint(200, 350), QPoint(400, 450));
+  const Annotation filled =
+      shape(Annotation::Kind::Rectangle, {100, 245}, {300, 345}, true);
+  if (!snapshotMatches(expected({hollow, filled}))) {
+    error = QStringLiteral("R again did not fill the next rectangle");
+    return false;
+  }
+
+  // Alt+wheel rounds the corners of new rectangles (2 px per notch, 0–24);
+  // the plain wheel keeps meaning stroke size, as for every other tool.
+  wheel(6, Qt::AltModifier);
+  drag(QPoint(450, 200), QPoint(650, 300));
+  const Annotation rounded =
+      shape(Annotation::Kind::Rectangle, {350, 95}, {550, 195}, true, 12);
+  if (!snapshotMatches(expected({hollow, filled, rounded}))) {
+    error = QStringLiteral("Alt+wheel did not round the next rectangle");
+    return false;
+  }
+  wheel(-20, Qt::AltModifier);
+  drag(QPoint(450, 350), QPoint(650, 450));
+  const Annotation squareAgain =
+      shape(Annotation::Kind::Rectangle, {350, 245}, {550, 345}, true, 0);
+  if (!snapshotMatches(expected({hollow, filled, rounded, squareAgain}))) {
+    error = QStringLiteral("Alt+wheel did not clamp the corner radius to 0");
+    return false;
+  }
+
+  // Ellipses share the fill flag; E again toggles it back to hollow.
+  QTest::keyClick(&editor, Qt::Key_E);
+  QTest::keyClick(&editor, Qt::Key_E);
+  drag(QPoint(200, 480), QPoint(300, 500));
+  const Annotation ellipse =
+      shape(Annotation::Kind::Ellipse, {100, 375}, {200, 395}, false);
+  if (!snapshotMatches(
+          expected({hollow, filled, rounded, squareAgain, ellipse}))) {
+    error = QStringLiteral("E again did not toggle the shared fill off");
+    return false;
+  }
+
+  // Filled shapes hit anywhere inside; hollow ones still only on the band.
+  QTest::keyClick(&editor, Qt::Key_V);
+  application.processEvents();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 250));
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(
+          expected({hollow, filled, rounded, squareAgain, ellipse}))) {
+    error = QStringLiteral("Hollow rectangle interior selected a layer");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 400));
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected({hollow, rounded, squareAgain, ellipse}))) {
+    error = QStringLiteral("Filled rectangle interior did not select it");
+    return false;
+  }
+
+  // R with a selected rectangle toggles that layer's fill (undoable).
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::keyClick(&editor, Qt::Key_R);
+  application.processEvents();
+  Annotation hollowNowFilled = hollow;
+  hollowNowFilled.filled = true;
+  if (!snapshotMatches(
+          expected({hollowNowFilled, rounded, squareAgain, ellipse}))) {
+    error = QStringLiteral("R did not fill the selected rectangle");
+    return false;
+  }
+  if (editor.cursor().shape() != Qt::ArrowCursor) {
+    error = QStringLiteral("Toggling a selected rectangle switched tools");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({hollow, rounded, squareAgain, ellipse}))) {
+    error = QStringLiteral("Undo did not restore the hollow rectangle");
+    return false;
+  }
+
+  // Clicking the armed rectangle's toolbar button toggles fill as well
+  // (deselect first: R with a rectangle selected targets that layer).
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 480));
+  QTest::keyClick(&editor, Qt::Key_R);
+  application.processEvents();
+  constexpr qreal toolbarWidth = 840.0; // kToolbarWidth in editor.cpp
+  const qreal scale = std::min<qreal>(1.0, (800.0 - 16.0) / toolbarWidth);
+  const qreal toolbarX = (800.0 - toolbarWidth * scale) / 2.0;
+  const QPointF button(toolbarX + (7 * 40 + 18) * scale,
+                       105 - 36 * scale - 10 + 18 * scale);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, button.toPoint());
+  application.processEvents();
+  drag(QPoint(500, 480), QPoint(600, 500));
+  const Annotation viaButton =
+      shape(Annotation::Kind::Rectangle, {400, 375}, {500, 395}, true);
+  if (!snapshotMatches(
+          expected({hollow, rounded, squareAgain, ellipse, viaButton}))) {
+    error = QStringLiteral("Toolbar re-click did not toggle fill");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -2573,6 +2833,14 @@ int main(int argc, char **argv) {
   if (!runSelectOutsideCanvasSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 106;
+  }
+  if (!runShapeFillRenderingCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 110;
+  }
+  if (!runShapeFillToolSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 111;
   }
   if (!runEllipseRenderingCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -2666,8 +2934,9 @@ int main(int argc, char **argv) {
       return renderCapture(capture, QRectF(100, 100, 550, 370), {rectangle},
                            BackgroundStyle::None);
     };
+    // Arm once: pressing R again would toggle the fill instead.
+    QTest::keyClick(&constraintEditor, Qt::Key_R);
     const auto dragRectangle = [&](bool releaseShiftBeforeMouse) {
-      QTest::keyClick(&constraintEditor, Qt::Key_R);
       QTest::mousePress(&constraintEditor, Qt::LeftButton, Qt::NoModifier,
                         QPoint(300, 220));
       QTest::mouseMove(&constraintEditor, QPoint(420, 280), 20);
