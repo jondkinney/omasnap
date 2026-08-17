@@ -44,6 +44,20 @@ QFont annotationTextFont(qreal size) {
   return font;
 }
 
+QRectF annotationTextBounds(const Annotation &annotation) {
+  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  const QRectF glyphs(
+      annotation.start.x(), annotation.start.y() - metrics.ascent(),
+      metrics.horizontalAdvance(annotation.text), metrics.height());
+  if (annotation.textBackground != TextBackground::Pill)
+    return glyphs;
+  // The pill has even side/top padding and a bottom pad that grows with the
+  // descender, so commas and tails stay inside the cream.
+  const qreal pad = std::max<qreal>(4.0, metrics.height() * 0.18);
+  const qreal bottom = std::max(pad, metrics.descent() + 2.0);
+  return glyphs.adjusted(-pad, -pad, pad, bottom - metrics.descent());
+}
+
 bool ensurePrivateDirectory(const QString &path) {
   if (path.isEmpty())
     return false;
@@ -385,6 +399,15 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
   }
 
   const QFont font = annotationTextFont(annotation.size);
+  if (annotation.textBackground == TextBackground::Pill) {
+    // A cream pill under the glyphs keeps text readable on any capture or
+    // shape beneath it (the default text background).
+    const QRectF pill = annotationTextBounds(annotation);
+    const qreal radius = std::min(pill.height() / 4.0, 6.0);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(248, 245, 235));
+    painter.drawRoundedRect(pill, radius, radius);
+  }
   painter.setFont(font);
   painter.setPen(annotation.color);
   painter.setBrush(Qt::NoBrush);

@@ -41,6 +41,7 @@ enum class QuickOutputMode { None, Copy, Save, Both };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
 enum class RedactionStyle { Solid, Pixelate };
+enum class TextBackground { Plain, Pill };
 
 struct Annotation {
   enum class Kind {
@@ -67,6 +68,7 @@ struct Annotation {
   qreal magnification = 2.0;
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;
   quint32 redactionSeed = 0;
+  TextBackground textBackground = TextBackground::Pill;
 
   bool operator==(const Annotation &) const = default;
 };
@@ -98,6 +100,9 @@ enum class AnnotationLayer { Redaction, Default };
 /** Convenience: probes the focused monitor, then captures its pixels. */
 [[nodiscard]] bool captureFocusedMonitor(CaptureData &capture,
                                          bool includeWindows, QString &error);
+/** Bounds of a text layer's glyph box, or of its readability pill when it
+ *  has one; `start` is the baseline origin. */
+[[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation);
 [[nodiscard]] bool captureWindowSurface(const WindowTarget &window,
                                         QImage &image, QString &error);
 /** Returns an upright image for captured Wayland buffer contents. */
