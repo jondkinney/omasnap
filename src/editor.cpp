@@ -70,6 +70,35 @@ qreal strokeHitTolerance(const Annotation &annotation) {
     return std::max<qreal>(8.0, annotation.size * 3.0 + 4.0);
   return std::max<qreal>(8.0, annotation.size + 4.0);
 }
+void translateAnnotation(Annotation &annotation, const QPointF &delta) {
+  annotation.start += delta;
+  if (hasEndpointHandles(annotation.kind))
+    annotation.end += delta;
+  if (isStrokeKind(annotation.kind)) {
+    for (QPointF &point : annotation.points)
+      point += delta;
+  }
+}
+
+/// A redaction's mosaic seed; zero is reserved for "not yet seeded".
+quint32 freshRedactionSeed() {
+  const quint32 seed = QRandomGenerator::system()->generate();
+  return seed == 0 ? 1 : seed;
+}
+
+/// Offset for a duplicated layer: down-left by default, flipped per axis
+/// when that would push the copy off the canvas and the other way fits.
+QPointF duplicateOffset(const QRectF &bounds, const QSizeF &canvas) {
+  constexpr qreal step = 100.0;
+  qreal dx = -step;
+  qreal dy = step;
+  if (bounds.left() + dx < 0 && bounds.right() - dx <= canvas.width())
+    dx = -dx;
+  if (bounds.bottom() + dy > canvas.height() && bounds.top() - dy >= 0)
+    dy = -dy;
+  return {dx, dy};
+}
+
 bool supportsCreationConstraint(CaptureEditor::Tool tool) {
   return tool == CaptureEditor::Tool::Arrow ||
          tool == CaptureEditor::Tool::Line ||
@@ -568,6 +597,26 @@ int CaptureEditor::hoveredSpotlightAt(const QPointF &position) const {
   if (index < 0 || annotations_.at(index).kind != Annotation::Kind::Spotlight)
     return -1;
   return index;
+}
+void CaptureEditor::duplicateSelectedAnnotation() {
+  if (dragging_ || textEditor_->isVisible() || selectedAnnotation_ < 0 ||
+      selectedAnnotation_ >= annotations_.size())
+    return;
+  recordEdit();
+  Annotation copy = annotations_.at(selectedAnnotation_);
+  translateAnnotation(
+      copy, duplicateOffset(annotationBounds(copy), selection_.size()));
+  if (copy.kind == Annotation::Kind::Marker)
+    copy.number = nextMarker_++;
+  if (copy.kind == Annotation::Kind::Redaction) {
+    // A copy must not share the original's mosaic; give it its own seed.
+    copy.redactionSeed = freshRedactionSeed();
+  }
+  annotations_.push_back(std::move(copy));
+  selectedAnnotation_ = annotations_.size() - 1;
+  selectedAnnotations_ = {selectedAnnotation_};
+  setStatus(QStringLiteral("Duplicated · Alt+D again offsets further"));
+  scheduleSnapshot();
 }
 
 void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
@@ -1496,6 +1545,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
     finish(OutputMode::Both);
     return;
+  } else if (event->key() == Qt::Key_D &&
+             event->modifiers() == Qt::AltModifier) {
+    duplicateSelectedAnnotation();
   } else if ((event->key() == Qt::Key_Delete ||
               event->key() == Qt::Key_Backspace) &&
              !selectedAnnotations_.isEmpty()) {
@@ -1707,14 +1759,7 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
         Annotation &annotation = annotations_[selectedAnnotation_];
         annotation = originalAnnotation_;
       if (interaction_ == Interaction::Move) {
-        const QPointF delta = point - dragStart_;
-        annotation.start += delta;
-        if (hasEndpointHandles(annotation.kind))
-          annotation.end += delta;
-        if (isStrokeKind(annotation.kind)) {
-          for (QPointF &strokePoint : annotation.points)
-            strokePoint += delta;
-        }
+        translateAnnotation(annotation, point - dragStart_);
       } else if (interaction_ == Interaction::ResizeStart) {
         if (hasEndpointHandles(annotation.kind)) {
           annotation.start =
@@ -2037,11 +2082,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     dragging_ = true;
     creationConstraintActive_ = supportsCreationConstraint(tool_) &&
                                 event->modifiers().testFlag(Qt::ShiftModifier);
-    if (tool_ == Tool::Redact) {
-      activeRedactionSeed_ = QRandomGenerator::system()->generate();
-      if (activeRedactionSeed_ == 0)
-        activeRedactionSeed_ = 1;
-    }
+    if (tool_ == Tool::Redact)
+      activeRedactionSeed_ = freshRedactionSeed();
     if (tool_ == Tool::Freehand || tool_ == Tool::Highlighter) {
       freehandPoints_.clear();
       freehandPoints_.reserve(256);
