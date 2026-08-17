@@ -1281,6 +1281,9 @@ bool runAnnotationLayerChecks(QApplication &application, QString &error) {
   label.text = QStringLiteral("X");
   label.color = Qt::white;
   label.size = 8;
+  // Plain, so this stays a layer-order check: a readability pill would cover
+  // the arrow beneath it by design, which runTextPillSmoke covers instead.
+  label.textBackground = TextBackground::Plain;
   const QImage redactionOnly =
       renderCapture(capture, QRectF(0, 0, 80, 40), {redaction},
                     BackgroundStyle::None);
@@ -1972,6 +1975,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
   return true;
 }
 } // namespace
+/** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
@@ -2905,6 +2909,182 @@ bool runCenteredCreationSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Runs the interaction and rendering smoke checks. */
+bool runTextPillRenderingCheck(QString &error) {
+  error = QStringLiteral("Text pill rendering check failed");
+  CaptureData capture;
+  capture.monitor.scale = 1.0;
+  capture.monitor.pixelSize = {300, 100};
+  capture.source = QImage(300, 100, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::transparent);
+  capture.previewSize = capture.source.size();
+  Annotation text;
+  text.kind = Annotation::Kind::Text;
+  text.text = QStringLiteral("Readable");
+  text.color = QColor(QStringLiteral("#ff375f"));
+  text.size = 5;
+  text.start = {40, 60};
+  const QRectF pill = annotationTextBounds(text);
+  const QImage withPill = renderCapture(capture, QRectF(0, 0, 300, 100), {text},
+                                        BackgroundStyle::None);
+  // Cream just left of the first glyph and just above the ascent, inside
+  // the pill but away from any ink.
+  const QPoint beside(qRound(pill.left() + 2), 55);
+  const QPoint above(60, qRound(pill.top() + 2));
+  for (const QPoint &probe : {beside, above}) {
+    if (withPill.pixelColor(probe) != QColor(248, 245, 235)) {
+      error = QStringLiteral("Text pill was not painted around the glyphs");
+      return false;
+    }
+  }
+  if (withPill.pixelColor(pill.left() - 3, 55).alpha() != 0) {
+    error = QStringLiteral("Text pill spilled outside its bounds");
+    return false;
+  }
+  text.textBackground = TextBackground::Plain;
+  const QImage plain = renderCapture(capture, QRectF(0, 0, 300, 100), {text},
+                                     BackgroundStyle::None);
+  if (plain.pixelColor(beside).alpha() != 0 ||
+      plain.pixelColor(above).alpha() != 0) {
+    error = QStringLiteral("Plain text still painted a pill");
+    return false;
+  }
+
+  // The selection box follows the pill, so a rounded background does not sit
+  // inside a square dashed frame.
+  Annotation pilled = text;
+  pilled.textBackground = TextBackground::Pill;
+  const qreal pillHeight = annotationTextBounds(pilled).height();
+  const qreal want = std::min(pillHeight / 4.0, 6.0) + 4.0;
+  if (selectionBoundsRadius(pilled, 4.0) != want) {
+    error = QStringLiteral("Selection box did not follow the text pill");
+    return false;
+  }
+  Annotation bare = text;
+  bare.textBackground = TextBackground::Plain;
+  if (selectionBoundsRadius(bare, 4.0) != 0.0) {
+    error = QStringLiteral("Selection box rounded text that has no pill");
+    return false;
+  }
+  Annotation rect;
+  rect.kind = Annotation::Kind::Rectangle;
+  if (selectionBoundsRadius(rect, 4.0) != 0.0) {
+    error = QStringLiteral("Selection box rounded a kind with no pill");
+    return false;
+  }
+  return true;
+}
+
+bool runTextPillSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const qreal ascent = QFontMetricsF(annotationTextFont(5.0)).ascent();
+  const auto text = [&](const QPointF &clicked, const QString &content,
+                        TextBackground background) {
+    Annotation annotation;
+    annotation.kind = Annotation::Kind::Text;
+    annotation.start = clicked + QPointF(0, ascent);
+    annotation.text = content;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 5;
+    annotation.textBackground = background;
+    return annotation;
+  };
+  const auto typeText = [&](const QPoint &at, const QString &content) {
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    application.processEvents();
+    QTest::keyClicks(QApplication::focusWidget(), content);
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+    application.processEvents();
+  };
+
+  // New text gets the pill by default.
+  QTest::keyClick(&editor, Qt::Key_T);
+  typeText(QPoint(300, 300), QStringLiteral("Pill"));
+  const Annotation pill =
+      text({200, 195}, QStringLiteral("Pill"), TextBackground::Pill);
+  if (!snapshotMatches(expected({pill}))) {
+    error = QStringLiteral("New text did not get a readability pill");
+    return false;
+  }
+
+  // T again (tool still armed) switches the next text to plain.
+  QTest::keyClick(&editor, Qt::Key_T);
+  typeText(QPoint(300, 400), QStringLiteral("Plain"));
+  const Annotation plain =
+      text({200, 295}, QStringLiteral("Plain"), TextBackground::Plain);
+  if (!snapshotMatches(expected({pill, plain}))) {
+    error = QStringLiteral("T again did not switch new text to plain");
+    return false;
+  }
+
+  // T with a text layer selected toggles that layer, undoably.
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 290));
+  QTest::keyClick(&editor, Qt::Key_T);
+  application.processEvents();
+  Annotation pillNowPlain = pill;
+  pillNowPlain.textBackground = TextBackground::Plain;
+  if (!snapshotMatches(expected({pillNowPlain, plain}))) {
+    error = QStringLiteral("T did not toggle the selected text's pill");
+    return false;
+  }
+  if (editor.cursor().shape() != Qt::ArrowCursor) {
+    error = QStringLiteral("Toggling a selected text switched tools");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({pill, plain}))) {
+    error = QStringLiteral("Undo did not restore the text pill");
+    return false;
+  }
+
+  // Re-editing keeps the layer's own background.
+  QTest::mouseDClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 410));
+  application.processEvents();
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_End); // text is selected
+  QTest::keyClicks(QApplication::focusWidget(), QStringLiteral(" text"));
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  application.processEvents();
+  const Annotation plainEdited =
+      text({200, 295}, QStringLiteral("Plain text"), TextBackground::Plain);
+  if (!snapshotMatches(expected({pill, plainEdited}))) {
+    error = QStringLiteral("Re-editing changed the text's background");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -3015,6 +3195,14 @@ int main(int argc, char **argv) {
   if (!runEllipseToolSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 109;
+  }
+  if (!runTextPillRenderingCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 102;
+  }
+  if (!runTextPillSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 103;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

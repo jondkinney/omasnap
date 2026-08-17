@@ -18,8 +18,8 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
 - Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
   hollow or filled rectangles (optionally rounded) and ellipses, numbered markers,
-  editable Neucha text, and secure redaction with opaque or randomized non-spatial
-  mosaic output.
+  editable Neucha text (on a readability pill), and secure redaction with opaque or
+  randomized non-spatial mosaic output.
 - Per-layer preset or custom colors (including highlighter ink), undo/redo history,
   OCR-region capture,
   mesh-gradient backdrops, and rendered drop shadows.
@@ -267,7 +267,7 @@ Install the corresponding Tesseract language data before adding a language to
 | `E` | Ellipse; press again to toggle filled/hollow |
 | `D` | Redact; press again to toggle randomized pixelation or solid redaction |
 | `X` | Cut out a band; drag across the image to remove and collapse a horizontal or vertical strip |
-| `T` | Neucha text |
+| `T` | Neucha text on a cream readability pill; press again to toggle the pill (with a text layer selected, toggles that layer) |
 | `O` | Drag an OCR region and copy recognized text |
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |

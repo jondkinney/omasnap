@@ -9,6 +9,7 @@
 #include <QLineEdit>
 #include <QPixmap>
 #include <QLineF>
+#include <QTimer>
 #include <QWidget>
 
 class QKeyEvent;
@@ -18,10 +19,11 @@ class QWheelEvent;
 
 class QPainter;
 
+class InlineTextEdit;
 /// Corner radius for the dashed selection box around `annotation`, drawn
-/// `inset` px outside its bounds. A rounded rectangle inside a square box
-/// reads as a mistake, and while the radius is being set the box is the only
-/// thing large enough to see it change on. 0 for every other kind.
+/// `inset` px outside its bounds. A rounded rectangle or text pill inside a
+/// square box reads as a mistake, and while the radius is being set the box
+/// is the only thing large enough to see it change on. 0 for every other kind.
 [[nodiscard]] qreal selectionBoundsRadius(const Annotation &annotation,
                                           qreal inset);
 
@@ -211,6 +213,7 @@ private:
   void setStatus(QString status);
   void scaleSelectedAnnotation(qreal factor);
   void toggleShapeFill();
+  void toggleTextBackground();
   void undoEdit();
   void updatePointerCursor();
 
@@ -268,6 +271,7 @@ private:
   bool fillShapes_ = false;
   qreal cornerRadius_ = 0.0;
   int textSizeIndex_ = 1;
+  TextBackground textBackground_ = TextBackground::Pill;
   qreal spotlightMagnification_ = 2.0;
   SpotlightShape spotlightShape_ = SpotlightShape::Ellipse;
   RedactionStyle redactionStyle_ = RedactionStyle::Pixelate;
@@ -333,12 +337,18 @@ private:
   int pinCount_ = 0;
   QString status_ =
       QStringLiteral("Drag to select an area · Space selects a window");
-  QLineEdit *textEditor_ = nullptr;
+  InlineTextEdit *textEditor_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;
   qreal textSize_ = 4.0;
   QElapsedTimer escapeTimer_;
+  /// The inline editor's pill and caret are painted by the editor itself
+  /// (the QLineEdit stays transparent with its own caret hidden) so the
+  /// caret can be shorter than Neucha's tall line box.
+  bool textEditPill_ = false;
+  bool textCaretOn_ = true;
+  QTimer textCaretTimer_;
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
 };

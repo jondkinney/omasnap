@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QThread>
@@ -34,6 +35,29 @@
 #include <limits>
 #include <utility>
 #include <numbers>
+
+/// The inline text editor: a QLineEdit whose native caret is hidden (the
+/// editor paints a shorter one over Neucha's tall line box) and whose caret
+/// rectangle is exposed for that.
+class InlineTextEdit final : public QLineEdit {
+public:
+  explicit InlineTextEdit(QWidget *parent) : QLineEdit(parent) {
+    setStyle(&caretlessStyle_);
+  }
+  using QLineEdit::cursorRect;
+
+private:
+  class CaretlessStyle final : public QProxyStyle {
+  public:
+    int pixelMetric(PixelMetric metric, const QStyleOption *option,
+                    const QWidget *widget) const override {
+      return metric == PM_TextCursorWidth
+                 ? 0
+                 : QProxyStyle::pixelMetric(metric, option, widget);
+    }
+  };
+  CaretlessStyle caretlessStyle_;
+};
 
 namespace {
 constexpr std::array<qreal, 3> kTextSizes{2.0, 5.0, 9.0};
@@ -145,6 +169,11 @@ QString fillName(bool filled) {
 QString cornerName(qreal radius) {
   return radius > 0.0 ? QStringLiteral("%1 px corners").arg(qRound(radius))
                       : QStringLiteral("square corners");
+}
+
+QString textBackgroundName(TextBackground background) {
+  return background == TextBackground::Pill ? QStringLiteral("Pill")
+                                            : QStringLiteral("Plain");
 }
 
 QString redactionStyleName(RedactionStyle style) {
@@ -363,7 +392,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     setGeometry(QGuiApplication::primaryScreen()->geometry());
   cursor_ = mapFromGlobal(QCursor::pos());
 
-  textEditor_ = new QLineEdit(this);
+  textEditor_ = new InlineTextEdit(this);
   textEditor_->hide();
   textEditor_->setFrame(false);
   textEditor_->setTextMargins(0, 0, 0, 0);
@@ -372,11 +401,24 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                      "border: none; padding: 0;"
                      " selection-background-color: #0a84ff; }"));
   textEditor_->installEventFilter(this);
+  // The editor paints its own, shorter caret (see paintEdit); blink it.
+  textCaretTimer_.setInterval(530);
+  connect(&textCaretTimer_, &QTimer::timeout, this, [this] {
+    textCaretOn_ = !textCaretOn_;
+    update(textEditor_->geometry().adjusted(-4, -4, 4, 4));
+  });
+  connect(textEditor_, &QLineEdit::cursorPositionChanged, this, [this] {
+    textCaretOn_ = true;
+    textCaretTimer_.start();
+    update();
+  });
   connect(
       textEditor_, &QLineEdit::textChanged, this, [this](const QString &text) {
         const QFontMetrics metrics(textEditor_->font());
+        const QMargins margins = textEditor_->textMargins();
         const int desiredWidth = std::max(
-            48, metrics.horizontalAdvance(text + QStringLiteral("  ")));
+            48, metrics.horizontalAdvance(text + QStringLiteral("  ")) +
+                    margins.left() + margins.right());
         const int availableWidth =
             std::max(48, qRound(editImageRect().right() - textEditor_->x()));
         textEditor_->resize(std::min(desiredWidth, availableWidth),
@@ -556,11 +598,8 @@ QRectF CaptureEditor::annotationBounds(const Annotation &annotation) const {
     return {annotation.start.x() - diameter / 2.0,
             annotation.start.y() - diameter / 2.0, diameter, diameter};
   }
-  if (annotation.kind == Annotation::Kind::Text) {
-    const QFontMetricsF metrics(annotationTextFont(annotation.size));
-    return {annotation.start.x(), annotation.start.y() - metrics.ascent(),
-            metrics.horizontalAdvance(annotation.text), metrics.height()};
-  }
+  if (annotation.kind == Annotation::Kind::Text)
+    return annotationTextBounds(annotation);
   if (isStrokeKind(annotation.kind)) {
     if (annotation.points.isEmpty())
       return {};
@@ -786,6 +825,27 @@ void CaptureEditor::toggleShapeFill() {
                 .arg(fillName(fillShapes_))
                 .arg(tool_ == Tool::Ellipse ? QStringLiteral("E")
                                             : QStringLiteral("R")));
+}
+
+void CaptureEditor::toggleTextBackground() {
+  if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
+      annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text) {
+    recordEdit();
+    Annotation &text = annotations_[selectedAnnotation_];
+    text.textBackground = text.textBackground == TextBackground::Pill
+                              ? TextBackground::Plain
+                              : TextBackground::Pill;
+    setStatus(QStringLiteral("Selected text: %1 · T again toggles")
+                  .arg(textBackgroundName(text.textBackground).toLower()));
+    scheduleSnapshot();
+    return;
+  }
+  textBackground_ = textBackground_ == TextBackground::Pill
+                        ? TextBackground::Plain
+                        : TextBackground::Pill;
+  selectedAnnotation_ = -1;
+  setStatus(QStringLiteral("Text: %1 · T again toggles")
+                .arg(textBackgroundName(textBackground_).toLower()));
 }
 
 QRectF CaptureEditor::colorPaletteRect() const {
@@ -1116,9 +1176,10 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   add(36, QStringLiteral("tool-cut"), {},
       QStringLiteral("Cut out a band · X · drag across"));
   add(36, QStringLiteral("tool-text"), {},
-      QStringLiteral("Neucha text · T · %1 · Wheel")
+      QStringLiteral("Neucha text · T · %1 · %2 · T again toggles pill · Wheel")
           .arg(QString::fromLatin1(
-              kTextSizeNames.at(static_cast<std::size_t>(textSizeIndex_)))));
+              kTextSizeNames.at(static_cast<std::size_t>(textSizeIndex_))))
+          .arg(textBackgroundName(textBackground_)));
   add(36, QStringLiteral("palette"), {}, QStringLiteral("Annotation color"),
       annotationColor());
   add(36, QStringLiteral("tool-ocr"), {},
@@ -1191,6 +1252,7 @@ void CaptureEditor::applyEditState(const EditState &state) {
   freehandPoints_.clear();
   textEditor_->clear();
   textEditor_->hide();
+  textCaretTimer_.stop();
   setFocus(Qt::OtherFocusReason);
   updatePointerCursor();
   update();
@@ -1393,6 +1455,7 @@ void CaptureEditor::handleEscape() {
   escapeTimer_.restart();
   textEditor_->clear();
   textEditor_->hide();
+  textCaretTimer_.stop();
   editingAnnotation_ = -1;
   if (dragStartStateValid_) {
     applyEditState(dragStartState_);
@@ -1451,19 +1514,30 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex) {
       std::max(12, qRound(displayFont.pixelSize() * scale)));
   const QFontMetrics metrics(displayFont);
   textEditor_->setFont(displayFont);
+  // While typing, show the same cream pill the committed text will have.
+  const TextBackground background =
+      annotationIndex >= 0 && annotationIndex < annotations_.size()
+          ? annotations_.at(annotationIndex).textBackground
+          : textBackground_;
+  const bool pill = background == TextBackground::Pill;
+  textEditPill_ = pill;
+  const int pillPad = pill ? qRound(std::max(4.0, metrics.height() * 0.18)) : 0;
   textEditor_->setStyleSheet(
-      QStringLiteral(
-          "QLineEdit { color: %1; background: transparent; border: none;"
-          " margin: 0; padding: 0; selection-background-color: #0a84ff; }")
+      QStringLiteral("QLineEdit { color: %1; background: transparent; "
+                     "border: none; margin: 0; padding: 0;"
+                     " selection-background-color: #0a84ff; }")
           .arg(textColor_.name()));
-  textEditor_->setGeometry(qRound(position.x()), qRound(position.y()), 72,
-                           metrics.height());
+  textEditor_->setTextMargins(pillPad, 0, pillPad, 0);
+  textEditor_->setGeometry(qRound(position.x()) - pillPad, qRound(position.y()),
+                           72 + 2 * pillPad, metrics.height());
   textEditor_->setText(existingText);
   textEditor_->show();
   textEditor_->raise();
   textEditor_->setFocus(Qt::MouseFocusReason);
   if (!existingText.isEmpty())
     textEditor_->selectAll();
+  textCaretOn_ = true;
+  textCaretTimer_.start();
 }
 
 void CaptureEditor::acceptText() {
@@ -1478,6 +1552,10 @@ void CaptureEditor::acceptText() {
     annotation.text = text;
     annotation.color = textColor_;
     annotation.size = textSize_;
+    annotation.textBackground =
+        editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()
+            ? annotations_.at(editingAnnotation_).textBackground
+            : textBackground_;
     if (editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()) {
       annotations_[editingAnnotation_] = std::move(annotation);
       selectedAnnotation_ = editingAnnotation_;
@@ -1495,6 +1573,7 @@ void CaptureEditor::acceptText() {
   editingAnnotation_ = -1;
   textEditor_->clear();
   textEditor_->hide();
+  textCaretTimer_.stop();
   setFocus(Qt::OtherFocusReason);
   updatePointerCursor();
   update();
@@ -1653,9 +1732,12 @@ void CaptureEditor::handleToolbar(const QString &action) {
     tool_ = Tool::Cut;
     selectedAnnotation_ = -1;
     setStatus(QStringLiteral("Cut: drag across a band to remove it"));
-  } else if (action == QStringLiteral("tool-text"))
-    tool_ = Tool::Text;
-  else if (action == QStringLiteral("tool-eyedropper")) {
+  } else if (action == QStringLiteral("tool-text")) {
+    if (tool_ == Tool::Text)
+      toggleTextBackground();
+    else
+      tool_ = Tool::Text;
+  } else if (action == QStringLiteral("tool-eyedropper")) {
     if (tool_ != Tool::Eyedropper)
       toolBeforeEyedropper_ = tool_;
     tool_ = Tool::Eyedropper;
@@ -1893,7 +1975,13 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     tool_ = Tool::Cut;
     setStatus(QStringLiteral("Cut: drag across a band to remove it"));
   } else if (event->key() == Qt::Key_T) {
-    tool_ = Tool::Text;
+    const bool textSelected =
+        selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
+        annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text;
+    if (tool_ == Tool::Text || textSelected)
+      toggleTextBackground();
+    else
+      tool_ = Tool::Text;
   } else if (event->key() == Qt::Key_I) {
     if (tool_ != Tool::Eyedropper)
       toolBeforeEyedropper_ = tool_;
@@ -2876,11 +2964,15 @@ void CaptureEditor::paintSelect(QPainter &painter) {
 }
 
 qreal selectionBoundsRadius(const Annotation &annotation, qreal inset) {
-  if (annotation.kind != Annotation::Kind::Rectangle || annotation.cornerRadius <= 0.0)
-    return 0.0;
-  // Concentric with the shape: a rounded rect offset outward by `inset` keeps
-  // the same centres, so its radius grows by the same amount.
-  return annotation.cornerRadius + inset;
+  if (annotation.kind == Annotation::Kind::Rectangle &&
+      annotation.cornerRadius > 0.0)
+    return annotation.cornerRadius + inset;
+  if (annotation.kind == Annotation::Kind::Text &&
+      annotation.textBackground == TextBackground::Pill) {
+    const QRectF pill = annotationTextBounds(annotation);
+    return std::min(pill.height() / 4.0, 6.0) + inset;
+  }
+  return 0.0;
 }
 
 void CaptureEditor::paintEdit(QPainter &painter) {
@@ -3141,6 +3233,29 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                      QPointF(hue.right() + 2, hueY));
   }
 
+  if (textEditor_->isVisible()) {
+    // Cream pill under the inline editor (the QLineEdit is transparent), and
+    // a caret spanning the glyph box rather than Neucha's whole line height.
+    const QRectF box = textEditor_->geometry();
+    if (textEditPill_) {
+      const qreal radius = std::min(box.height() / 4.0, 6.0);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(248, 245, 235));
+      painter.drawRoundedRect(box, radius, radius);
+    }
+    if (textCaretOn_ && textEditor_->hasFocus()) {
+      const QFontMetricsF metrics(textEditor_->font());
+      const QRectF cursor =
+          QRectF(textEditor_->cursorRect()).translated(box.topLeft());
+      const qreal baseline = box.top() + metrics.ascent();
+      const qreal top = baseline - metrics.capHeight() * 1.15;
+      const qreal bottom = baseline + metrics.descent() * 0.35;
+      painter.setPen(QPen(textColor_, std::max(1.0, box.height() / 18.0)));
+      painter.drawLine(QPointF(cursor.center().x(), top),
+                       QPointF(cursor.center().x(), bottom));
+    }
+  }
+
   const QString currentTool = toolAction(tool_);
   QFont buttonFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
   buttonFont.setPixelSize(11);
@@ -3236,10 +3351,12 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       if (button.action == selectedAction) {
         QString tooltip;
         if (tool_ == Tool::Text) {
-          tooltip =
-              QStringLiteral("Neucha · S  M  L · current %1 · Scroll wheel")
-                  .arg(QString::fromLatin1(kTextSizeNames.at(
-                      static_cast<std::size_t>(textSizeIndex_))));
+          tooltip = QStringLiteral(
+                        "Neucha · S  M  L · current %1 · Scroll wheel · %2 · T "
+                        "again toggles pill")
+                        .arg(QString::fromLatin1(kTextSizeNames.at(
+                            static_cast<std::size_t>(textSizeIndex_))))
+                        .arg(textBackgroundName(textBackground_));
         } else if (tool_ == Tool::Redact) {
           tooltip = QStringLiteral("Redact · %1 · D toggles style")
                         .arg(redactionStyleName(redactionStyle_));
