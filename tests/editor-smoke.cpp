@@ -1981,6 +1981,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
+/** Runs the interaction and rendering smoke checks. */
 /** Checks that a modifier left over from the launch binding is not believed.
  *  A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
  *  leaves that modifier held as the overlay takes keyboard focus. Its release
@@ -3221,6 +3222,143 @@ bool runSelectAllDeleteSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Runs the interaction and rendering smoke checks. */
+bool runDuplicateLayerSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+
+  // 600x400 selection shown 1:1 at widget offset (100, 105).
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const auto rectangle = [](const QPointF &start, const QPointF &end) {
+    Annotation annotation;
+    annotation.kind = Annotation::Kind::Rectangle;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+  const auto marker = [](const QPointF &at, int number) {
+    Annotation annotation;
+    annotation.kind = Annotation::Kind::Marker;
+    annotation.start = at;
+    annotation.number = number;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+  const auto drag = [&](const QPoint &from, const QPoint &to) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(&editor, to, 20);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, to);
+    application.processEvents();
+  };
+
+  // A rectangle hugging the left edge: the default down-left offset would
+  // leave the canvas, so the copy goes down-right instead.
+  QTest::keyClick(&editor, Qt::Key_R);
+  drag(QPoint(120, 200), QPoint(220, 260));
+  const Annotation left = rectangle({20, 95}, {120, 155});
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(170, 200));
+  QTest::keyClick(&editor, Qt::Key_D, Qt::AltModifier);
+  application.processEvents();
+  const Annotation leftCopy = rectangle({120, 195}, {220, 255});
+  if (!snapshotMatches(expected({left, leftCopy}))) {
+    error = QStringLiteral("Alt+D did not flip the offset away from the edge");
+    return false;
+  }
+
+  // Mid-canvas: down-left, and chained Alt+D keeps stepping from the copy.
+  QTest::keyClick(&editor, Qt::Key_R);
+  drag(QPoint(400, 250), QPoint(500, 300));
+  const Annotation middle = rectangle({300, 145}, {400, 195});
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(450, 250));
+  QTest::keyClick(&editor, Qt::Key_D, Qt::AltModifier);
+  QTest::keyClick(&editor, Qt::Key_D, Qt::AltModifier);
+  application.processEvents();
+  const Annotation middleCopy = rectangle({200, 245}, {300, 295});
+  const Annotation middleCopyCopy = rectangle({100, 345}, {200, 395});
+  if (!snapshotMatches(
+          expected({left, leftCopy, middle, middleCopy, middleCopyCopy}))) {
+    error = QStringLiteral("Chained Alt+D did not offset down-left twice");
+    return false;
+  }
+
+  // A duplicated marker takes the next number.
+  QTest::keyClick(&editor, Qt::Key_C);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(600, 200));
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(600, 200));
+  QTest::keyClick(&editor, Qt::Key_D, Qt::AltModifier);
+  application.processEvents();
+  const Annotation first = marker({500, 95}, 1);
+  const Annotation second = marker({400, 195}, 2);
+  const QVector<Annotation> withMarkers = {
+      left, leftCopy, middle, middleCopy, middleCopyCopy, first, second};
+  if (!snapshotMatches(expected(withMarkers))) {
+    error = QStringLiteral("Duplicated marker did not take the next number");
+    return false;
+  }
+
+  // Delete removes the selected copy; undo brings it back.
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected(
+          {left, leftCopy, middle, middleCopy, middleCopyCopy, first}))) {
+    error = QStringLiteral("Delete did not remove the selected copy");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected(withMarkers))) {
+    error = QStringLiteral("Undo did not restore the deleted layer");
+    return false;
+  }
+
+  // Plain D still arms the Redact tool.
+  QTest::keyClick(&editor, Qt::Key_D);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("Plain D no longer arms the Redact tool");
+    return false;
+  }
+  if (!snapshotMatches(expected(withMarkers))) {
+    error = QStringLiteral("Plain D changed the layers");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -3343,6 +3481,10 @@ int main(int argc, char **argv) {
   if (!runSelectAllDeleteSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 101;
+  }
+  if (!runDuplicateLayerSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 100;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

@@ -276,6 +276,7 @@ Install the corresponding Tesseract language data before adding a language to
 | Hold `Alt` while dragging | Center rectangles, ellipses, and spotlights on the press point; add `Shift` for a centered square/circle |
 | Double-click text | Reopen text editing |
 | `Delete` | Delete selected layer |
+| `Alt+D` | Duplicate selected layer (offset down-left, or away from a nearby edge); the copy becomes the selection |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |
 | `Ctrl+C` | Copy PNG only |
