@@ -3295,6 +3295,10 @@ bool runDuplicateLayerSmoke(QApplication &application, QString &error) {
   }
 
   // Mid-canvas: down-left, and chained Alt+D keeps stepping from the copy.
+  // R with a rectangle selected toggles that layer's fill (#56), so drop the
+  // selection before arming the tool.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(150, 450));
+  application.processEvents();
   QTest::keyClick(&editor, Qt::Key_R);
   drag(QPoint(400, 250), QPoint(500, 300));
   const Annotation middle = rectangle({300, 145}, {400, 195});

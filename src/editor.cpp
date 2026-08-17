@@ -1957,7 +1957,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     finish(OutputMode::Both);
     return;
   } else if (event->key() == Qt::Key_D &&
-             heldModifiers(event->modifiers()) == Qt::AltModifier) {
+             event->modifiers() == Qt::AltModifier) {
     duplicateSelectedAnnotation();
   } else if ((event->key() == Qt::Key_Delete ||
               event->key() == Qt::Key_Backspace) &&
