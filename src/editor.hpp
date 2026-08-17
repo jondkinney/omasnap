@@ -6,6 +6,7 @@
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QTimer>
 #include <QWidget>
 
 class QKeyEvent;
@@ -143,6 +144,10 @@ private:
   [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
+  [[nodiscard]] QPointF
+  constrainedResizeEndpoint(const Annotation &annotation,
+                            const QPointF &candidate, const QPointF &fixed,
+                            const QPointF &originalMoving) const;
 
   void acceptText();
   void applyCustomColor(const QPointF &position);
@@ -169,6 +174,8 @@ private:
   void runOcr(const QRectF &localSelection = {});
   void setStatus(QString status);
   void scaleSelectedAnnotation(qreal factor);
+  void nudgeSelectedAnnotation(const QPointF &delta);
+  void endNudgeRun();
   void undoEdit();
   void updatePointerCursor();
 
@@ -185,6 +192,7 @@ private:
   bool creationConstraintActive_ = false;
   bool marqueeSelecting_ = false;
   bool marqueeAdditive_ = false;
+  bool resizeConstraintActive_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
   bool windowMode_ = false;
@@ -271,6 +279,8 @@ private:
   QVector<int> selectedAnnotations_;
   qreal textSize_ = 4.0;
   QElapsedTimer escapeTimer_;
+  QElapsedTimer nudgeTimer_;
+  QTimer nudgePersistTimer_;
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
 };

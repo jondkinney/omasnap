@@ -253,7 +253,8 @@ Install the corresponding Tesseract language data before adding a language to
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size |
-| Hold `Shift` while dragging | Make rectangles and spotlights 1:1; snap lines and arrows to 45° |
+| Hold `Shift` while dragging | Make rectangles and spotlights 1:1; snap lines and arrows to 45°; while dragging a selected layer's handle, keep a rectangle, redaction or spotlight's aspect ratio (lines and arrows: 45°) |
+| `←` `↑` `→` `↓` | Nudge the selected layer 1 px; hold `Shift` for 10 px (a held key is one undo step) |
 | Double-click text | Reopen text editing |
 | `Delete` | Delete selected layer |
 | `Ctrl+Z` | Undo |

@@ -1427,6 +1427,162 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+bool runKeyboardNudgeSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  // 600x400 selection shown 1:1 at widget offset (100, 105).
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto rectangle = [](const QPointF &start, const QPointF &end) {
+    Annotation annotation;
+    annotation.kind = Annotation::Kind::Rectangle;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+  const auto snapshotMatches = [&](const Annotation &expected) {
+    const QImage image =
+        renderCapture(capture, selection, {expected}, BackgroundStyle::None);
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  // A run of nudges writes its snapshot once, ~100 ms after the last key.
+  const auto settle = [&] {
+    QTest::qWait(150);
+    application.processEvents();
+  };
+
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(400, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(400, 300));
+  application.processEvents();
+  const Annotation drawn = rectangle({100, 95}, {300, 195});
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Nudge smoke: rectangle did not render");
+    return false;
+  }
+
+  // Arrow keys with nothing selected leave the layer alone.
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::keyClick(&editor, Qt::Key_Right);
+  application.processEvents();
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Arrow key moved a layer that was not selected");
+    return false;
+  }
+
+  // Select the rectangle on its stroke, then nudge: quick presses coalesce
+  // into one undo entry.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_Right);
+  QTest::keyClick(&editor, Qt::Key_Right);
+  QTest::keyClick(&editor, Qt::Key_Down);
+  QTest::keyClick(&editor, Qt::Key_Left, Qt::ShiftModifier);
+  settle();
+  if (!snapshotMatches(rectangle({92, 96}, {292, 196}))) {
+    error = QStringLiteral("Arrow nudges did not move the selected layer");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Quick nudges did not coalesce into one undo step");
+    return false;
+  }
+
+  // A pause between presses starts a new undo entry.
+  QTest::keyClick(&editor, Qt::Key_Down, Qt::ShiftModifier);
+  settle();
+  QTest::keyClick(&editor, Qt::Key_Down, Qt::ShiftModifier);
+  settle();
+  if (!snapshotMatches(rectangle({100, 115}, {300, 215}))) {
+    error = QStringLiteral("Shift nudges did not move by 10 px");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(rectangle({100, 105}, {300, 205}))) {
+    error = QStringLiteral("Separated nudges did not get separate undo steps");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Second undo did not restore the drawn rectangle");
+    return false;
+  }
+
+  // Arrow keys typed into the inline text editor edit text, not layers:
+  // with the rectangle still selected, open a text field and press Down.
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(500, 450));
+  application.processEvents();
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Down);
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Escape);
+  settle();
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Arrow key inside the text editor nudged a layer");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  application.processEvents();
+
+  // Shift while dragging the end handle keeps the original 2:1 aspect ratio;
+  // the axis scaled more (x: 200 -> 300) wins, so y follows to 150.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                    QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(500, 320), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                      QPoint(500, 320));
+  application.processEvents();
+  if (!snapshotMatches(rectangle({100, 95}, {400, 245}))) {
+    error = QStringLiteral("Shift resize did not keep the aspect ratio");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(drawn)) {
+    error = QStringLiteral("Undo did not revert the constrained resize");
+    return false;
+  }
+  // Without Shift the same drag lands on the raw point.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(500, 320), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(500, 320));
+  application.processEvents();
+  if (!snapshotMatches(rectangle({100, 95}, {400, 215}))) {
+    error = QStringLiteral("Plain resize was constrained without Shift");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1493,6 +1649,10 @@ int main(int argc, char **argv) {
   if (!runContinuousAnnotationToolsSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 80;
+  }
+  if (!runKeyboardNudgeSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 99;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
