@@ -65,6 +65,11 @@ constexpr std::array<const char *, 3> kTextSizeNames{"S", "M", "L"};
 constexpr qreal kToolbarWidth = 880;
 constexpr qreal kMinimumRedactionExtent = 5.0;
 constexpr int kBackdropDim = 143;
+constexpr qreal kNudgeStep = 1.0;
+constexpr qreal kNudgeStepShift = 10.0;
+/// Arrow presses closer together than this share one undo entry, so a held
+/// key reads as one move.
+constexpr qint64 kNudgeCoalesceMs = 100;
 
 qreal toolbarScale(qreal availableWidth) {
   constexpr qreal sideMargins = 16.0;
@@ -121,6 +126,40 @@ QPointF duplicateOffset(const QRectF &bounds, const QSizeF &canvas) {
   if (bounds.bottom() + dy > canvas.height() && bounds.top() - dy >= 0)
     dy = -dy;
   return {dx, dy};
+}
+
+/// Endpoint that keeps the original |dx|:|dy| ratio around the fixed
+/// endpoint while a bounding-box shape is resized with Shift; the axis the
+/// user has scaled more wins and the other follows.
+QPointF aspectLockedEndpoint(const QPointF &fixed,
+                             const QPointF &originalMoving,
+                             const QPointF &candidate) {
+  const QPointF original = originalMoving - fixed;
+  if (qFuzzyIsNull(original.x()) || qFuzzyIsNull(original.y()))
+    return candidate;
+  const QPointF offset = candidate - fixed;
+  const qreal scale = std::max(std::abs(offset.x()) / std::abs(original.x()),
+                               std::abs(offset.y()) / std::abs(original.y()));
+  const qreal signX = offset.x() < 0 ? -1.0 : 1.0;
+  const qreal signY = offset.y() < 0 ? -1.0 : 1.0;
+  return fixed + QPointF(signX * scale * std::abs(original.x()),
+                         signY * scale * std::abs(original.y()));
+}
+
+/// Unit move for an arrow key; null for any other key.
+QPointF arrowKeyDelta(int key, qreal step) {
+  switch (key) {
+  case Qt::Key_Left:
+    return {-step, 0};
+  case Qt::Key_Right:
+    return {step, 0};
+  case Qt::Key_Up:
+    return {0, -step};
+  case Qt::Key_Down:
+    return {0, step};
+  default:
+    return {};
+  }
 }
 
 bool supportsCreationConstraint(CaptureEditor::Tool tool) {
@@ -441,6 +480,12 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     textCaretTimer_.start();
     update();
   });
+  // A run of nudges persists once, shortly after the last key, instead of
+  // re-rendering the snapshot on every auto-repeat.
+  nudgePersistTimer_.setSingleShot(true);
+  nudgePersistTimer_.setInterval(kNudgeCoalesceMs);
+  connect(&nudgePersistTimer_, &QTimer::timeout, this,
+          [this] { scheduleSnapshot(); });
   connect(
       textEditor_, &QLineEdit::textChanged, this, [this](const QString &text) {
         const QFontMetrics metrics(textEditor_->font());
@@ -918,6 +963,44 @@ void CaptureEditor::toggleTextBackground() {
                 .arg(textBackgroundName(textBackground_).toLower()));
 }
 
+QPointF CaptureEditor::constrainedResizeEndpoint(
+    const Annotation &annotation, const QPointF &candidate,
+    const QPointF &fixed, const QPointF &originalMoving) const {
+  QPointF point = candidate;
+  if (resizeConstraintActive_) {
+    if (annotation.kind == Annotation::Kind::Arrow ||
+        annotation.kind == Annotation::Kind::Line) {
+      point = constrainedCreationEndpoint(Tool::Line, fixed, candidate);
+    } else {
+      point = aspectLockedEndpoint(fixed, originalMoving, candidate);
+    }
+  }
+  if (annotation.kind == Annotation::Kind::Redaction)
+    return constrainedRedactionEndpoint(point, fixed, originalMoving);
+  return point;
+}
+
+void CaptureEditor::nudgeSelectedAnnotation(const QPointF &delta) {
+  if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
+    return;
+  // Presses in quick succession (a held key) share one undo entry and one
+  // deferred snapshot.
+  if (!nudgeTimer_.isValid() || nudgeTimer_.elapsed() > kNudgeCoalesceMs)
+    recordEdit();
+  nudgeTimer_.restart();
+  translateAnnotation(annotations_[selectedAnnotation_], delta);
+  setStatus(QStringLiteral("Nudged · arrows move 1 px · Shift 10 px"));
+  nudgePersistTimer_.start();
+}
+
+void CaptureEditor::endNudgeRun() {
+  nudgeTimer_.invalidate();
+  if (nudgePersistTimer_.isActive()) {
+    nudgePersistTimer_.stop();
+    scheduleSnapshot();
+  }
+}
+
 QRectF CaptureEditor::colorPaletteRect() const {
   const qreal scale = toolbarScale(width());
   const qreal toolbarWidth = kToolbarWidth * scale;
@@ -1334,6 +1417,7 @@ void CaptureEditor::cancelActiveDragForHistory() {
   dragging_ = false;
   creationConstraintActive_ = false;
   creationCenteredActive_ = false;
+  resizeConstraintActive_ = false;
   interaction_ = Interaction::None;
   dragStartStateValid_ = false;
   dragChanged_ = false;
@@ -1345,6 +1429,8 @@ void CaptureEditor::cancelActiveDragForHistory() {
 }
 
 void CaptureEditor::pushUndoState(const EditState &state) {
+  // Any other edit ends a run of coalesced nudges.
+  endNudgeRun();
   undoStack_.push_back(state);
   constexpr qsizetype maximumUndoStates = 100;
   while (undoStack_.size() > maximumUndoStates)
@@ -1355,6 +1441,7 @@ void CaptureEditor::pushUndoState(const EditState &state) {
 void CaptureEditor::recordEdit() { pushUndoState(editState()); }
 
 void CaptureEditor::undoEdit() {
+  endNudgeRun();
   cancelActiveDragForHistory();
   if (undoStack_.isEmpty()) {
     setStatus(QStringLiteral("Nothing to undo"));
@@ -1367,6 +1454,7 @@ void CaptureEditor::undoEdit() {
 }
 
 void CaptureEditor::redoEdit() {
+  endNudgeRun();
   cancelActiveDragForHistory();
   if (redoStack_.isEmpty()) {
     setStatus(QStringLiteral("Nothing to redo"));
@@ -1535,6 +1623,7 @@ void CaptureEditor::handleEscape() {
   dragChanged_ = false;
   creationConstraintActive_ = false;
   creationCenteredActive_ = false;
+  resizeConstraintActive_ = false;
   dragging_ = false;
   interaction_ = Interaction::None;
   colorPaletteOpen_ = false;
@@ -1866,12 +1955,21 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     event->accept();
     return;
   }
-  if (event->key() == Qt::Key_Shift && phase_ == Phase::Edit && dragging_ &&
-      supportsCreationConstraint(tool_)) {
-    creationConstraintActive_ = true;
-    event->accept();
-    update();
-    return;
+  if (event->key() == Qt::Key_Shift && phase_ == Phase::Edit && dragging_) {
+    // Shift pressed mid-drag constrains the drag: creation for drawing
+    // tools, handle resizing for the Select tool.
+    const bool resizing =
+        tool_ == Tool::Select && (interaction_ == Interaction::ResizeStart ||
+                                  interaction_ == Interaction::ResizeEnd);
+    if (resizing)
+      resizeConstraintActive_ = true;
+    else if (supportsCreationConstraint(tool_))
+      creationConstraintActive_ = true;
+    if (resizing || supportsCreationConstraint(tool_)) {
+      event->accept();
+      update();
+      return;
+    }
   }
   if (event->key() == Qt::Key_Alt && phase_ == Phase::Edit && dragging_ &&
       supportsCenteredCreation(tool_)) {
@@ -1959,6 +2057,19 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() == Qt::Key_D &&
              event->modifiers() == Qt::AltModifier) {
     duplicateSelectedAnnotation();
+  } else if (const QPointF nudge = arrowKeyDelta(
+                 event->key(), heldModifiers(event->modifiers())
+                                       .testFlag(Qt::ShiftModifier)
+                                   ? kNudgeStepShift
+                                   : kNudgeStep);
+             !nudge.isNull() &&
+             !heldModifiers(event->modifiers())
+                  .testAnyFlags(Qt::ControlModifier | Qt::AltModifier |
+                                Qt::MetaModifier) &&
+             selectedAnnotation_ >= 0 &&
+             selectedAnnotation_ < annotations_.size() && !dragging_ &&
+             !textEditor_->isVisible()) {
+    nudgeSelectedAnnotation(nudge);
   } else if ((event->key() == Qt::Key_Delete ||
               event->key() == Qt::Key_Backspace) &&
              !selectedAnnotations_.isEmpty()) {
@@ -2095,8 +2206,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
 
 void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
-  if (event->key() == Qt::Key_Shift && creationConstraintActive_) {
+  if (event->key() == Qt::Key_Shift &&
+      (creationConstraintActive_ || resizeConstraintActive_)) {
     creationConstraintActive_ = false;
+    resizeConstraintActive_ = false;
     event->accept();
     update();
     return;
@@ -2214,19 +2327,13 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
         translateAnnotation(annotation, point - dragStart_);
       } else if (interaction_ == Interaction::ResizeStart) {
         if (hasEndpointHandles(annotation.kind)) {
-          annotation.start =
-              annotation.kind == Annotation::Kind::Redaction
-                  ? constrainedRedactionEndpoint(point, annotation.end,
-                                                 originalAnnotation_.start)
-                  : point;
+          annotation.start = constrainedResizeEndpoint(
+              annotation, point, annotation.end, originalAnnotation_.start);
         }
       } else if (interaction_ == Interaction::ResizeEnd) {
         if (hasEndpointHandles(annotation.kind)) {
-          annotation.end =
-              annotation.kind == Annotation::Kind::Redaction
-                  ? constrainedRedactionEndpoint(point, annotation.start,
-                                                 originalAnnotation_.end)
-                  : point;
+          annotation.end = constrainedResizeEndpoint(
+              annotation, point, annotation.start, originalAnnotation_.end);
         } else if (isStrokeKind(annotation.kind)) {
           const QRectF originalBounds = annotationBounds(originalAnnotation_);
           const qreal scaleX =
@@ -2380,6 +2487,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (event->button() != Qt::LeftButton)
     return;
   cursor_ = event->position();
+  endNudgeRun();
   if (phase_ == Phase::Select) {
     if (windowMode_) {
       chooseWindow(windowAt(cursor_));
@@ -2545,6 +2653,9 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       dragChanged_ = false;
       dragStart_ = point;
       dragging_ = true;
+      resizeConstraintActive_ = (interaction_ == Interaction::ResizeStart ||
+                                 interaction_ == Interaction::ResizeEnd) &&
+                                event->modifiers().testFlag(Qt::ShiftModifier);
       setStatus(selectedAnnotations_.size() > 1
                     ? QStringLiteral("%1 layers selected · drag to move")
                           .arg(selectedAnnotations_.size())
@@ -2654,6 +2765,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     dragStartStateValid_ = false;
     dragChanged_ = false;
     dragging_ = false;
+    resizeConstraintActive_ = false;
     interaction_ = Interaction::None;
     if (cropped)
       setStatus(QStringLiteral(

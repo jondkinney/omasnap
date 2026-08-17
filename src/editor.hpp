@@ -186,6 +186,10 @@ private:
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
   [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
+  [[nodiscard]] QPointF
+  constrainedResizeEndpoint(const Annotation &annotation,
+                            const QPointF &candidate, const QPointF &fixed,
+                            const QPointF &originalMoving) const;
 
   void acceptText();
   void applyCustomColor(const QPointF &position);
@@ -216,6 +220,8 @@ private:
   void scaleSelectedAnnotation(qreal factor);
   void toggleShapeFill();
   void toggleTextBackground();
+  void nudgeSelectedAnnotation(const QPointF &delta);
+  void endNudgeRun();
   void undoEdit();
   void updatePointerCursor();
 
@@ -243,6 +249,7 @@ private:
   bool marqueeSelecting_ = false;
   bool marqueeAdditive_ = false;
   bool creationCenteredActive_ = false;
+  bool resizeConstraintActive_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
   // Cut tool live-drag state. cutDragStart_/cutBandLo_/cutBandHi_ and
@@ -351,6 +358,8 @@ private:
   bool textEditPill_ = false;
   bool textCaretOn_ = true;
   QTimer textCaretTimer_;
+  QElapsedTimer nudgeTimer_;
+  QTimer nudgePersistTimer_;
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
 };
