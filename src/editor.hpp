@@ -138,6 +138,8 @@ private:
   [[nodiscard]] QRectF editImageRect() const;
   [[nodiscard]] qreal editScale() const;
   [[nodiscard]] QPointF toAnnotationPoint(const QPointF &position) const;
+  [[nodiscard]] QPointF toUnclampedAnnotationPoint(const QPointF &position) const;
+  [[nodiscard]] bool selectedLayerAcceptsPoint(const QPointF &point) const;
   [[nodiscard]] QRectF sourceRect(const QRectF &logicalRect) const;
   [[nodiscard]] int windowAt(const QPointF &position) const;
   [[nodiscard]] int windowInDirection(int current, int key) const;

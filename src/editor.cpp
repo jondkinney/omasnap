@@ -756,6 +756,30 @@ QPointF CaptureEditor::toAnnotationPoint(const QPointF &position) const {
                      selection_.height())};
 }
 
+QPointF
+CaptureEditor::toUnclampedAnnotationPoint(const QPointF &position) const {
+  const QRectF image = editImageRect();
+  const qreal scale = std::max<qreal>(editScale(), 0.001);
+  return {(position.x() - image.left()) / scale,
+          (position.y() - image.top()) / scale};
+}
+
+bool CaptureEditor::selectedLayerAcceptsPoint(const QPointF &point) const {
+  if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
+    return false;
+  const Annotation &selected = annotations_.at(selectedAnnotation_);
+  const qreal tolerance = 9.0 / std::max<qreal>(editScale(), 0.01);
+  const QRectF bounds = annotationBounds(selected);
+  const bool endpoints = hasEndpointHandles(selected.kind);
+  const QPointF first = endpoints ? selected.start : bounds.topLeft();
+  const QPointF last = endpoints ? selected.end : bounds.bottomRight();
+  if (endpoints && QLineF(point, first).length() <= tolerance)
+    return true;
+  if (QLineF(point, last).length() <= tolerance)
+    return true;
+  return annotationAt(point) == selectedAnnotation_;
+}
+
 QRectF CaptureEditor::sourceRect(const QRectF &logicalRect) const {
   if (capture_.source.isNull() || capture_.previewSize.isEmpty())
     return {};
@@ -1897,10 +1921,16 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       return;
     }
   }
-  if (!editImageRect().contains(cursor_))
+  // A layer that ran off the capture keeps its handles and body live outside
+  // the canvas, so it can be resized or dragged back in instead of being
+  // stranded. Drags still follow the clamped pointer, so this only ever pulls
+  // layers back; anything else outside the canvas stays inert.
+  const bool insideImage = editImageRect().contains(cursor_);
+  const QPointF point = insideImage ? toAnnotationPoint(cursor_)
+                                    : toUnclampedAnnotationPoint(cursor_);
+  if (!insideImage &&
+      (tool_ != Tool::Select || !selectedLayerAcceptsPoint(point)))
     return;
-
-  const QPointF point = toAnnotationPoint(cursor_);
   if (tool_ == Tool::Eyedropper) {
     customColor_ = sampleSourceColor(capture_.source, capture_.previewSize,
                                      selection_, editImageRect(), cursor_);
