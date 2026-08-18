@@ -126,7 +126,33 @@ private:
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   [[nodiscard]] bool annotationSelected(int index) const;
+public:
+  /// Number of annotation layers. Test accessor.
+  [[nodiscard]] int annotationCountForTest() const {
+    return static_cast<int>(annotations_.size());
+  }
+  /// Currently armed tool. Test accessor: cursor shape is a poor proxy, since
+  /// what is under the pointer changes it.
+  [[nodiscard]] Tool armedToolForTest() const { return tool_; }
+  /// Number of selected layers. Test accessor.
+  [[nodiscard]] int selectedCountForTest() const {
+    return static_cast<int>(selectedAnnotations_.size());
+  }
+
+private:
   [[nodiscard]] int annotationAt(const QPointF &point) const;
+  /// Topmost layer whose *edge* is under `point`. Areas that a drawing tool
+  /// should be able to draw across, such as redactions, spotlights and filled
+  /// shapes, are grabbable only by their border, so their interiors stay
+  /// canvas.
+  /// Whether the armed tool picks a layer up rather than working over it.
+  [[nodiscard]] bool toolGrabsLayer(int index) const;
+  /// Whether a press here would grab a layer, which is what the cursor reads.
+  [[nodiscard]] bool pointerGrabsLayer() const;
+  [[nodiscard]] int annotationEdgeAt(const QPointF &point) const;
+  [[nodiscard]] bool annotationContains(const Annotation &annotation,
+                                        const QPointF &point,
+                                        bool edgeOnly) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
                                            const QPointF &second) const;

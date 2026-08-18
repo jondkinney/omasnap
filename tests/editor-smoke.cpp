@@ -1117,7 +1117,7 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
        {std::pair{200, 300}, std::pair{250, 300}, std::pair{300, 300}}) {
     QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(x, y));
     application.processEvents();
-    if (editor.cursor().shape() != Qt::PointingHandCursor) {
+    if (editor.armedToolForTest() != CaptureEditor::Tool::Marker) {
       error = QStringLiteral("Marker tool did not remain active after click");
       return false;
     }
@@ -1125,12 +1125,15 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
 
   QTest::keyClick(&editor, Qt::Key_Escape);
   application.processEvents();
-  if (editor.cursor().shape() != Qt::ArrowCursor) {
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Select) {
     error = QStringLiteral("Escape did not return to Select tool");
     return false;
   }
 
   QTest::keyClick(&editor, Qt::Key_R);
+  // Over empty canvas: a drawing tool draws, so it shows the crosshair. (Over
+  // a layer's edge it shows the move cursor, checked separately below.)
+  QTest::mouseMove(&editor, QPoint(680, 480), 10);
   application.processEvents();
   if (editor.cursor().shape() != Qt::CrossCursor) {
     error = QStringLiteral("Rectangle tool did not set cross cursor");
@@ -1163,7 +1166,7 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
 
   QTest::keyClick(&editor, Qt::Key_T);
   application.processEvents();
-  if (editor.cursor().shape() != Qt::IBeamCursor) {
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Text) {
     error = QStringLiteral("Text tool did not set IBeam cursor");
     return false;
   }
@@ -1173,7 +1176,7 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
   QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("Text 1"));
   QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
   application.processEvents();
-  if (editor.cursor().shape() != Qt::IBeamCursor) {
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Text) {
     error = QStringLiteral(
         "Text tool did not remain active after submitting new text");
     return false;
@@ -1184,7 +1187,7 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
   QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("Text 2"));
   QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
   application.processEvents();
-  if (editor.cursor().shape() != Qt::IBeamCursor) {
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Text) {
     error = QStringLiteral(
         "Text tool did not remain active after second text commit");
     return false;
@@ -1192,7 +1195,7 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
 
   QTest::mouseClick(&editor, Qt::RightButton, Qt::NoModifier, QPoint(100, 100));
   application.processEvents();
-  if (editor.cursor().shape() != Qt::ArrowCursor) {
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Select) {
     error = QStringLiteral(
         "Right-click did not return from Text tool to Select tool");
     return false;
@@ -1427,6 +1430,270 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+
+/** Checks that a drawing tool moves the layer under its edge without losing
+ *  the tool: adjust what is there, then keep drawing. */
+bool runHoverMoveSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+
+  // A hollow rectangle, then the arrow tool armed.
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 250));
+  QTest::mouseMove(&editor, QPoint(500, 400), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(500, 400));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_A);
+  application.processEvents();
+
+  // Inside the outline is canvas: the arrow tool draws there.
+  const QImage beforeDraw = flushedSnapshot(editor, snapshotPath);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(380, 320));
+  QTest::mouseMove(&editor, QPoint(450, 360), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(450, 360));
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath) == beforeDraw) {
+    error = QStringLiteral("Drawing inside a hollow shape did not draw");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+
+  // On the outline it grabs and moves, and the arrow tool survives.
+  const QImage beforeMove = flushedSnapshot(editor, snapshotPath);
+  const int layersBeforeMove = editor.annotationCountForTest();
+  QTest::mouseMove(&editor, QPoint(300, 250), 10);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::SizeAllCursor) {
+    error = QStringLiteral("An edge under a drawing tool showed no move cursor");
+    return false;
+  }
+  // The border is wide enough to hit without aiming: 10 px outside the stroke
+  // still grabs, which is what makes a hollow shape draggable in practice.
+  QTest::mouseMove(&editor, QPoint(400, 240), 10);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::SizeAllCursor) {
+    error = QStringLiteral("The edge grab band was too narrow to hit");
+    return false;
+  }
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 250));
+  QTest::mouseMove(&editor, QPoint(340, 290), 10);
+  application.processEvents();
+  {
+    // Mid-grab there must be no half-drawn annotation following the pointer:
+    // the on-screen frame should differ from a live arrow being dragged out.
+    const QImage midGrab = editor.grab().toImage();
+    QTest::mouseMove(&editor, QPoint(420, 370), 10);
+    application.processEvents();
+    const QImage laterGrab = editor.grab().toImage();
+    if (midGrab == laterGrab) {
+      error = QStringLiteral("Grab did not track the pointer");
+      return false;
+    }
+    // With the arrow tool armed, a grab must not also draw an arrow from the
+    // grab point to the pointer. Halfway along that line is empty canvas once
+    // the rectangle has moved away, so it must still read as background.
+    const QColor midLine = laterGrab.pixelColor(360, 310);
+    if (midLine != QColor(QStringLiteral("#182030"))) {
+      error = QStringLiteral("A grab also drew the armed tool (%1 at 360,310)")
+                  .arg(midLine.name());
+      return false;
+    }
+  }
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(420, 370));
+  application.processEvents();
+  if (editor.annotationCountForTest() != layersBeforeMove) {
+    error = QStringLiteral("A grab left a stray annotation behind (%1 -> %2)")
+                .arg(layersBeforeMove)
+                .arg(editor.annotationCountForTest());
+    return false;
+  }
+  if (flushedSnapshot(editor, snapshotPath) == beforeMove) {
+    error = QStringLiteral("Grabbing an edge did not move the layer");
+    return false;
+  }
+  // The distinction that matters: it moved the layer rather than drawing a
+  // new one, which would also have changed the snapshot.
+  if (editor.annotationCountForTest() != layersBeforeMove) {
+    error = QStringLiteral("Grabbing an edge drew instead of moving (%1 -> %2)")
+                .arg(layersBeforeMove)
+                .arg(editor.annotationCountForTest());
+    return false;
+  }
+
+  // That move is an edit like any other, so one undo puts it back and a
+  // second one is needed to reach whatever came before it.
+  {
+    const QImage moved = flushedSnapshot(editor, snapshotPath);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    application.processEvents();
+    const QImage undone = flushedSnapshot(editor, snapshotPath);
+    if (undone == moved) {
+      error = QStringLiteral("Undo did not put the moved layer back");
+      return false;
+    }
+    if (editor.annotationCountForTest() != layersBeforeMove) {
+      error = QStringLiteral("Undoing a move removed the layer instead");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+    application.processEvents();
+    if (flushedSnapshot(editor, snapshotPath) != moved) {
+      error = QStringLiteral("Redo did not restore the move");
+      return false;
+    }
+  }
+
+  // Still the arrow tool. The moved layer is selected, so one click on empty
+  // canvas puts it down without drawing anything...
+  const QImage beforeDismiss = flushedSnapshot(editor, snapshotPath);
+  const int layersBeforeDismiss = editor.annotationCountForTest();
+  if (editor.selectedCountForTest() == 0) {
+    error = QStringLiteral("Moving a layer did not leave it selected");
+    return false;
+  }
+  QTest::mouseMove(&editor, QPoint(620, 200), 10);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor) {
+    error = QStringLiteral("Moving a layer left the drawing tool behind");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 200));
+  application.processEvents();
+  if (editor.annotationCountForTest() != layersBeforeDismiss ||
+      flushedSnapshot(editor, snapshotPath) != beforeDismiss) {
+    error = QStringLiteral("Clicking off a selected layer drew something");
+    return false;
+  }
+  // ...and it really is deselected.
+  if (editor.selectedCountForTest() != 0) {
+    error = QStringLiteral("Clicking off a selected layer left it selected");
+    return false;
+  }
+
+  // A selected layer's handle resizes it rather than being grabbed as a move,
+  // with the tool still armed. The text tool's wrap handle depends on this.
+  {
+    QTest::keyClick(&editor, Qt::Key_R);
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+    QTest::mouseMove(&editor, QPoint(350, 300), 10);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 300));
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(275, 200));
+    application.processEvents();
+    if (editor.selectedCountForTest() == 0) {
+      error = QStringLiteral("Could not select the rectangle to resize it");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_A); // a drawing tool, not Select
+    application.processEvents();
+    const QImage beforeResize = flushedSnapshot(editor, snapshotPath);
+    const int layersBeforeResize = editor.annotationCountForTest();
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 300));
+    QTest::mouseMove(&editor, QPoint(420, 360), 10);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(420, 360));
+    application.processEvents();
+    if (editor.annotationCountForTest() != layersBeforeResize) {
+      error = QStringLiteral("Dragging a handle drew instead of resizing");
+      return false;
+    }
+    if (flushedSnapshot(editor, snapshotPath) == beforeResize) {
+      error = QStringLiteral("Dragging a handle did not resize the layer");
+      return false;
+    }
+    // The distinction that matters: a resize leaves the opposite corner where
+    // it was, a move would have taken the whole rectangle with it.
+    const QImage resized = editor.grab().toImage();
+    if (resized.pixelColor(202, 202) == QColor(QStringLiteral("#182030"))) {
+      error = QStringLiteral("Dragging a handle moved the layer instead of "
+                             "resizing it");
+      return false;
+    }
+  }
+
+  // A counter is stamped on top of the work, so it goes down over an existing
+  // layer instead of grabbing it, including on the edge that every other tool
+  // would move.
+  {
+    QTest::keyClick(&editor, Qt::Key_C);
+    application.processEvents();
+    QTest::mouseMove(&editor, QPoint(420, 370), 10);
+    application.processEvents();
+    if (editor.cursor().shape() != Qt::PointingHandCursor) {
+      error = QStringLiteral("The counter offered to move the layer under it");
+      return false;
+    }
+    const int layersBeforeMarker = editor.annotationCountForTest();
+    // The resized layer is still selected, so this click only puts it down.
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(420, 370));
+    application.processEvents();
+    if (editor.annotationCountForTest() != layersBeforeMarker ||
+        editor.selectedCountForTest() != 0) {
+      error = QStringLiteral("Dismissing a selection also placed a counter");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(420, 370));
+    application.processEvents();
+    if (editor.annotationCountForTest() != layersBeforeMarker + 1) {
+      error = QStringLiteral("A counter on top of a layer did not go down");
+      return false;
+    }
+    if (editor.selectedCountForTest() != 0) {
+      error = QStringLiteral("Placing a counter grabbed the layer under it");
+      return false;
+    }
+    // Its own counters it does pick up: one just placed has to be movable
+    // without changing tools, and two that must overlap are placed apart and
+    // dragged together.
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(420, 370));
+    application.processEvents();
+    if (editor.annotationCountForTest() != layersBeforeMarker + 1) {
+      error = QStringLiteral("Clicking a counter placed another on top of it");
+      return false;
+    }
+    if (editor.selectedCountForTest() != 1) {
+      error = QStringLiteral("Clicking a counter did not pick it up");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_A);
+    application.processEvents();
+  }
+
+  // ...and the drag after that draws an arrow.
+  const QImage beforeSecond = flushedSnapshot(editor, snapshotPath);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 200));
+  QTest::mouseMove(&editor, QPoint(660, 260), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(660, 260));
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath) == beforeSecond) {
+    error = QStringLiteral("Could not draw after dismissing the selection");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1493,6 +1760,10 @@ int main(int argc, char **argv) {
   if (!runContinuousAnnotationToolsSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 80;
+  }
+  if (!runHoverMoveSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 114;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -1797,15 +2068,23 @@ int main(int argc, char **argv) {
   QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
                       QPoint(530, 420));
   application.processEvents();
-  if (editor.cursor().shape() != Qt::CrossCursor ||
-      flushedSnapshot(editor, snapshotPath) == beforeFreehandSnapshot)
+  if (flushedSnapshot(editor, snapshotPath) == beforeFreehandSnapshot)
+    return 28;
+  // The pointer is left on the stroke it just drew, where a press would move
+  // it; the crosshair belongs to empty canvas.
+  QTest::mouseMove(&editor, QPoint(680, 470), 10);
+  application.processEvents();
+  // Off the stroke just drawn: standing on a layer shows the move cursor.
+  QTest::mouseMove(&editor, QPoint(680, 470), 10);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::CrossCursor)
     return 28;
   const QImage beforeMarkerSnapshot = flushedSnapshot(editor, snapshotPath);
   QTest::keyClick(&editor, Qt::Key_2);
   QTest::keyClick(&editor, Qt::Key_C);
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(470, 300));
   application.processEvents();
-  if (editor.cursor().shape() != Qt::PointingHandCursor ||
+  if (editor.armedToolForTest() != CaptureEditor::Tool::Marker ||
       flushedSnapshot(editor, snapshotPath) == beforeMarkerSnapshot)
     return 48;
   const QImage beforeTextSnapshot = flushedSnapshot(editor, snapshotPath);
