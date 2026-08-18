@@ -5,6 +5,7 @@
 #include "editor.hpp"
 #include "instance-lock-smoke.hpp"
 #include "pin-layout-smoke.hpp"
+#include "stitch-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
@@ -1756,6 +1757,10 @@ int main(int argc, char **argv) {
   if (!runViewportZoomSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 111;
+  }
+  if (!runStitchChecks()) {
+    qWarning().noquote() << QStringLiteral("Stitcher checks failed");
+    return 109;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

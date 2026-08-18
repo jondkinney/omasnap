@@ -48,6 +48,10 @@ qt_add_executable(omasnap
   src/eyedropper.cpp
   src/eyedropper.hpp
   src/surface-capture.cpp
+  src/stitch.cpp
+  src/stitch.hpp
+  src/auto-capture.cpp
+  src/auto-capture.hpp
   ${PROTOCOL_SOURCES}
   src/editor.cpp
   src/editor.hpp
@@ -106,6 +110,12 @@ qt_add_executable(omasnap-smoke
   tests/pin-lifecycle-smoke.hpp
   tests/pin-layout-smoke.cpp
   tests/pin-layout-smoke.hpp
+  src/stitch.cpp
+  src/stitch.hpp
+  src/auto-capture.cpp
+  src/auto-capture.hpp
+  tests/stitch-smoke.cpp
+  tests/stitch-smoke.hpp
 )
 qt_add_resources(omasnap-smoke "capture-fonts-smoke"
   PREFIX "/fonts"
@@ -127,6 +137,18 @@ target_link_libraries(omasnap-smoke PRIVATE
   Qt6::Widgets
   PkgConfig::WaylandClient
 )
+
+qt_add_executable(stitch-replay
+  src/stitch-replay.cpp
+  src/stitch.cpp
+  src/stitch.hpp
+)
+target_include_directories(stitch-replay PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_compile_features(stitch-replay PRIVATE cxx_std_23)
+target_compile_options(stitch-replay PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(stitch-replay PRIVATE Qt6::Core Qt6::Gui)
 
 install(TARGETS omasnap
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
