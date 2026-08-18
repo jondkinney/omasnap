@@ -18,6 +18,8 @@ enum class CleanupCall {
   Toplevel,
   ToplevelList,
   SourceManager,
+  Output,
+  OutputSourceManager,
   CaptureManager,
   Buffer,
   Pool,
@@ -26,7 +28,7 @@ enum class CleanupCall {
   Display,
 };
 
-std::array<CleanupCall, 13> cleanupCalls;
+std::array<CleanupCall, 16> cleanupCalls;
 std::size_t cleanupCallCount = 0;
 bool recordingCleanup = false;
 
@@ -71,6 +73,21 @@ void recordToplevelListDestroy(ext_foreign_toplevel_list_v1 *proxy) {
     recordCleanup<CleanupCall::ToplevelList>(proxy);
   else
     ::ext_foreign_toplevel_list_v1_destroy(proxy);
+}
+/** Records or forwards output release. */
+void recordOutputRelease(wl_output *proxy) {
+  if (recordingCleanup)
+    recordCleanup<CleanupCall::Output>(proxy);
+  else
+    ::wl_output_release(proxy);
+}
+/** Records or forwards output-source-manager destruction. */
+void recordOutputSourceManagerDestroy(
+    ext_output_image_capture_source_manager_v1 *proxy) {
+  if (recordingCleanup)
+    recordCleanup<CleanupCall::OutputSourceManager>(proxy);
+  else
+    ::ext_output_image_capture_source_manager_v1_destroy(proxy);
 }
 /** Records or forwards source-manager destruction. */
 void recordSourceManagerDestroy(
@@ -130,6 +147,9 @@ void recordDisplayDisconnect(wl_display *proxy) {
 #define ext_foreign_toplevel_list_v1_destroy recordToplevelListDestroy
 #define ext_foreign_toplevel_image_capture_source_manager_v1_destroy           \
   recordSourceManagerDestroy
+#define wl_output_release recordOutputRelease
+#define ext_output_image_capture_source_manager_v1_destroy                     \
+  recordOutputSourceManagerDestroy
 #define ext_image_copy_capture_manager_v1_destroy recordCaptureManagerDestroy
 #define wl_buffer_destroy recordBufferDestroy
 #define wl_shm_pool_destroy recordPoolDestroy
@@ -143,6 +163,8 @@ void recordDisplayDisconnect(wl_display *proxy) {
 #undef ext_foreign_toplevel_handle_v1_destroy
 #undef ext_foreign_toplevel_list_v1_destroy
 #undef ext_foreign_toplevel_image_capture_source_manager_v1_destroy
+#undef wl_output_release
+#undef ext_output_image_capture_source_manager_v1_destroy
 #undef ext_image_copy_capture_manager_v1_destroy
 #undef wl_buffer_destroy
 #undef wl_shm_pool_destroy
@@ -155,7 +177,7 @@ bool runWaylandCleanupChecks() {
   cleanupCallCount = 0;
   recordingCleanup = true;
   {
-    CaptureState state;
+    capture_detail::CaptureState state;
     state.display = reinterpret_cast<wl_display *>(1);
     state.registry = reinterpret_cast<wl_registry *>(2);
     state.shm = reinterpret_cast<wl_shm *>(3);
@@ -170,10 +192,18 @@ bool runWaylandCleanupChecks() {
     state.buffer = reinterpret_cast<wl_buffer *>(10);
     state.pool = reinterpret_cast<wl_shm_pool *>(11);
     for (const auto handle : {12, 13}) {
-      auto toplevel = std::make_unique<Toplevel>();
+      auto toplevel = std::make_unique<capture_detail::Toplevel>();
       toplevel->handle = reinterpret_cast<ext_foreign_toplevel_handle_v1 *>(
           static_cast<std::uintptr_t>(handle));
       state.toplevels.push_back(std::move(toplevel));
+    }
+    state.outputSourceManager =
+        reinterpret_cast<ext_output_image_capture_source_manager_v1 *>(14);
+    for (const auto handle : {15, 16}) {
+      auto output = std::make_unique<capture_detail::Output>();
+      output->handle =
+          reinterpret_cast<wl_output *>(static_cast<std::uintptr_t>(handle));
+      state.outputs.push_back(std::move(output));
     }
   }
   recordingCleanup = false;
@@ -181,7 +211,9 @@ bool runWaylandCleanupChecks() {
       CleanupCall::Frame,         CleanupCall::Session,
       CleanupCall::Source,        CleanupCall::Toplevel,
       CleanupCall::Toplevel,      CleanupCall::ToplevelList,
-      CleanupCall::SourceManager, CleanupCall::CaptureManager,
+      CleanupCall::SourceManager, CleanupCall::Output,
+      CleanupCall::Output,        CleanupCall::OutputSourceManager,
+      CleanupCall::CaptureManager,
       CleanupCall::Buffer,        CleanupCall::Pool,
       CleanupCall::Shm,           CleanupCall::Registry,
       CleanupCall::Display,

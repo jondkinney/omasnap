@@ -24,6 +24,7 @@
 #include <QUrl>
 #include <QWheelEvent>
 #include <QtTest/QTest>
+#include <QElapsedTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -1617,6 +1618,47 @@ int main(int argc, char **argv) {
   QApplication application(argc, argv);
   if (!loadCaptureFonts())
     return 17;
+  // Live output capture against a real compositor (the smoke's own
+  // Wayland connection; Qt's platform does not matter): open a
+  // session on the named output, grab several frames through the same
+  // buffer, and time them — scroll capture needs many per second.
+  const QString outputName = qEnvironmentVariable("OMASNAP_SMOKE_OUTPUT");
+  if (!outputName.isEmpty()) {
+    OutputCapture output;
+    QString outputError;
+    if (!output.open(outputName, outputError)) {
+      qWarning().noquote() << outputError;
+      return 108;
+    }
+    QImage frame;
+    QElapsedTimer stopwatch;
+    for (int index = 0; index < 5; ++index) {
+      stopwatch.start();
+      if (!output.grab(frame, outputError)) {
+        qWarning().noquote() << outputError;
+        return 108;
+      }
+      if (frame.isNull() || frame.size() != output.bufferSize()) {
+        qWarning().noquote() << QStringLiteral(
+            "Output frame size does not match the announced buffer");
+        return 108;
+      }
+      qInfo().noquote() << QStringLiteral("output %1 frame %2: %3x%4 in %5 ms")
+                               .arg(outputName)
+                               .arg(index + 1)
+                               .arg(frame.width())
+                               .arg(frame.height())
+                               .arg(stopwatch.elapsed());
+    }
+    const QString outputRoot =
+        argc > 1 ? QString::fromLocal8Bit(argv[1])
+                 : QDir(QDir::tempPath())
+                       .filePath(QStringLiteral("omasnap-native-smoke"));
+    if (!frame.save(outputRoot + QStringLiteral("-native-output.png"), "PNG"))
+      return 108;
+    return 0;
+  }
+
   QString snapshotError;
   if (!runPositionalImageTargetCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;
