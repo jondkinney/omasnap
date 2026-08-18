@@ -1946,6 +1946,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+/** Runs the interaction and rendering smoke checks. */
 /** Checks that a modifier left over from the launch binding is not believed.
  *  A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
  *  leaves that modifier held as the overlay takes keyboard focus. Its release
@@ -2111,6 +2112,114 @@ bool runSpotlightHandleSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Runs the interaction and rendering smoke checks. */
+bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+  const auto drag = [&](const QPoint &from, const QPoint &to) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(&editor, to, 20);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, to);
+    application.processEvents();
+  };
+
+  // A rectangle at annotation (400,195)-(550,345); the widget offset is
+  // (100,105). Drag it 100 px right so its right side leaves the canvas.
+  QTest::keyClick(&editor, Qt::Key_R);
+  drag(QPoint(500, 300), QPoint(650, 450));
+  Annotation rectangle;
+  rectangle.kind = Annotation::Kind::Rectangle;
+  rectangle.start = {400, 195};
+  rectangle.end = {550, 345};
+  rectangle.color = QColor(QStringLiteral("#ff375f"));
+  rectangle.size = 4;
+  if (!snapshotMatches(expected({rectangle}))) {
+    error = QStringLiteral("Outside-canvas smoke: rectangle did not render");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_V);
+  // Press the top edge, clear of the corner handles, so this is a move.
+  drag(QPoint(575, 300), QPoint(675, 300));
+  Annotation shifted = rectangle;
+  shifted.start.rx() += 100;
+  shifted.end.rx() += 100;
+  if (!snapshotMatches(expected({shifted}))) {
+    error = QStringLiteral("Outside-canvas smoke: rectangle did not move");
+    return false;
+  }
+
+  // Its bottom-right handle now sits outside the canvas (widget (750,450));
+  // dragging it back in resizes the layer.
+  drag(QPoint(750, 450), QPoint(650, 400));
+  Annotation resized = shifted;
+  resized.end = {550, 295};
+  if (!snapshotMatches(expected({resized}))) {
+    error = QStringLiteral(
+        "Dragging a handle that lies outside the canvas did not resize");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({shifted}))) {
+    error = QStringLiteral("Undo did not restore the outside-handle resize");
+    return false;
+  }
+
+  // Its right edge is outside the canvas too (widget x 750); grabbing the
+  // layer there drags it back in.
+  drag(QPoint(750, 375), QPoint(650, 375));
+  if (!snapshotMatches(expected({rectangle}))) {
+    error = QStringLiteral(
+        "Grabbing a selected layer outside the canvas did not move it");
+    return false;
+  }
+
+  // Outside the canvas, anything but the selected layer stays inert: a
+  // click on the surround neither deselects nor changes anything, so
+  // Delete still removes the layer.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(760, 150));
+  application.processEvents();
+  if (!snapshotMatches(expected({rectangle}))) {
+    error = QStringLiteral("A click outside the canvas changed the capture");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected({}))) {
+    error = QStringLiteral("A click outside the canvas deselected the layer");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -2193,6 +2302,10 @@ int main(int argc, char **argv) {
   if (!runContinuousAnnotationToolsSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 80;
+  }
+  if (!runSelectOutsideCanvasSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 106;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
