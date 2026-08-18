@@ -27,7 +27,9 @@ class InlineTextEdit;
 [[nodiscard]] qreal selectionBoundsRadius(const Annotation &annotation,
                                           qreal inset);
 /// Status text for a spotlight's magnification; 1x reads as "no zoom".
-[[nodiscard]] QString spotlightMagnificationStatusForTest(qreal magnification);
+/// Status text for a spotlight: shape, zoom and ring, whichever one moved.
+[[nodiscard]] QString spotlightStatusForTest(SpotlightShape shape,
+                                             qreal magnification, qreal border);
 
 class CaptureEditor final : public QWidget {
   Q_OBJECT
@@ -209,8 +211,13 @@ public:
   [[nodiscard]] int selectedCountForTest() const {
     return static_cast<int>(selectedAnnotations_.size());
   }
+  /// Current status line. Test accessor.
+  [[nodiscard]] QString statusForTest() const { return status_; }
 
 private:
+  /// What the armed tool is currently set to, for the status line: shown on
+  /// arming so its options are discoverable without trying them.
+  [[nodiscard]] QString toolStatus() const;
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   /// Whether the armed tool picks a layer up rather than working over it.
   /// Moves a layer to the top of the stack, remapping every index that
@@ -350,6 +357,8 @@ private:
   int textSizeIndex_ = 1;
   TextBackground textBackground_ = TextBackground::Pill;
   qreal spotlightMagnification_ = 2.0;
+  /// Ring drawn around a spotlight's opening; 0 draws none.
+  qreal spotlightBorder_ = 4.0;
   SpotlightShape spotlightShape_ = SpotlightShape::Ellipse;
   RedactionStyle redactionStyle_ = RedactionStyle::Pixelate;
   quint32 activeRedactionSeed_ = 0;

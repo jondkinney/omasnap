@@ -616,9 +616,13 @@ void paintSpotlights(QPainter &painter, const QImage &source,
     painter.drawImage(lens, source, sample);
     painter.restore();
 
+    // A zero border is a clean spotlight: the dimming alone isolates the
+    // region, with no ring drawn over the content at its edge.
+    if (annotation->size <= 0.0)
+      continue;
     const QColor outline =
         annotation->color.isValid() ? annotation->color : QColor(Qt::white);
-    painter.setPen(QPen(outline, std::max<qreal>(2.0, annotation->size / 2.0),
+    painter.setPen(QPen(outline, std::max<qreal>(1.0, annotation->size / 2.0),
                         Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
     painter.drawPath(lensClip);

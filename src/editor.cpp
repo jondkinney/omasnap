@@ -80,17 +80,34 @@ qreal toolbarScale(qreal availableWidth) {
 // A spotlight at 1x is not a failed zoom, it is a plain highlight: the dimming
 // still isolates the region. Name that state so it reads as somewhere to stop
 // rather than the bottom of a range.
-QString spotlightMagnificationStatus(qreal magnification) {
-  return magnification <= 1.0
-             ? QStringLiteral("Spotlight · no zoom · wheel magnifies")
-             : QStringLiteral("Spotlight · %1× · wheel adjusts")
-                   .arg(magnification, 0, 'f', 1);
+/// The whole state of a spotlight in one line. Adjusting one of the three
+/// settings still reports all three: they interact (a ring reads differently
+/// at 3× than at 1×), and the two you are not touching should not have to be
+/// remembered or re-discovered by pressing keys to find out.
+QString spotlightStatus(SpotlightShape shape, qreal magnification,
+                        qreal border) {
+  const QString shapeName = shape == SpotlightShape::Ellipse
+                                ? QStringLiteral("ellipse")
+                            : shape == SpotlightShape::Rectangle
+                                ? QStringLiteral("rectangle")
+                                : QStringLiteral("rounded");
+  const QString zoom =
+      magnification <= 1.0
+          ? QStringLiteral("no zoom")
+          : QStringLiteral("%1×").arg(magnification, 0, 'f', 1);
+  const QString ring = border <= 0.0
+                           ? QStringLiteral("no border")
+                           : QStringLiteral("border %1").arg(qRound(border));
+  return QStringLiteral("Spotlight · %1 · %2 · %3 · S cycles shape · wheel "
+                        "zooms · Alt+wheel border")
+      .arg(shapeName, zoom, ring);
 }
 
 } // namespace
 
-QString spotlightMagnificationStatusForTest(qreal magnification) {
-  return spotlightMagnificationStatus(magnification);
+QString spotlightStatusForTest(SpotlightShape shape, qreal magnification,
+                               qreal border) {
+  return spotlightStatus(shape, magnification, border);
 }
 
 namespace {
@@ -973,6 +990,71 @@ void CaptureEditor::applyBoxResize(Annotation &annotation, Interaction handle,
   annotation.end = box.bottomRight();
 }
 
+QString CaptureEditor::toolStatus() const {
+  const int size = qRound(annotationSize_);
+  switch (tool_) {
+  case Tool::Select:
+    return QStringLiteral("Select · drag moves layers · wheel zooms · outer "
+                          "handles crop");
+  case Tool::Spotlight: {
+    const QString shape =
+        spotlightShape_ == SpotlightShape::Ellipse ? QStringLiteral("ellipse")
+        : spotlightShape_ == SpotlightShape::Rectangle
+            ? QStringLiteral("rectangle")
+            : QStringLiteral("rounded");
+    const QString zoom =
+        spotlightMagnification_ <= 1.0
+            ? QStringLiteral("no zoom")
+            : QStringLiteral("%1×").arg(spotlightMagnification_, 0, 'f', 1);
+    const QString ring =
+        spotlightBorder_ <= 0.0
+            ? QStringLiteral("no border")
+            : QStringLiteral("border %1").arg(qRound(spotlightBorder_));
+    return QStringLiteral("Spotlight · %1 · %2 · %3 · S cycles shape · wheel "
+                          "zooms · Alt+wheel border")
+        .arg(shape, zoom, ring);
+  }
+  case Tool::Redact:
+    return QStringLiteral("Redact · %1 · D toggles style")
+        .arg(redactionStyleName(redactionStyle_).toLower());
+  case Tool::Text:
+    return QStringLiteral("Text · size %1 · click to type")
+        .arg(QString::fromLatin1(
+            kTextSizeNames.at(static_cast<std::size_t>(textSizeIndex_))));
+  case Tool::Marker:
+    return QStringLiteral("Marker · next %1 · size %2 · wheel resizes")
+        .arg(nextMarker_)
+        .arg(size);
+  case Tool::Ocr:
+    return QStringLiteral("Copy text · drag over the words to copy them");
+  case Tool::Eyedropper:
+    return QStringLiteral("Eyedropper · click to take a color from the "
+                          "capture");
+  case Tool::Rectangle:
+    return QStringLiteral("Rectangle · size %1 · wheel resizes · Shift keeps "
+                          "it square")
+        .arg(size);
+  case Tool::Ellipse:
+    return QStringLiteral("Ellipse · size %1 · wheel resizes · Shift keeps "
+                          "it circular")
+        .arg(size);
+  case Tool::Cut:
+    return QStringLiteral("Cut · drag a band to remove it");
+  case Tool::Arrow:
+  case Tool::Line:
+  case Tool::Freehand:
+  case Tool::Highlighter:
+    break;
+  }
+  const QString name = tool_ == Tool::Arrow      ? QStringLiteral("Arrow")
+                       : tool_ == Tool::Line     ? QStringLiteral("Line")
+                       : tool_ == Tool::Freehand ? QStringLiteral("Pen")
+                                                 : QStringLiteral("Highlighter");
+  return QStringLiteral("%1 · size %2 · wheel resizes · Shift constrains")
+      .arg(name)
+      .arg(size);
+}
+
 bool CaptureEditor::annotationContains(const Annotation &annotation,
                                        const QPointF &point,
                                        bool edgeOnly) const {
@@ -1162,7 +1244,8 @@ void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
   if (annotation.kind == Annotation::Kind::Spotlight) {
     annotation.magnification =
         std::clamp(annotation.magnification * factor, 1.0, 4.0);
-    setStatus(spotlightMagnificationStatus(annotation.magnification));
+    setStatus(spotlightStatus(annotation.spotlightShape,
+                              annotation.magnification, annotation.size));
     commitPatch({selectedAnnotation_});
     return;
   }
@@ -2331,6 +2414,8 @@ void CaptureEditor::finish(OutputMode mode) {
 }
 
 void CaptureEditor::handleToolbar(const QString &action) {
+  const Tool toolBefore = tool_;
+  const QString statusBefore = status_;
   if (action == QStringLiteral("tool-select"))
     tool_ = Tool::Select;
   else if (action == QStringLiteral("tool-arrow"))
@@ -2359,6 +2444,7 @@ void CaptureEditor::handleToolbar(const QString &action) {
                             : spotlightShape_ == SpotlightShape::Rectangle
                                   ? SpotlightShape::RoundedRectangle
                                   : SpotlightShape::Ellipse;
+      setStatus(toolStatus());
     } else {
       tool_ = Tool::Spotlight;
     }
@@ -2429,12 +2515,16 @@ void CaptureEditor::handleToolbar(const QString &action) {
     finish(OutputMode::Save);
   else if (action == QStringLiteral("close"))
     close();
+  if (tool_ != toolBefore && status_ == statusBefore)
+    setStatus(toolStatus());
   updatePointerCursor();
   update();
 }
 
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
+  const Tool toolBefore = tool_;
+  const QString statusBefore = status_;
   if (capturePending_) {
     if (event->key() == Qt::Key_Escape)
       handleEscape();
@@ -2602,6 +2692,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
                             : spotlightShape_ == SpotlightShape::Rectangle
                                   ? SpotlightShape::RoundedRectangle
                                   : SpotlightShape::Ellipse;
+      setStatus(toolStatus());
     } else {
       tool_ = Tool::Spotlight;
     }
@@ -2670,6 +2761,11 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     QWidget::keyPressEvent(event);
     return;
   }
+  // Arming a tool says what it is set to, so its options are discoverable
+  // without pressing keys to find out. Handlers that report something more
+  // specific (a restyled layer, a toggled fill) have already set it.
+  if (tool_ != toolBefore && status_ == statusBefore)
+    setStatus(toolStatus());
   updatePointerCursor();
   update();
 }
@@ -3436,7 +3532,10 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     annotation.start = start;
     annotation.end = end;
     annotation.color = annotationColor();
-    annotation.size = annotationSize_;
+    // A spotlight's size is its ring width, which is its own setting: it can
+    // be zero, and it is not the stroke size the other tools share.
+    annotation.size =
+        tool_ == Tool::Spotlight ? spotlightBorder_ : annotationSize_;
     selectedAnnotation_ = -1;
     const bool redacted = tool_ == Tool::Redact;
     setStatus(redacted
@@ -3470,6 +3569,28 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     setStatus(QStringLiteral("Neucha · size %1 · wheel changes size")
                   .arg(QString::fromLatin1(kTextSizeNames.at(
                       static_cast<std::size_t>(textSizeIndex_)))));
+  } else if (tool_ == Tool::Spotlight &&
+             event->modifiers().testFlag(Qt::AltModifier)) {
+    // Alt+wheel is the spotlight's secondary control: the ring around the
+    // opening, down to none for a clean spotlight. Independent of the zoom,
+    // so a plain highlight can keep a ring and a loupe can go without one.
+    const int hoveredRing = hoveredSpotlightAt(event->position());
+    const qreal nextBorder =
+        std::clamp((hoveredRing >= 0 ? annotations_.at(hoveredRing).size
+                                     : spotlightBorder_) +
+                       step * 2.0,
+                   0.0, 12.0);
+    if (hoveredRing >= 0) {
+      annotations_[hoveredRing].size = nextBorder;
+      commitPatch({hoveredRing});
+    }
+    spotlightBorder_ = nextBorder;
+    setStatus(hoveredRing >= 0
+                  ? spotlightStatus(annotations_.at(hoveredRing).spotlightShape,
+                                    annotations_.at(hoveredRing).magnification,
+                                    nextBorder)
+                  : spotlightStatus(spotlightShape_, spotlightMagnification_,
+                                    nextBorder));
   } else if (tool_ == Tool::Spotlight) {
     const qreal delta = step > 0 ? 0.25 : -0.25;
     const int hovered = hoveredSpotlightAt(event->position());
@@ -3478,12 +3599,14 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
       annotation.magnification =
           std::clamp(annotation.magnification + delta, 1.0, 4.0);
       spotlightMagnification_ = annotation.magnification;
-      setStatus(spotlightMagnificationStatus(annotation.magnification));
+      setStatus(spotlightStatus(annotation.spotlightShape,
+                                annotation.magnification, annotation.size));
       commitPatch({hovered});
     } else {
       spotlightMagnification_ =
           std::clamp(spotlightMagnification_ + delta, 1.0, 4.0);
-      setStatus(spotlightMagnificationStatus(spotlightMagnification_));
+      setStatus(spotlightStatus(spotlightShape_, spotlightMagnification_,
+                                spotlightBorder_));
     }
   } else if (tool_ == Tool::Rectangle &&
              event->modifiers().testFlag(Qt::AltModifier)) {
@@ -3807,7 +3930,9 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       preview.end = span.p2();
     }
     preview.color = tool_ == Tool::Ocr ? QColor(Qt::white) : annotationColor();
-    preview.size = tool_ == Tool::Ocr ? 2.0 : annotationSize_;
+    preview.size = tool_ == Tool::Ocr          ? 2.0
+                   : tool_ == Tool::Spotlight ? spotlightBorder_
+                                              : annotationSize_;
     defaultAnnotations.push_back(std::move(preview));
   } else if (tool_ == Tool::Marker && image.contains(cursor_) && !dragging_ &&
              !pointerGrabsLayer()) {

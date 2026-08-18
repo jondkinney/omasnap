@@ -4445,15 +4445,93 @@ int main(int argc, char **argv) {
     return 117;
   }
   {
-    // 1x is a named state ("no zoom"), not the bottom of a magnification range.
-    if (spotlightMagnificationStatusForTest(1.0) !=
-            QStringLiteral("Spotlight · no zoom · wheel magnifies") ||
-        !spotlightMagnificationStatusForTest(2.0).contains(
-            QStringLiteral("2.0×"))) {
+    // 1x is a named state ("no zoom"), not the bottom of a magnification
+    // range, and the line names the whole spotlight, so the two settings you
+    // are not touching never have to be remembered.
+    const QString plain =
+        spotlightStatusForTest(SpotlightShape::Ellipse, 1.0, 4.0);
+    const QString magnified =
+        spotlightStatusForTest(SpotlightShape::Rectangle, 2.0, 0.0);
+    if (!plain.contains(QStringLiteral("no zoom")) ||
+        !plain.contains(QStringLiteral("ellipse")) ||
+        !plain.contains(QStringLiteral("border 4")) ||
+        !magnified.contains(QStringLiteral("2.0×")) ||
+        !magnified.contains(QStringLiteral("rectangle")) ||
+        !magnified.contains(QStringLiteral("no border"))) {
       qWarning().noquote()
           << QStringLiteral("Spotlight status did not name the no-zoom state");
       return 113;
     }
+  }
+  {
+    // Arming a tool says what it is set to; the spotlight names its shape,
+    // zoom and border, which is the whole point of showing it.
+    CaptureData capture;
+    capture.monitor.name = QStringLiteral("TEST");
+    capture.monitor.geometry = {0, 0, 800, 600};
+    capture.monitor.pixelSize = {800, 600};
+    capture.monitor.scale = 1.0;
+    capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+    capture.source.fill(QColor(QStringLiteral("#182030")));
+    capture.previewSize = capture.source.size();
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_S);
+    application.processEvents();
+    const QString armed = editor.statusForTest();
+    if (!armed.contains(QStringLiteral("Spotlight")) ||
+        !armed.contains(QStringLiteral("ellipse")) ||
+        !armed.contains(QStringLiteral("2.0×")) ||
+        !armed.contains(QStringLiteral("border"))) {
+      qWarning().noquote()
+          << QStringLiteral("Arming the spotlight did not report it: ") + armed;
+      return 115;
+    }
+    // Adjusting one setting still reports all three: the shape and the ring
+    // stay on screen while the wheel moves the zoom, and the zoom while
+    // Alt+wheel moves the ring.
+    {
+      const auto spotlightWheel = [&](Qt::KeyboardModifiers modifiers) {
+        QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {}, {0, 120},
+                          Qt::NoButton, modifiers, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&editor, &event);
+        application.processEvents();
+      };
+      spotlightWheel(Qt::NoModifier);
+      if (editor.statusForTest() !=
+          spotlightStatusForTest(SpotlightShape::Ellipse, 2.25, 4.0)) {
+        qWarning().noquote()
+            << QStringLiteral("Wheel reported only the zoom: ") +
+                   editor.statusForTest();
+        return 115;
+      }
+      spotlightWheel(Qt::AltModifier);
+      if (editor.statusForTest() !=
+          spotlightStatusForTest(SpotlightShape::Ellipse, 2.25, 6.0)) {
+        qWarning().noquote()
+            << QStringLiteral("Alt+wheel reported only the ring: ") +
+                   editor.statusForTest();
+        return 115;
+      }
+    }
+    // S again cycles the shape and says so.
+    QTest::keyClick(&editor, Qt::Key_S);
+    application.processEvents();
+    if (!editor.statusForTest().contains(QStringLiteral("rectangle"))) {
+      qWarning().noquote() << QStringLiteral("Cycling the shape was silent: ") +
+                                  editor.statusForTest();
+      return 115;
+    }
+    QTest::keyClick(&editor, Qt::Key_A);
+    application.processEvents();
+    if (!editor.statusForTest().contains(QStringLiteral("Arrow"))) {
+      qWarning().noquote() << QStringLiteral("Arming the arrow was silent: ") +
+                                  editor.statusForTest();
+      return 115;
+    }
+    editor.close();
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
