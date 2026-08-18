@@ -97,6 +97,10 @@ bool isBoxResize(CaptureEditor::Interaction interaction) {
          interaction <= CaptureEditor::Interaction::ResizeLeft;
 }
 
+/// How far from an edge a press still counts as grabbing it: wide enough to
+/// hit without aiming, since some layers are grabbable only by their border.
+constexpr qreal kEdgeGrabTolerance = 12.0;
+
 bool showsSelectionBounds(Annotation::Kind kind) {
   return kind != Annotation::Kind::Arrow && kind != Annotation::Kind::Line;
 }
@@ -952,8 +956,9 @@ void CaptureEditor::applyBoxResize(Annotation &annotation, Interaction handle,
   annotation.end = box.bottomRight();
 }
 
-int CaptureEditor::annotationAt(const QPointF &point) const {
-  const auto containsPoint = [this, &point](const Annotation &annotation) {
+bool CaptureEditor::annotationContains(const Annotation &annotation,
+                                       const QPointF &point,
+                                       bool edgeOnly) const {
     if (annotation.kind == Annotation::Kind::Arrow ||
         annotation.kind == Annotation::Kind::Line) {
       const QPointF delta = annotation.end - annotation.start;
@@ -992,12 +997,13 @@ int CaptureEditor::annotationAt(const QPointF &point) const {
     } else {
       const QRectF bounds = annotationBounds(annotation);
       if (annotation.kind == Annotation::Kind::Rectangle) {
-        // Filled rectangles hit anywhere inside; hollow ones only on the
-        // stroke band.
-        const qreal tolerance = std::max<qreal>(7.0, annotation.size + 3.0);
+        // Filled rectangles hit anywhere inside unless this is an edge-only
+        // grab; hollow ones only on the stroke band.
+        const qreal tolerance =
+            std::max<qreal>(kEdgeGrabTolerance, annotation.size + 3.0);
         const QRectF outer =
             bounds.adjusted(-tolerance, -tolerance, tolerance, tolerance);
-        if (annotation.filled)
+        if (!edgeOnly && annotation.filled)
           return outer.contains(point);
         const QRectF inner =
             bounds.adjusted(tolerance, tolerance, -tolerance, -tolerance);
@@ -1005,22 +1011,34 @@ int CaptureEditor::annotationAt(const QPointF &point) const {
                (inner.isEmpty() || !inner.contains(point));
       }
       if (annotation.kind == Annotation::Kind::Ellipse) {
-        // Same rule for ellipses: filled hits the silhouette, hollow only a
-        // band around the outline.
-        const qreal tolerance = std::max<qreal>(7.0, annotation.size + 3.0);
+        // Same rule for ellipses: filled hits the silhouette unless this is
+        // an edge-only grab; hollow only a band around the outline.
+        const qreal tolerance =
+            std::max<qreal>(kEdgeGrabTolerance, annotation.size + 3.0);
         QPainterPath outline;
         outline.addEllipse(bounds);
         QPainterPathStroker band;
         band.setWidth(tolerance * 2.0);
         return band.createStroke(outline).contains(point) ||
-               (annotation.filled && outline.contains(point));
+               (!edgeOnly && annotation.filled && outline.contains(point));
+      }
+      if (edgeOnly && annotation.kind == Annotation::Kind::Redaction) {
+        const QRectF outer =
+            bounds.adjusted(kEdgeGrabTolerance, kEdgeGrabTolerance,
+                            -kEdgeGrabTolerance, -kEdgeGrabTolerance);
+        return bounds
+                   .adjusted(-kEdgeGrabTolerance, -kEdgeGrabTolerance,
+                             kEdgeGrabTolerance, kEdgeGrabTolerance)
+                   .contains(point) &&
+               (outer.isEmpty() || !outer.contains(point));
       }
       if (bounds.adjusted(-7, -7, 7, 7).contains(point))
         return true;
     }
     return false;
-  };
+}
 
+int CaptureEditor::annotationAt(const QPointF &point) const {
   for (const int layer : {0, 1, 2}) {
     for (int index = annotations_.size() - 1; index >= 0; --index) {
       const Annotation &annotation = annotations_.at(index);
@@ -1035,7 +1053,50 @@ int CaptureEditor::annotationAt(const QPointF &point) const {
           return index;
         continue;
       }
-      if (containsPoint(annotation))
+      if (annotationContains(annotation, point, false))
+        return index;
+    }
+  }
+  return -1;
+}
+
+bool CaptureEditor::toolGrabsLayer(int index) const {
+  if (index < 0 || index >= annotations_.size())
+    return false;
+  // A counter is stamped over anything that is not a counter. It still picks
+  // up its own kind: two that must overlap are placed apart and dragged
+  // together.
+  if (tool_ == Tool::Marker)
+    return annotations_.at(index).kind == Annotation::Kind::Marker;
+  return true;
+}
+
+bool CaptureEditor::pointerGrabsLayer() const {
+  return editImageRect().contains(cursor_) &&
+         toolGrabsLayer(annotationEdgeAt(toAnnotationPoint(cursor_)));
+}
+
+int CaptureEditor::annotationEdgeAt(const QPointF &point) const {
+  for (const int layer : {0, 1, 2}) {
+    for (int index = annotations_.size() - 1; index >= 0; --index) {
+      const Annotation &annotation = annotations_.at(index);
+      const int annotationLayer =
+          annotation.kind == Annotation::Kind::Spotlight
+              ? 1
+              : annotation.kind == Annotation::Kind::Redaction ? 2 : 0;
+      if (annotationLayer != layer)
+        continue;
+      if (layer == 1) {
+        const QPainterPath opening = spotlightPath(annotation);
+        if (!opening.contains(point))
+          continue;
+        QPainterPathStroker band;
+        band.setWidth(kEdgeGrabTolerance * 2.0);
+        if (band.createStroke(opening).contains(point))
+          return index;
+        continue;
+      }
+      if (annotationContains(annotation, point, true))
         return index;
     }
   }
@@ -2659,8 +2720,10 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
       selection_ = updated;
       if (updated != originalSelection_)
         dragChanged_ = true;
-    } else if (tool_ == Tool::Select && dragging_ &&
-               selectedAnnotation_ >= 0 &&
+    } else if ((tool_ == Tool::Select ||
+                interaction_ == Interaction::Move ||
+                isLayerResize(interaction_)) &&
+               dragging_ && selectedAnnotation_ >= 0 &&
                selectedAnnotation_ < annotations_.size()) {
       const QPointF point = toAnnotationPoint(cursor_);
       if (selectedAnnotations_.size() > 1 && interaction_ == Interaction::Move) {
@@ -2784,7 +2847,8 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
         refreshComposedCapture(&liveCut_);
       }
     }
-    if ((tool_ == Tool::Freehand || tool_ == Tool::Highlighter) && dragging_) {
+    if ((tool_ == Tool::Freehand || tool_ == Tool::Highlighter) && dragging_ &&
+        interaction_ == Interaction::None) {
       const QPointF point = toAnnotationPoint(cursor_);
       if (freehandPoints_.isEmpty() ||
           QLineF(freehandPoints_.last(), point).length() >= 1.5)
@@ -3035,6 +3099,59 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     update();
     return;
   }
+  // Edges move, interiors are canvas: with any tool armed, an edge under the
+  // pointer grabs that layer and the tool is left alone.
+  if (tool_ != Tool::Select && !dragging_) {
+    // A handle of the layer already selected wins over grabbing anything, so
+    // a selected layer can still be resized without switching to Select. The
+    // text tool's wrap handle is the one that would otherwise be unreachable.
+    int grabbed = annotationEdgeAt(point);
+    if (!toolGrabsLayer(grabbed))
+      grabbed = -1;
+    Interaction grabInteraction = Interaction::Move;
+    // Eight handles (and a text wrap handle) of the layer already selected
+    // win over grabbing anything, so a selected layer can still be resized
+    // without switching to Select.
+    const Interaction handle = selectedHandleAt(point);
+    if (handle != Interaction::None) {
+      grabbed = selectedAnnotation_;
+      grabInteraction = handle;
+    }
+    if (grabbed >= 0) {
+      selectedAnnotation_ = grabbed;
+      selectedAnnotations_ = {grabbed};
+      originalAnnotation_ = annotations_.at(grabbed);
+      originalSelectedAnnotations_.clear();
+      originalSelectedAnnotations_.push_back(annotations_.at(grabbed));
+      interaction_ = grabInteraction;
+      dragStartState_ = editState();
+      dragStartStateValid_ = true;
+      dragChanged_ = false;
+      dragStart_ = point;
+      dragging_ = true;
+      setStatus(QStringLiteral("Moving layer · release to keep drawing"));
+      updatePointerCursor();
+      update();
+      return;
+    }
+    // Nothing under the pointer: put down whatever was selected. A click that
+    // goes nowhere then only deselects, because a drag shorter than the commit
+    // dead-zone draws nothing; a real drag still draws, so dismissing costs no
+    // extra click.
+    if (selectedAnnotation_ >= 0 || !selectedAnnotations_.isEmpty()) {
+      selectedAnnotation_ = -1;
+      selectedAnnotations_.clear();
+      setStatus(QStringLiteral("No layer selected · drag to draw"));
+      // Tools that place on press must not place on the click that was only
+      // meant to put the last layer down. The tool stays armed, so the next
+      // click starts the next one.
+      if (tool_ == Tool::Text || tool_ == Tool::Marker) {
+        updatePointerCursor();
+        update();
+        return;
+      }
+    }
+  }
   if (tool_ == Tool::Marker) {
     Annotation annotation;
     annotation.kind = Annotation::Kind::Marker;
@@ -3059,6 +3176,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   } else {
     dragStart_ = point;
     dragging_ = true;
+    interaction_ = Interaction::None;
     creationConstraintActive_ = supportsCreationConstraint(tool_) &&
                                 heldModifiers(event->modifiers()).testFlag(Qt::ShiftModifier);
     creationCenteredActive_ = supportsCenteredCreation(tool_) &&
@@ -3083,6 +3201,22 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     if (selection_.width() >= 2 && selection_.height() >= 2)
       enterEdit(QStringLiteral("Area selected · Select moves layers · wheel "
                                "zooms · outer handles crop"));
+    updatePointerCursor();
+    update();
+    return;
+  }
+  if ((interaction_ == Interaction::Move || isLayerResize(interaction_)) &&
+      tool_ != Tool::Select) {
+    // A grab with a drawing tool armed: keep the move, keep the tool. It is
+    // an edit like any other, so it takes its own undo step. Ctrl+Z after
+    // nudging a layer must put that layer back, not remove the one before it.
+    dragging_ = false;
+    interaction_ = Interaction::None;
+    if (dragStartStateValid_ && dragChanged_)
+      commitPatch(selectedAnnotations_);
+    dragStartStateValid_ = false;
+    dragChanged_ = false;
+    setStatus(QStringLiteral("Layer moved · keep drawing, or Esc to select"));
     updatePointerCursor();
     update();
     return;
@@ -3362,7 +3496,13 @@ void CaptureEditor::updatePointerCursor() {
       setCursor(Qt::SizeHorCursor);
     else
       setCursor(Qt::ArrowCursor);
-  } else if (tool_ == Tool::Marker)
+  } else if (interaction_ == Interaction::Move && dragging_)
+    setCursor(Qt::SizeAllCursor);
+  else if (!dragging_ && pointerGrabsLayer())
+    // An I-beam over a committed text reads as "click to edit" when the click
+    // will move it, so what is under the pointer decides the cursor.
+    setCursor(Qt::SizeAllCursor);
+  else if (tool_ == Tool::Marker)
     setCursor(Qt::PointingHandCursor);
   else if (tool_ == Tool::Text)
     setCursor(Qt::IBeamCursor);
@@ -3554,7 +3694,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   }
 
   QImage redactionLayer = redactionLayerCache_;
-  if (dragging_ && tool_ == Tool::Redact) {
+  if (dragging_ && interaction_ == Interaction::None &&
+      tool_ == Tool::Redact) {
     Annotation preview;
     preview.kind = Annotation::Kind::Redaction;
     preview.start = dragStart_;
@@ -3588,7 +3729,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         AnnotationLayer::Default)
       defaultAnnotations.push_back(annotations_.at(index));
   }
-  if (dragging_ && tool_ != Tool::Select && tool_ != Tool::Redact &&
+  if (dragging_ && interaction_ == Interaction::None &&
+      tool_ != Tool::Select && tool_ != Tool::Redact &&
       tool_ != Tool::Cut) {
     Annotation preview;
     if (tool_ == Tool::Freehand || tool_ == Tool::Highlighter) {
@@ -3614,7 +3756,11 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     preview.color = tool_ == Tool::Ocr ? QColor(Qt::white) : annotationColor();
     preview.size = tool_ == Tool::Ocr ? 2.0 : annotationSize_;
     defaultAnnotations.push_back(std::move(preview));
-  } else if (tool_ == Tool::Marker && image.contains(cursor_)) {
+  } else if (tool_ == Tool::Marker && image.contains(cursor_) && !dragging_ &&
+             !pointerGrabsLayer()) {
+    // The ghost counter shows where the next one would land, so it belongs
+    // only where the press would actually place one: over another counter the
+    // press moves that counter instead.
     Annotation preview;
     preview.kind = Annotation::Kind::Marker;
     preview.start = toAnnotationPoint(cursor_);
