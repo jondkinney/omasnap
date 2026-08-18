@@ -6,6 +6,7 @@
 
 #include <LayerShellQt/Window>
 
+#include <QImageReader>
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -96,6 +97,10 @@ int main(int argc, char **argv) {
   qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
   QGuiApplication::setDesktopFileName(QStringLiteral("omasnap"));
   QApplication application(argc, argv);
+
+  // A stitched scroll capture (or any tall pinned image) exceeds Qt's default
+  // 256 MB image-decode allocation limit; lift it so --file/--pin can open it.
+  QImageReader::setAllocationLimit(0);
   PosixSignalNotifier signalNotifier(&application);
 
   QCommandLineParser parser;

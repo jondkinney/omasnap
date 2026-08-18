@@ -1371,7 +1371,7 @@ QRectF CaptureEditor::colorPaletteRect() const {
   const qreal buttonHeight = 36 * scale;
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
   const qreal toolbarY =
-      std::max<qreal>(10, editImageRect().top() - buttonHeight - 10);
+      std::max<qreal>(10, chromeAnchorTop() - buttonHeight - 10);
   const QRectF anchor(toolbarX + 480 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   const qreal paletteWidth = 232;
@@ -1396,7 +1396,7 @@ QRectF CaptureEditor::textSizePanelRect() const {
   const qreal buttonHeight = 36 * scale;
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
   const qreal toolbarY =
-      std::max<qreal>(10, editImageRect().top() - buttonHeight - 10);
+      std::max<qreal>(10, chromeAnchorTop() - buttonHeight - 10);
   const QRectF anchor(toolbarX + 440 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   return {anchor.center().x() - 51, anchor.bottom() + 6, 102, 34};
@@ -1441,7 +1441,7 @@ QRectF CaptureEditor::normalizedSelection(const QPointF &first,
   return QRectF(a, b).normalized();
 }
 
-QRectF CaptureEditor::editImageRect() const {
+QRectF CaptureEditor::baseImageRect() const {
   if (selection_.isEmpty())
     return {};
   const QRectF available(30, 68, std::max(1, width() - 60),
@@ -1453,6 +1453,91 @@ QRectF CaptureEditor::editImageRect() const {
   return {available.center().x() - shown.width() / 2.0,
           available.center().y() - shown.height() / 2.0, shown.width(),
           shown.height()};
+}
+
+qreal CaptureEditor::chromeAnchorTop() const {
+  // Zoomed past fit the content fills the viewport band, so anchoring to the
+  // centered fit rect would float the chrome over it. Anchor to the band.
+  const qreal base = baseImageRect().top();
+  return viewZoom_ > 1.0 ? std::min<qreal>(base, 68.0) : base;
+}
+
+QRectF CaptureEditor::editImageRect() const {
+  const QRectF base = baseImageRect();
+  if (base.isEmpty() || viewZoom_ <= 1.0)
+    return base.translated(viewOffset_);
+  const QSizeF shown = base.size() * viewZoom_;
+  const QPointF center = base.center();
+  return QRectF(center.x() - shown.width() / 2.0,
+                center.y() - shown.height() / 2.0, shown.width(),
+                shown.height())
+      .translated(viewOffset_);
+}
+
+qreal CaptureEditor::maxViewZoom() const {
+  const QRectF base = baseImageRect();
+  if (base.isEmpty() || selection_.width() <= 0)
+    return 1.0;
+  const qreal baseScale = base.width() / selection_.width();
+  return std::max<qreal>(1.0, 4.0 / std::max<qreal>(baseScale, 0.0001));
+}
+
+void CaptureEditor::clampViewOffset() {
+  const QRectF base = baseImageRect();
+  if (base.isEmpty())
+    return;
+  const QSizeF shown = base.size() * viewZoom_;
+  const QRectF available(30, 68, std::max(1, width() - 60),
+                         std::max(1, height() - 126));
+  // Keep the image covering the viewport where it is larger, and centered
+  // (no free pan) on any axis where it is smaller.
+  const auto clampAxis = [](qreal shownLen, qreal availLen, qreal &offset) {
+    if (shownLen <= availLen) {
+      offset = 0.0;
+      return;
+    }
+    const qreal slack = (shownLen - availLen) / 2.0;
+    offset = std::clamp(offset, -slack, slack);
+  };
+  clampAxis(shown.width(), available.width(), viewOffset_.rx());
+  clampAxis(shown.height(), available.height(), viewOffset_.ry());
+}
+
+void CaptureEditor::setViewZoom(qreal zoom, const QPointF &focus) {
+  const qreal clamped = std::clamp(zoom, 1.0, maxViewZoom());
+  if (qFuzzyCompare(clamped, viewZoom_))
+    return;
+  const QRectF before = editImageRect();
+  const qreal beforeScale = before.width() > 0 ? before.width() / selection_.width() : 1.0;
+  const QPointF imagePoint((focus.x() - before.left()) / std::max(beforeScale, 1e-6),
+                           (focus.y() - before.top()) / std::max(beforeScale, 1e-6));
+  viewZoom_ = clamped;
+  clampViewOffset();
+  const QRectF after = editImageRect();
+  const qreal afterScale = after.width() > 0 ? after.width() / selection_.width() : 1.0;
+  const QPointF mappedFocus(after.left() + imagePoint.x() * afterScale,
+                            after.top() + imagePoint.y() * afterScale);
+  viewOffset_ += focus - mappedFocus;
+  clampViewOffset();
+  updatePointerCursor();
+  update();
+}
+
+void CaptureEditor::panView(const QPointF &delta) {
+  if (viewZoom_ <= 1.0)
+    return;
+  viewOffset_ += delta;
+  clampViewOffset();
+  update();
+}
+
+void CaptureEditor::resetView() {
+  if (viewZoom_ == 1.0 && viewOffset_.isNull())
+    return;
+  viewZoom_ = 1.0;
+  viewOffset_ = {};
+  updatePointerCursor();
+  update();
 }
 
 QVector<QRectF> CaptureEditor::cropHandleRects() const {
@@ -1640,7 +1725,7 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   const qreal gap = 4 * scale;
   const qreal total = kToolbarWidth * scale;
   qreal x = (width() - total) / 2.0;
-  const qreal y = std::max<qreal>(10, editImageRect().top() - height - 10);
+  const qreal y = std::max<qreal>(10, chromeAnchorTop() - height - 10);
   auto add = [&](qreal buttonWidth, QString action, QString label,
                  QString tooltip, QColor color = {}) {
     const qreal scaledWidth = buttonWidth * scale;
@@ -2138,6 +2223,8 @@ void CaptureEditor::startCapture(CaptureMode mode, bool includeWindows) {
 void CaptureEditor::enterEdit(QString status) {
   phase_ = Phase::Edit;
   tool_ = Tool::Select;
+  viewZoom_ = 1.0;
+  viewOffset_ = {};
   setStatus(std::move(status));
   updatePointerCursor();
   if (quickOutputMode_ != QuickOutputMode::None) {
@@ -2616,6 +2703,35 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   const bool redoShortcut = event->matches(QKeySequence::Redo) ||
                             (event->key() == Qt::Key_Y &&
                              event->modifiers().testFlag(Qt::ControlModifier));
+  // Zoom keys. The bare keys work in the edit phase too, so zoom never
+  // depends on a modifier reaching us: a remote keyboard bridge may inject
+  // the modifier in a way the compositor never publishes as xkb state.
+  const bool zoomModifier =
+      event->modifiers().testFlag(Qt::ControlModifier) || phase_ == Phase::Edit;
+  if (event->matches(QKeySequence::ZoomIn) ||
+      (zoomModifier &&
+       (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal))) {
+    setViewZoom(viewZoom_ * 1.25, editImageRect().center());
+    setStatus(QStringLiteral("Zoom %1% · + / - zoom · 0 fits · wheel scrolls")
+                  .arg(qRound(viewZoom_ *
+                              (baseImageRect().width() /
+                               std::max<qreal>(selection_.width(), 1)) *
+                              100)));
+    return;
+  } else if (event->matches(QKeySequence::ZoomOut) ||
+             (zoomModifier && (event->key() == Qt::Key_Minus ||
+                               event->key() == Qt::Key_Underscore))) {
+    setViewZoom(viewZoom_ / 1.25, editImageRect().center());
+    setStatus(QStringLiteral("Zoom %1% · + / - zoom · 0 fits · wheel scrolls")
+                  .arg(qRound(viewZoom_ *
+                              (baseImageRect().width() /
+                               std::max<qreal>(selection_.width(), 1)) *
+                              100)));
+    return;
+  } else if (zoomModifier && event->key() == Qt::Key_0) {
+    resetView();
+    return;
+  }
   if (redoShortcut) {
     redoEdit();
   } else if (event->matches(QKeySequence::Undo)) {
@@ -2645,6 +2761,26 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
              selectedAnnotation_ < annotations_.size() && !dragging_ &&
              !textEditor_->isVisible()) {
     nudgeSelectedAnnotation(nudge);
+  } else if (viewZoom_ > 1.0 && selectedAnnotation_ < 0 && !dragging_ &&
+             !textEditor_->isVisible() &&
+             !event->modifiers().testAnyFlags(Qt::ControlModifier |
+                                              Qt::AltModifier |
+                                              Qt::MetaModifier) &&
+             (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right ||
+              event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+    // With nothing selected the arrows have nothing else to do, so they walk
+    // the zoomed capture. It is the one way to reach the middle of a long
+    // capture without a middle mouse button. Shift takes a page at a time.
+    const qreal step =
+        event->modifiers().testFlag(Qt::ShiftModifier) ? 240.0 : 60.0;
+    const QPointF delta =
+        event->key() == Qt::Key_Left    ? QPointF(step, 0)
+        : event->key() == Qt::Key_Right ? QPointF(-step, 0)
+        : event->key() == Qt::Key_Up    ? QPointF(0, step)
+                                        : QPointF(0, -step);
+    panView(delta);
+    setStatus(QStringLiteral("Panning · arrows move, Shift jumps · middle-drag "
+                             "pans · Ctrl+0 fits"));
   } else if ((event->key() == Qt::Key_Delete ||
               event->key() == Qt::Key_Backspace) &&
              !selectedAnnotations_.isEmpty()) {
@@ -2790,6 +2926,11 @@ void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
 }
 
 void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
+  if (panning_) {
+    panView(event->position() - panAnchor_);
+    panAnchor_ = event->position();
+    return;
+  }
   cursor_ = event->position();
   if (capturePending_)
     return;
@@ -3053,6 +3194,14 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
         updatePointerCursor();
         update();
       }
+    }
+    return;
+  }
+  if (event->button() == Qt::MiddleButton) {
+    if (phase_ == Phase::Edit && viewZoom_ > 1.0) {
+      panning_ = true;
+      panAnchor_ = event->position();
+      setCursor(Qt::ClosedHandCursor);
     }
     return;
   }
@@ -3344,6 +3493,11 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
+  if (event->button() == Qt::MiddleButton && panning_) {
+    panning_ = false;
+    updatePointerCursor();
+    return;
+  }
   if (capturePending_ || event->button() != Qt::LeftButton || !dragging_)
     return;
   if (phase_ == Phase::Select) {
@@ -3557,12 +3711,78 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     QWidget::wheelEvent(event);
     return;
   }
-  // Some stacks report a modified wheel on the horizontal axis; read
-  // whichever axis moved.
-  const QPoint delta = event->angleDelta();
-  const int step = (delta.y() != 0 ? delta.y() : delta.x()) > 0 ? 1 : -1;
-  if (tool_ == Tool::Select && selectedAnnotation_ >= 0 &&
-      selectedAnnotation_ < annotations_.size()) {
+  // High-resolution touchpads can arrive with an empty angleDelta and only a
+  // pixelDelta; treat the two interchangeably, preferring the exact pixels
+  // for panning and the notch units for discrete steps.
+  const QPoint angle = event->angleDelta();
+  const QPoint pixel = event->pixelDelta();
+  const Qt::KeyboardModifiers modifiers = event->modifiers();
+  const int vertical = angle.y() != 0 ? angle.y() : pixel.y();
+  const int horizontal = angle.x() != 0 ? angle.x() : pixel.x();
+  if (vertical == 0 && horizontal == 0) {
+    event->accept();
+    return; // scroll begin/end markers carry no delta
+  }
+  // Discrete steps follow whichever axis carried the notch. Alt+wheel often
+  // arrives as a horizontal delta, so reading only the vertical one left every
+  // Alt-adjusted setting able to rise and never fall.
+  const int notch = vertical != 0 ? vertical : horizontal;
+  const int step = notch > 0 ? 1 : -1;
+  const bool overLayer = tool_ == Tool::Select && selectedAnnotation_ >= 0 &&
+                         selectedAnnotation_ < annotations_.size();
+  const auto showZoom = [&] {
+    setStatus(QStringLiteral("Zoom %1% · wheel scrolls · Ctrl+wheel zooms · "
+                             "arrows and middle-drag pan · Shift+wheel goes "
+                             "sideways · Ctrl+0 fits")
+                  .arg(qRound(viewZoom_ *
+                              (baseImageRect().width() /
+                               std::max<qreal>(selection_.width(), 1)) *
+                              100)));
+  };
+  // One notch is one step; a touchpad's finer increments are a fraction of
+  // one, so a swipe glides instead of leaping a quarter at a time.
+  const auto zoomByNotch = [&](const QPointF &focus) {
+    const qreal steps = std::clamp(qreal(notch) / 120.0, -1.0, 1.0);
+    setViewZoom(viewZoom_ * std::pow(1.25, steps), focus);
+    showZoom();
+  };
+  if (modifiers.testFlag(Qt::ControlModifier)) {
+    zoomByNotch(event->position());
+    event->accept();
+    return;
+  }
+  // Pan by the actual delta on both axes: a touchpad's sideways swipe arrives
+  // on x, and its fine increments must not each jump a step. Inert at fit.
+  const QPointF scrollDelta(
+      pixel.x() != 0 ? qreal(pixel.x()) : angle.x() * 0.75,
+      pixel.y() != 0 ? qreal(pixel.y()) : angle.y() * 0.75);
+  // Shift+wheel, or Alt+wheel, goes sideways across a wide stitch: the
+  // classic mapping of a vertical wheel to horizontal scrolling.
+  if (modifiers.testFlag(Qt::ShiftModifier) ||
+      (tool_ == Tool::Select && !overLayer &&
+       modifiers.testFlag(Qt::AltModifier))) {
+    if (viewZoom_ > 1.0)
+      panView(QPointF(scrollDelta.y() + scrollDelta.x(), 0));
+    event->accept();
+    return;
+  }
+  // A plain wheel scrolls a zoomed capture like a document. Where only the
+  // horizontal axis overflows, the vertical wheel scrolls that one rather
+  // than doing nothing.
+  if (tool_ == Tool::Select && !overLayer) {
+    if (viewZoom_ > 1.0) {
+      const QSizeF shown = baseImageRect().size() * viewZoom_;
+      const bool verticalSlack = shown.height() > std::max(1, height() - 126);
+      const bool horizontalSlack = shown.width() > std::max(1, width() - 60);
+      QPointF pan = scrollDelta;
+      if (!verticalSlack && horizontalSlack && pan.x() == 0.0)
+        pan = QPointF(pan.y(), 0);
+      panView(pan);
+    }
+    event->accept();
+    return;
+  }
+  if (overLayer) {
     scaleSelectedAnnotation(step > 0 ? 1.1 : 1.0 / 1.1);
   } else if (tool_ == Tool::Text) {
     textSizeIndex_ = std::clamp(textSizeIndex_ + step, 0, 2);
@@ -3816,6 +4036,13 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   painter.setCompositionMode(QPainter::CompositionMode_Source);
   painter.fillRect(rect(), QColor(0, 0, 0, 160));
   painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  // When zoomed past fit the image is larger than the viewport; clip content
+  // to the band between the toolbar and the status so it cannot overdraw them.
+  const bool clipViewport = viewZoom_ > 1.0;
+  if (clipViewport) {
+    painter.save();
+    painter.setClipRect(QRectF(0, 60, width(), std::max(1, height() - 116)));
+  }
   const QRectF image = editImageRect();
   const bool hasBackground = backgroundStyle_ != BackgroundStyle::None;
   if (hasBackground) {
@@ -4117,6 +4344,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                        QPointF(cursor.center().x(), bottom));
     }
   }
+  if (clipViewport)
+    painter.restore();
 
   const QString currentTool = toolAction(tool_);
   QFont buttonFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);

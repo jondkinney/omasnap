@@ -242,8 +242,24 @@ private:
   [[nodiscard]] QRectF textSizePanelRect() const;
   [[nodiscard]] QVector<QRectF> cropHandleRects() const;
   [[nodiscard]] int cropHandleAt(const QPointF &point) const;
+  /// Fit-to-window rect for the selection (unaffected by the view zoom/pan).
+  [[nodiscard]] QRectF baseImageRect() const;
+  /// Top edge the chrome (toolbar, popovers) anchors above: the fit rect at
+  /// zoom 1, the viewport band once zoomed (the content fills it then).
+  [[nodiscard]] qreal chromeAnchorTop() const;
+  /// baseImageRect transformed by the current view zoom and pan (content and
+  /// annotations map through this). Equals baseImageRect at zoom 1.
   [[nodiscard]] QRectF editImageRect() const;
   [[nodiscard]] qreal editScale() const;
+  /// Multiplier from the fit scale to the largest useful zoom (1 source px ->
+  /// a few screen px); 1.0 when the image already fits comfortably.
+  [[nodiscard]] qreal maxViewZoom() const;
+  /// Set the view zoom (clamped to [1, maxViewZoom]) keeping `focus` (a widget
+  /// point) over the same image pixel; then re-clamp the pan.
+  void setViewZoom(qreal zoom, const QPointF &focus);
+  void panView(const QPointF &delta);
+  void resetView();
+  void clampViewOffset();
   [[nodiscard]] QPointF toAnnotationPoint(const QPointF &position) const;
   [[nodiscard]] QPointF toUnclampedAnnotationPoint(const QPointF &position) const;
   [[nodiscard]] bool selectedLayerAcceptsPoint(const QPointF &point) const;
@@ -430,6 +446,13 @@ private:
   QTimer textCaretTimer_;
   QElapsedTimer nudgeTimer_;
   QTimer nudgePersistTimer_;
+  /// View transform for navigating an oversized capture (e.g. a tall scroll
+  /// stitch). `viewZoom_` multiplies the fit scale (1 = whole image visible);
+  /// `viewOffset_` pans in widget pixels. Reset on entering edit.
+  qreal viewZoom_ = 1.0;
+  QPointF viewOffset_;
+  bool panning_ = false;
+  QPointF panAnchor_;
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
 };

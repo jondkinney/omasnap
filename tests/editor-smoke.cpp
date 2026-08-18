@@ -4301,6 +4301,187 @@ bool runLayerOrderSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Runs the interaction and rendering smoke checks. */
+bool runViewportZoomSmoke(QApplication &application, QString &error) {
+  // A capture much taller than the window: fit shows it all (tiny); zoom in
+  // and pan to navigate it.
+  const QSize size(600, 6000);
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = QRect(QPoint(), size);
+  capture.monitor.pixelSize = size;
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(size, QImage::Format_ARGB32);
+  for (int y = 0; y < size.height(); ++y) {
+    QRgb *row = reinterpret_cast<QRgb *>(capture.source.scanLine(y));
+    for (int x = 0; x < size.width(); ++x)
+      row[x] = qRgb((x * 7) & 0xff, (y * 3) & 0xff, ((x + y) * 5) & 0xff);
+  }
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  // Whole-monitor selection so the tall image fills the edit surface.
+  QTest::keyClick(&editor, Qt::Key_Space);
+  QTest::keyClick(&editor, Qt::Key_Space); // window mode toggles off if on
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(40, 80));
+  QTest::mouseMove(&editor, QPoint(760, 560), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(760, 560));
+  application.processEvents();
+
+  // Compare only the content band (exclude the toolbar row and the status
+  // line, which carry zoom text that is not part of the view).
+  const auto contentBand = [](const QImage &image) {
+    return image.copy(0, 80, image.width(), image.height() - 140);
+  };
+  const QImage fitView = contentBand(editor.grab().toImage());
+  const auto wheel = [&](int deltaY, Qt::KeyboardModifiers modifiers) {
+    QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {}, {0, deltaY},
+                      Qt::NoButton, modifiers, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&editor, &event);
+    application.processEvents();
+  };
+  // Scrolling must never change the zoom: at fit, plain wheel and Shift+wheel
+  // are inert.
+  wheel(-120, Qt::NoModifier);
+  wheel(-120, Qt::ShiftModifier);
+  if (contentBand(editor.grab().toImage()) != fitView) {
+    error = QStringLiteral("Scrolling at fit changed the view");
+    return false;
+  }
+  // Ctrl+wheel is the zoom gesture.
+  wheel(360, Qt::ControlModifier);
+  const QImage zoomedView = contentBand(editor.grab().toImage());
+  if (zoomedView == fitView) {
+    error = QStringLiteral("Ctrl+wheel did not zoom the view");
+    return false;
+  }
+  // Plain wheel scrolls the zoomed view vertically.
+  wheel(-120, Qt::NoModifier);
+  const QImage pannedView = contentBand(editor.grab().toImage());
+  if (pannedView == zoomedView) {
+    error = QStringLiteral("Plain wheel did not scroll the zoomed view");
+    return false;
+  }
+  // Deep zoom gives horizontal slack; Shift+wheel then scrolls sideways.
+  for (int i = 0; i < 13; ++i)
+    wheel(120, Qt::ControlModifier);
+  const QImage deepView = contentBand(editor.grab().toImage());
+  wheel(-120, Qt::ShiftModifier);
+  if (contentBand(editor.grab().toImage()) == deepView) {
+    error = QStringLiteral("Shift+wheel did not scroll sideways when zoomed");
+    return false;
+  }
+  // Arrows pan the zoomed view when nothing is selected, which is how a long
+  // capture is walked without a middle mouse button.
+  {
+    const QImage beforeArrow = contentBand(editor.grab().toImage());
+    QTest::keyClick(&editor, Qt::Key_Down);
+    application.processEvents();
+    if (contentBand(editor.grab().toImage()) == beforeArrow) {
+      error = QStringLiteral("Arrow keys did not pan the zoomed view");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Up);
+    application.processEvents();
+    if (contentBand(editor.grab().toImage()) != beforeArrow) {
+      error = QStringLiteral("Arrow panning did not come back");
+      return false;
+    }
+  }
+
+  // Middle-drag also pans.
+  const QImage beforeDrag = contentBand(editor.grab().toImage());
+  QTest::mousePress(&editor, Qt::MiddleButton, Qt::NoModifier, QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(400, 380), 20);
+  QTest::mouseRelease(&editor, Qt::MiddleButton, Qt::NoModifier, QPoint(400, 380));
+  application.processEvents();
+  if (contentBand(editor.grab().toImage()) == beforeDrag) {
+    error = QStringLiteral("Middle-drag did not pan the view");
+    return false;
+  }
+  // Ctrl+0 restores fit exactly.
+  QTest::keyClick(&editor, Qt::Key_0, Qt::ControlModifier);
+  application.processEvents();
+  if (contentBand(editor.grab().toImage()) != fitView) {
+    error = QStringLiteral("Ctrl+0 did not restore the fitted view");
+    return false;
+  }
+  // Placing an annotation while zoomed lands at the intended image point:
+  // zoom back in, draw a rectangle, fit, and confirm the layer persisted.
+  wheel(360, Qt::ControlModifier);
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 250));
+  QTest::mouseMove(&editor, QPoint(450, 400), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(450, 400));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_0, Qt::ControlModifier);
+  application.processEvents();
+  if (contentBand(editor.grab().toImage()) == fitView) {
+    error = QStringLiteral("A layer drawn while zoomed did not persist to fit");
+    return false;
+  }
+  editor.close();
+
+  // A wide capture whose full height fits: the plain vertical wheel scrolls
+  // the only overflowing axis (horizontal) instead of doing nothing.
+  {
+    const QSize wideSize(6000, 600);
+    CaptureData wide;
+    wide.monitor.name = QStringLiteral("TEST");
+    wide.monitor.geometry = QRect(QPoint(), wideSize);
+    wide.monitor.pixelSize = wideSize;
+    wide.monitor.scale = 1.0;
+    wide.source = QImage(wideSize, QImage::Format_ARGB32);
+    for (int y = 0; y < wideSize.height(); ++y) {
+      QRgb *row = reinterpret_cast<QRgb *>(wide.source.scanLine(y));
+      for (int x = 0; x < wideSize.width(); ++x)
+        row[x] = qRgb((x * 3) & 0xff, (y * 7) & 0xff, ((x ^ y) * 5) & 0xff);
+    }
+    wide.previewSize = wide.source.size();
+    CaptureEditor wideEditor(wide);
+    wideEditor.resize(800, 600);
+    wideEditor.show();
+    application.processEvents();
+    QTest::keyClick(&wideEditor, Qt::Key_Space);
+    QTest::keyClick(&wideEditor, Qt::Key_Space);
+    QTest::mousePress(&wideEditor, Qt::LeftButton, Qt::NoModifier, QPoint(40, 80));
+    QTest::mouseMove(&wideEditor, QPoint(760, 560), 20);
+    QTest::mouseRelease(&wideEditor, Qt::LeftButton, Qt::NoModifier, QPoint(760, 560));
+    application.processEvents();
+    const auto wideWheel = [&](int deltaY, Qt::KeyboardModifiers modifiers) {
+      QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {}, {0, deltaY},
+                        Qt::NoButton, modifiers, Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&wideEditor, &event);
+      application.processEvents();
+    };
+    for (int i = 0; i < 6; ++i)
+      wideWheel(120, Qt::ControlModifier);
+    const QImage zoomedWide = contentBand(wideEditor.grab().toImage());
+    wideWheel(-120, Qt::NoModifier);
+    if (contentBand(wideEditor.grab().toImage()) == zoomedWide) {
+      error = QStringLiteral(
+          "Plain wheel did not scroll a wide capture sideways");
+      return false;
+    }
+    // A horizontal touchpad swipe (x-axis delta) scrolls sideways too.
+    const QImage beforeSwipe = contentBand(wideEditor.grab().toImage());
+    QWheelEvent swipe(QPointF(400, 300), QPointF(400, 300), {}, {120, 0},
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&wideEditor, &swipe);
+    application.processEvents();
+    if (contentBand(wideEditor.grab().toImage()) == beforeSwipe) {
+      error = QStringLiteral(
+          "A horizontal wheel delta did not scroll the wide capture");
+      return false;
+    }
+    wideEditor.close();
+  }
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -4371,6 +4552,47 @@ int main(int argc, char **argv) {
   if (!runLayerOrderSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 122;
+  }
+  {
+    // A notch that arrives on the horizontal axis (Alt+wheel does, on some
+    // setups) must step both ways. Reading only the vertical delta left every
+    // Alt-adjusted setting able to rise and never fall.
+    CaptureData capture;
+    capture.monitor.name = QStringLiteral("TEST");
+    capture.monitor.geometry = {0, 0, 800, 600};
+    capture.monitor.pixelSize = {800, 600};
+    capture.monitor.scale = 1.0;
+    capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+    capture.source.fill(QColor(QStringLiteral("#182030")));
+    capture.previewSize = capture.source.size();
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_A); // a tool whose wheel sets its size
+    application.processEvents();
+    const auto sideways = [&](int deltaX) {
+      QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {}, {deltaX, 0},
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&editor, &event);
+      application.processEvents();
+      return editor.statusForTest();
+    };
+    const QString up = sideways(120);
+    const QString down = sideways(-120);
+    // One notch each way must land back where it started, not climb twice.
+    if (!up.contains(QStringLiteral("Size 5")) ||
+        !down.contains(QStringLiteral("Size 4"))) {
+      qWarning().noquote()
+          << QStringLiteral("A horizontal notch stepped only one way: up=") +
+                 up + QStringLiteral(" down=") + down;
+      return 116;
+    }
+    editor.close();
+  }
+  if (!runViewportZoomSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 123;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
