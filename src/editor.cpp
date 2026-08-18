@@ -77,6 +77,23 @@ qreal toolbarScale(qreal availableWidth) {
       1.0,
       std::max<qreal>(0.1, (availableWidth - sideMargins) / kToolbarWidth));
 }
+// A spotlight at 1x is not a failed zoom, it is a plain highlight: the dimming
+// still isolates the region. Name that state so it reads as somewhere to stop
+// rather than the bottom of a range.
+QString spotlightMagnificationStatus(qreal magnification) {
+  return magnification <= 1.0
+             ? QStringLiteral("Spotlight · no zoom · wheel magnifies")
+             : QStringLiteral("Spotlight · %1× · wheel adjusts")
+                   .arg(magnification, 0, 'f', 1);
+}
+
+} // namespace
+
+QString spotlightMagnificationStatusForTest(qreal magnification) {
+  return spotlightMagnificationStatus(magnification);
+}
+
+namespace {
 bool hasEndpointHandles(Annotation::Kind kind) {
   return kind == Annotation::Kind::Arrow || kind == Annotation::Kind::Line ||
          kind == Annotation::Kind::Rectangle ||
@@ -1145,8 +1162,7 @@ void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
   if (annotation.kind == Annotation::Kind::Spotlight) {
     annotation.magnification =
         std::clamp(annotation.magnification * factor, 1.0, 4.0);
-    setStatus(QStringLiteral("Spotlight magnification · %1× · wheel adjusts")
-                  .arg(annotation.magnification, 0, 'f', 1));
+    setStatus(spotlightMagnificationStatus(annotation.magnification));
     commitPatch({selectedAnnotation_});
     return;
   }
@@ -3462,14 +3478,12 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
       annotation.magnification =
           std::clamp(annotation.magnification + delta, 1.0, 4.0);
       spotlightMagnification_ = annotation.magnification;
-      setStatus(QStringLiteral("Spotlight magnification · %1× · wheel adjusts")
-                    .arg(annotation.magnification, 0, 'f', 1));
+      setStatus(spotlightMagnificationStatus(annotation.magnification));
       commitPatch({hovered});
     } else {
       spotlightMagnification_ =
           std::clamp(spotlightMagnification_ + delta, 1.0, 4.0);
-      setStatus(QStringLiteral("Spotlight magnification · %1× · wheel adjusts")
-                    .arg(spotlightMagnification_, 0, 'f', 1));
+      setStatus(spotlightMagnificationStatus(spotlightMagnification_));
     }
   } else if (tool_ == Tool::Rectangle &&
              event->modifiers().testFlag(Qt::AltModifier)) {

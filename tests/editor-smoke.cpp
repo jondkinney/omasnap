@@ -4444,6 +4444,17 @@ int main(int argc, char **argv) {
     qWarning().noquote() << snapshotError;
     return 117;
   }
+  {
+    // 1x is a named state ("no zoom"), not the bottom of a magnification range.
+    if (spotlightMagnificationStatusForTest(1.0) !=
+            QStringLiteral("Spotlight · no zoom · wheel magnifies") ||
+        !spotlightMagnificationStatusForTest(2.0).contains(
+            QStringLiteral("2.0×"))) {
+      qWarning().noquote()
+          << QStringLiteral("Spotlight status did not name the no-zoom state");
+      return 113;
+    }
+  }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 94;

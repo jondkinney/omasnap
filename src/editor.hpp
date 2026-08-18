@@ -26,6 +26,8 @@ class InlineTextEdit;
 /// is the only thing large enough to see it change on. 0 for every other kind.
 [[nodiscard]] qreal selectionBoundsRadius(const Annotation &annotation,
                                           qreal inset);
+/// Status text for a spotlight's magnification; 1x reads as "no zoom".
+[[nodiscard]] QString spotlightMagnificationStatusForTest(qreal magnification);
 
 class CaptureEditor final : public QWidget {
   Q_OBJECT
