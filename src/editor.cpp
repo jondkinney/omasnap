@@ -473,13 +473,34 @@ QRectF CaptureEditor::selectedAnnotationsBounds() const {
   for (const int index : selectedAnnotations_) {
     if (index < 0 || index >= annotations_.size())
       continue;
-    const QRectF annotation = annotationBounds(annotations_.at(index));
-    if (annotation.isEmpty())
+    QRectF annotation = annotationBounds(annotations_.at(index));
+    if (annotation.isNull())
       continue;
+    // A horizontal arrow or line has zero height, which isEmpty() reports as
+    // nothing at all; give it an extent so the group still covers it.
+    annotation = annotation.normalized();
+    if (annotation.width() <= 0.0)
+      annotation.setWidth(1.0);
+    if (annotation.height() <= 0.0)
+      annotation.setHeight(1.0);
     bounds = initialized ? bounds.united(annotation) : annotation;
     initialized = true;
   }
   return initialized ? bounds : QRectF();
+}
+
+void CaptureEditor::selectAllAnnotations() {
+  if (annotations_.isEmpty()) {
+    setStatus(QStringLiteral("No layers to select"));
+    return;
+  }
+  selectedAnnotations_.clear();
+  for (int index = 0; index < annotations_.size(); ++index)
+    selectedAnnotations_.push_back(index);
+  selectedAnnotation_ = annotations_.size() - 1;
+  tool_ = Tool::Select;
+  setStatus(QStringLiteral("All %1 layers selected · Delete removes them")
+                .arg(annotations_.size()));
 }
 
 bool CaptureEditor::annotationSelected(int index) const {
@@ -1510,9 +1531,13 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     }
     selectedAnnotations_.clear();
     selectedAnnotation_ = -1;
+    if (annotations_.isEmpty())
+      nextMarker_ = 1;
     scheduleSnapshot();
   } else if (event->key() == Qt::Key_V) {
     tool_ = Tool::Select;
+  } else if (event->matches(QKeySequence::SelectAll)) {
+    selectAllAnnotations();
   } else if (event->key() == Qt::Key_A) {
     tool_ = Tool::Arrow;
   } else if (event->key() == Qt::Key_L) {
@@ -2553,10 +2578,30 @@ void CaptureEditor::paintEdit(QPainter &painter) {
             .adjusted(-4, -4, 4, 4);
     if (multiple ||
         showsSelectionBounds(annotations_.at(selectedAnnotation_).kind)) {
+      // The union reads as the group's extent, so draw it faintly and outline
+      // each member on top: otherwise a select-all looks like one box with no
+      // way to tell what is in it, and a flat arrow shows nothing at all.
+      painter.setPen(QPen(QColor(255, 255, 255, multiple ? 110 : 220),
+                          1.0 / scale, Qt::DashLine));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawRect(bounds);
+    }
+    if (multiple) {
       painter.setPen(
           QPen(QColor(255, 255, 255, 220), 1.0 / scale, Qt::DashLine));
       painter.setBrush(Qt::NoBrush);
-      painter.drawRect(bounds);
+      for (const int index : selectedAnnotations_) {
+        if (index < 0 || index >= annotations_.size() ||
+            index == editingAnnotation_)
+          continue;
+        QRectF member = annotationBounds(annotations_.at(index));
+        if (member.isNull())
+          continue;
+        member = member.normalized();
+        // Flat arrows and lines have no extent across; the inset gives every
+        // member a visible outline whatever its shape.
+        painter.drawRect(member.adjusted(-3, -3, 3, 3));
+      }
     }
     if (!multiple) {
       const Annotation &selected = annotations_.at(selectedAnnotation_);

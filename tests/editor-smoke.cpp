@@ -1427,6 +1427,140 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+bool runSelectAllDeleteSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    // Snapshots are written off the UI thread, so flush before reading.
+    return flushedSnapshot(editor, snapshotPath).convertToFormat(image.format()) ==
+           image;
+  };
+  const auto drag = [&](const QPoint &from, const QPoint &to) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(&editor, to, 20);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, to);
+    application.processEvents();
+  };
+  const auto layer = [](Annotation::Kind kind, const QPointF &start,
+                        const QPointF &end, int number = 0) {
+    Annotation annotation;
+    annotation.kind = kind;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.number = number;
+    annotation.color = QColor(QStringLiteral("#ff375f"));
+    annotation.size = 4;
+    return annotation;
+  };
+
+  // A rectangle, an arrow and two markers.
+  QTest::keyClick(&editor, Qt::Key_R);
+  drag(QPoint(200, 200), QPoint(400, 300));
+  QTest::keyClick(&editor, Qt::Key_A);
+  drag(QPoint(450, 200), QPoint(650, 300));
+  QTest::keyClick(&editor, Qt::Key_M);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(250, 400));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 400));
+  application.processEvents();
+  const QVector<Annotation> all = {
+      layer(Annotation::Kind::Rectangle, {100, 95}, {300, 195}),
+      layer(Annotation::Kind::Arrow, {350, 95}, {550, 195}),
+      layer(Annotation::Kind::Marker, {150, 295}, {}, 1),
+      layer(Annotation::Kind::Marker, {250, 295}, {}, 2)};
+  if (!snapshotMatches(expected(all))) {
+    error = QStringLiteral("Select-all smoke could not draw its four layers");
+    return false;
+  }
+
+  // Delete with nothing selected leaves everything alone.
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 480));
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected(all))) {
+    error = QStringLiteral("Delete with nothing selected removed layers");
+    return false;
+  }
+
+  // Every member of a select-all is outlined, including a flat arrow whose
+  // bounds have no height: the group must look selected, not just delete.
+  QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+  application.processEvents();
+  const QImage grouped = editor.grab().toImage();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 480));
+  application.processEvents();
+  if (grouped == editor.grab().toImage()) {
+    error = QStringLiteral("Select-all drew no selection indicator");
+    return false;
+  }
+
+  // Clicking empty canvas drops the group selection again, so a following
+  // Delete is a no-op.
+  QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 480));
+  QTest::keyClick(&editor, Qt::Key_Backspace);
+  application.processEvents();
+  if (!snapshotMatches(expected(all))) {
+    error = QStringLiteral("Delete after leaving select-all removed layers");
+    return false;
+  }
+
+  // Ctrl+A then Delete removes every layer as one undo step, even with a
+  // single layer selected beforehand.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClick(&editor, Qt::Key_Delete);
+  application.processEvents();
+  if (!snapshotMatches(expected({}))) {
+    error = QStringLiteral("Ctrl+A then Delete did not remove every layer");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected(all))) {
+    error = QStringLiteral("Undo did not restore all deleted layers");
+    return false;
+  }
+
+  // After clearing, marker numbering restarts at 1.
+  QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClick(&editor, Qt::Key_Backspace);
+  QTest::keyClick(&editor, Qt::Key_M);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 300));
+  application.processEvents();
+  if (!snapshotMatches(
+          expected({layer(Annotation::Kind::Marker, {200, 195}, {}, 1)}))) {
+    error = QStringLiteral("Marker numbering did not restart after clearing");
+    return false;
+  }
+
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1493,6 +1627,10 @@ int main(int argc, char **argv) {
   if (!runContinuousAnnotationToolsSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 80;
+  }
+  if (!runSelectAllDeleteSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 101;
   }
   if (!runSpotlightWheelSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

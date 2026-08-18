@@ -125,6 +125,7 @@ private:
 
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
+  void selectAllAnnotations();
   [[nodiscard]] bool annotationSelected(int index) const;
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
