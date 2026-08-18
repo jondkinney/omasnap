@@ -14,6 +14,9 @@ class QPaintEvent;
 class QWheelEvent;
 
 class QPainter;
+/// Status text for a spotlight's magnification; 1x reads as "no zoom".
+[[nodiscard]] QString spotlightMagnificationStatusForTest(qreal magnification);
+
 class CaptureEditor final : public QWidget {
   Q_OBJECT
 public:
