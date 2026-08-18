@@ -148,6 +148,7 @@ private:
 
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
+  void selectAllAnnotations();
   [[nodiscard]] bool annotationSelected(int index) const;
   /// What a pointer event reports, or nothing until a key event has confirmed
   /// it. A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
