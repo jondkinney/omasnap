@@ -9,9 +9,9 @@
 namespace stitch {
 
 namespace {
-/// Poll granularity while the worker waits for an acknowledgement.
+/// Poll granularity while the worker waits for an acknowledgment.
 constexpr int kAckPollMs = 5;
-/// A solid-colour first frame is the copy racing the overlay's paint; it must
+/// A solid-color first frame is the copy racing the overlay's paint; it must
 /// never seed the stitcher.
 constexpr int kMaxBlankFirstFrames = 8;
 constexpr int kCalibrationWindow = 5;
@@ -63,7 +63,7 @@ void CaptureHandshake::acknowledgeWithNotches(std::uint64_t cycle, int notches) 
   const std::uint64_t published = readyCycle();
   const std::uint64_t clamped = std::min(cycle, published);
   const std::lock_guard lock(mutex_);
-  // The first acknowledgement of a cycle wins; duplicates are ignored so a
+  // The first acknowledgment of a cycle wins; duplicates are ignored so a
   // repeated UI event cannot double-scroll.
   if (clamped <= ackCycle_)
     return;

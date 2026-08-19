@@ -309,7 +309,7 @@ private:
 class ManualCapture {
 public:
   enum class Event {
-    Blank,          ///< solid-colour first frame; not seeded (copy raced the overlay)
+    Blank,          ///< solid-color first frame; not seeded (copy raced the overlay)
     Seeded,         ///< first frame accepted
     Kept,           ///< a band was committed
     Pending,        ///< small movement held as the pending frame

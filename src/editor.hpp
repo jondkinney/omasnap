@@ -127,6 +127,10 @@ private:
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   [[nodiscard]] bool annotationSelected(int index) const;
 public:
+  /// Whether the overlay was left by asking for a scroll capture instead:
+  /// the two kinds of capture swap with one key rather than making anyone
+  /// close this and launch the other.
+  [[nodiscard]] bool switchedToScroll() const { return switchedToScroll_; }
   /// Current status line. Test accessor.
   [[nodiscard]] QString statusForTest() const { return status_; }
 
@@ -173,6 +177,9 @@ private:
   void chooseWindow(int index);
   [[nodiscard]] EditState editState() const;
   void enterEdit(QString status);
+public:
+
+private:
   void scheduleSnapshot();
   void startSnapshotRender();
   void pinSnapshot();
@@ -196,6 +203,7 @@ private:
   CaptureData capture_;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
+  bool switchedToScroll_ = false;
   QRectF selection_;
   QPointF dragStart_;
   QRectF originalSelection_;

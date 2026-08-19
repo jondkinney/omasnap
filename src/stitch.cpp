@@ -1227,7 +1227,7 @@ ManualCapture::Outcome ManualCapture::feed(const QImage &input) {
       ++blankFirstFrames_;
       return outcome(Event::Blank, {},
                      blankFirstFrames_ >= kMaxBlankFirstFrames
-                         ? QStringLiteral("capture shows only a solid colour")
+                         ? QStringLiteral("capture shows only a solid color")
                          : QString());
     }
     bool ok = false;

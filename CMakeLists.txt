@@ -13,6 +13,7 @@ set(PROTOCOL_XMLS
   /usr/share/wayland-protocols/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml
   /usr/share/wayland-protocols/staging/ext-image-capture-source/ext-image-capture-source-v1.xml
   /usr/share/wayland-protocols/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
+  ${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-virtual-pointer-unstable-v1.xml
 )
 set(PROTOCOL_SOURCES)
 foreach(PROTOCOL_XML IN LISTS PROTOCOL_XMLS)
@@ -45,6 +46,8 @@ qt_add_executable(omasnap
   src/pin-layout.hpp
   src/capture.cpp
   src/capture.hpp
+  src/overlay-chrome.cpp
+  src/overlay-chrome.hpp
   src/eyedropper.cpp
   src/eyedropper.hpp
   src/surface-capture.cpp
@@ -52,6 +55,10 @@ qt_add_executable(omasnap
   src/stitch.hpp
   src/auto-capture.cpp
   src/auto-capture.hpp
+  src/scroll-capture.cpp
+  src/scroll-capture.hpp
+  src/scroll-inject.cpp
+  src/scroll-inject.hpp
   ${PROTOCOL_SOURCES}
   src/editor.cpp
   src/editor.hpp
@@ -95,6 +102,8 @@ qt_add_executable(omasnap-smoke
   src/cli-path.hpp
   src/capture.cpp
   src/capture.hpp
+  src/overlay-chrome.cpp
+  src/overlay-chrome.hpp
   tests/surface-capture-smoke.cpp
   tests/surface-capture-smoke.hpp
   ${PROTOCOL_SOURCES}

@@ -41,7 +41,7 @@ private:
 /// The worker publishes a monotonically increasing ready cycle (cycle 1 is
 /// the unscrolled first frame) and blocks until that exact cycle is
 /// acknowledged with the notch count for the NEXT scroll; the first
-/// acknowledgement of a cycle wins and each is consumed exactly once. There
+/// acknowledgment of a cycle wins and each is consumed exactly once. There
 /// is deliberately no timeout: a slow grab blocks scrolling instead of racing
 /// past unrecorded content.
 class CaptureHandshake {

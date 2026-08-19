@@ -6,6 +6,7 @@
 #include "instance-lock-smoke.hpp"
 #include "pin-layout-smoke.hpp"
 #include "stitch-smoke.hpp"
+#include "stitch.hpp"
 #include "pin-lifecycle-smoke.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
@@ -1619,10 +1620,10 @@ int main(int argc, char **argv) {
   QApplication application(argc, argv);
   if (!loadCaptureFonts())
     return 17;
-  // Live output capture against a real compositor (the smoke's own
-  // Wayland connection; Qt's platform does not matter): open a
-  // session on the named output, grab several frames through the same
-  // buffer, and time them — scroll capture needs many per second.
+  // Live output capture against a real compositor (the smoke's own Wayland
+  // connection; Qt's platform does not matter): open a session on the named
+  // output, grab several frames through the same buffer, and time them, scroll
+  // capture needs many per second.
   const QString outputName = qEnvironmentVariable("OMASNAP_SMOKE_OUTPUT");
   if (!outputName.isEmpty()) {
     OutputCapture output;
@@ -1751,6 +1752,30 @@ int main(int argc, char **argv) {
           << QStringLiteral("A horizontal notch stepped only one way: up=") +
                  up + QStringLiteral(" down=") + down;
       return 116;
+    }
+    editor.close();
+  }
+  {
+    // A capture past the advisory edge still opens and edits; the only
+    // difference is that it says so.
+    CaptureData tall;
+    tall.monitor.name = QStringLiteral("TEST");
+    tall.monitor.scale = 1.0;
+    tall.monitor.pixelSize = {8, stitch::kWidelyOpenableEdge + 2};
+    tall.source = QImage(8, stitch::kWidelyOpenableEdge + 2,
+                         QImage::Format_ARGB32_Premultiplied);
+    tall.source.fill(QColor(QStringLiteral("#203040")));
+    tall.previewSize = tall.source.size();
+    CaptureEditor editor(std::move(tall), CaptureEditor::CaptureMode::File);
+    editor.resize(400, 300);
+    editor.show();
+    application.processEvents();
+    if (!editor.statusForTest().contains(QStringLiteral("Very long capture")) ||
+        !editor.statusForTest().contains(QStringLiteral("edits and saves"))) {
+      qWarning().noquote()
+          << QStringLiteral("Oversized capture did not explain itself: ")
+          << editor.statusForTest();
+      return 112;
     }
     editor.close();
   }

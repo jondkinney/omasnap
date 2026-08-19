@@ -1,6 +1,8 @@
 /** @fileoverview Handles screenshot selection, annotation, and editor drawing.
  */
 #include "editor.hpp"
+
+#include "stitch.hpp"
 #include "icons.hpp"
 #include "eyedropper.hpp"
 
@@ -392,8 +394,20 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     setStatus(QStringLiteral("Capturing screen…"));
   } else if (mode == CaptureMode::Fullscreen || mode == CaptureMode::File) {
     selection_ = QRectF(QPointF(), capture_.previewSize);
+    // A very long capture edits and saves here exactly as usual, so say what
+    // actually differs: other software may refuse to open the file. Said once,
+    // on opening, where it is useful, not as an alarm during capture.
+    const bool veryLong =
+        capture_.previewSize.width() > stitch::kWidelyOpenableEdge ||
+        capture_.previewSize.height() > stitch::kWidelyOpenableEdge;
     enterEdit(
-        mode == CaptureMode::File
+        veryLong
+            ? QStringLiteral("Very long capture (%1 × %2) · edits and saves "
+                             "here as usual, but many apps cannot open images "
+                             "this large · crop it if you need it elsewhere")
+                  .arg(capture_.previewSize.width())
+                  .arg(capture_.previewSize.height())
+        : mode == CaptureMode::File
             ? QStringLiteral("Editing image from file · Copy/Save to output")
             : QStringLiteral("Full screen selected · native resolution · "
                              "outer handles crop"));
@@ -1548,6 +1562,13 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     if (windowMode_ &&
         (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
       chooseWindow(hoveredWindow_);
+      return;
+    }
+    if (event->key() == Qt::Key_S && !event->modifiers()) {
+      // Same tool, other mood: hand this over to scroll capture before any
+      // pixels are taken. Nothing has been captured yet, so nothing is lost.
+      switchedToScroll_ = true;
+      close();
       return;
     }
     if (event->key() == Qt::Key_Space) {
