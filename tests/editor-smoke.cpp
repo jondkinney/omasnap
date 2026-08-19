@@ -1427,6 +1427,81 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+/** Checks that a spotlight resizes by its corner handle. The handle sits on
+ *  the layer's bounds, which for an elliptical spotlight is outside the shape
+ *  the hit test uses, so a press there used to read as empty canvas and start
+ *  a marquee. */
+bool runSpotlightHandleSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  // Fine banding, so a spotlight's lens is visible against the surround.
+  for (int y = 0; y < capture.source.height(); ++y) {
+    for (int x = 0; x < capture.source.width(); ++x) {
+      const int band = ((x / 3) + (y / 5)) % 3;
+      capture.source.setPixelColor(
+          x, y, QColor(40 + band * 70, 60 + band * 50, 90 + band * 40));
+    }
+  }
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+
+  // A spotlight from (300,250) to (500,400), then selected by its middle.
+  QTest::keyClick(&editor, Qt::Key_S);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 250));
+  QTest::mouseMove(&editor, QPoint(500, 400), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(500, 400));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 325));
+  application.processEvents();
+
+  const QImage placed = flushedSnapshot(editor, snapshotPath);
+  if (placed.isNull()) {
+    error = QStringLiteral("Spotlight handle smoke: nothing was rendered");
+    return false;
+  }
+  // Its bottom-right handle is at widget (500,400), on the bounds and outside
+  // the ellipse. Dragging it in must resize the spotlight.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(500, 400));
+  QTest::mouseMove(&editor, QPoint(430, 340), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(430, 340));
+  application.processEvents();
+  const QImage resized = flushedSnapshot(editor, snapshotPath);
+  if (resized == placed) {
+    error = QStringLiteral("Dragging a spotlight's handle did nothing");
+    return false;
+  }
+  // A resize keeps the opposite corner: moving it by the same delta would
+  // have produced a different picture.
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 325));
+  QTest::mouseMove(&editor, QPoint(330, 265), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(330, 265));
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath) == resized) {
+    error = QStringLiteral("Dragging a spotlight's handle moved it instead of "
+                           "resizing it");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1465,6 +1540,10 @@ int main(int argc, char **argv) {
   if (!runQuickOutputChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 73;
+  }
+  if (!runSpotlightHandleSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 96;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

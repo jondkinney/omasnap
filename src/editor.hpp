@@ -126,6 +126,10 @@ private:
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   [[nodiscard]] bool annotationSelected(int index) const;
+  /// Which handle of the selected layer is under `point`, if any. Asked
+  /// before what shape is under the pointer, since a handle can sit outside
+  /// the layer it belongs to.
+  [[nodiscard]] Interaction selectedHandleAt(const QPointF &point) const;
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
