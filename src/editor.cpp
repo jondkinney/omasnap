@@ -61,6 +61,18 @@ bool hasEndpointHandles(Annotation::Kind kind) {
          kind == Annotation::Kind::Spotlight;
 }
 
+/// Any handle drag on a layer (as opposed to a move, or a capture crop).
+bool isLayerResize(CaptureEditor::Interaction interaction) {
+  return interaction >= CaptureEditor::Interaction::ResizeStart &&
+         interaction <= CaptureEditor::Interaction::ResizeLeft;
+}
+
+/// The eight handles that reshape a box, as opposed to the two ends of a line.
+bool isBoxResize(CaptureEditor::Interaction interaction) {
+  return interaction >= CaptureEditor::Interaction::ResizeTopLeft &&
+         interaction <= CaptureEditor::Interaction::ResizeLeft;
+}
+
 bool showsSelectionBounds(Annotation::Kind kind) {
   return kind != Annotation::Kind::Arrow && kind != Annotation::Kind::Line;
 }
@@ -539,6 +551,204 @@ QRectF CaptureEditor::selectedAnnotationsBounds() const {
 
 bool CaptureEditor::annotationSelected(int index) const {
   return selectedAnnotations_.contains(index);
+}
+
+QVector<QPair<QPointF, CaptureEditor::Interaction>>
+CaptureEditor::annotationHandles(const Annotation &annotation) const {
+  // A line or an arrow is two points, so it has two handles and no box.
+  if (annotation.kind == Annotation::Kind::Arrow ||
+      annotation.kind == Annotation::Kind::Line) {
+    return {{annotation.start, Interaction::ResizeStart},
+            {annotation.end, Interaction::ResizeEnd}};
+  }
+  const QRectF bounds = annotationBounds(annotation);
+  // A text's handle is its wrap width, not its size: one handle, on the edge
+  // the wrapping actually moves.
+  if (annotation.kind == Annotation::Kind::Text)
+    return {{bounds.bottomRight(), Interaction::ResizeEnd}};
+  // A counter is a disc: any corner sets its size, and sides would say
+  // something about width and height that a disc cannot honour.
+  if (annotation.kind == Annotation::Kind::Marker) {
+    return {{bounds.topLeft(), Interaction::ResizeTopLeft},
+            {bounds.topRight(), Interaction::ResizeTopRight},
+            {bounds.bottomRight(), Interaction::ResizeBottomRight},
+            {bounds.bottomLeft(), Interaction::ResizeBottomLeft}};
+  }
+  QVector<QPair<QPointF, Interaction>> handles{
+      {bounds.topLeft(), Interaction::ResizeTopLeft},
+      {bounds.topRight(), Interaction::ResizeTopRight},
+      {bounds.bottomRight(), Interaction::ResizeBottomRight},
+      {bounds.bottomLeft(), Interaction::ResizeBottomLeft}};
+  // Side handles only where there is room for them: on a layer barely wider
+  // than the handles themselves they would be a blob of overlapping dots.
+  const qreal room = 34.0 / std::max<qreal>(editScale(), 0.01);
+  if (bounds.width() >= room) {
+    handles.push_back({QPointF(bounds.center().x(), bounds.top()),
+                       Interaction::ResizeTop});
+    handles.push_back({QPointF(bounds.center().x(), bounds.bottom()),
+                       Interaction::ResizeBottom});
+  }
+  if (bounds.height() >= room) {
+    handles.push_back({QPointF(bounds.right(), bounds.center().y()),
+                       Interaction::ResizeRight});
+    handles.push_back({QPointF(bounds.left(), bounds.center().y()),
+                       Interaction::ResizeLeft});
+  }
+  return handles;
+}
+
+CaptureEditor::Interaction
+CaptureEditor::selectedHandleAt(const QPointF &point) const {
+  // The single answer to "is this press a resize?", shared by every tool. A
+  // handle can sit well outside the layer it belongs to, a spotlight's corner
+  // being out in the dimmed surround, so hit-testing the shape alone would
+  // miss it and start a marquee or a new drawing instead.
+  if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
+    return Interaction::None;
+  const qreal tolerance = 9.0 / std::max<qreal>(editScale(), 0.01);
+  Interaction nearest = Interaction::None;
+  qreal nearestDistance = tolerance;
+  for (const auto &[position, handle] :
+       annotationHandles(annotations_.at(selectedAnnotation_))) {
+    const qreal distance = QLineF(point, position).length();
+    if (distance <= nearestDistance) {
+      nearestDistance = distance;
+      nearest = handle;
+    }
+  }
+  return nearest;
+}
+
+CaptureEditor::Interaction CaptureEditor::pointerHandle() const {
+  if (!editImageRect().contains(cursor_))
+    return Interaction::None;
+  return selectedHandleAt(toAnnotationPoint(cursor_));
+}
+
+Qt::CursorShape CaptureEditor::handleCursorShape(Interaction handle) const {
+  // Never the move cursor: the handle resizes, the body moves, and the pointer
+  // should say which one, and which way, before the press.
+  switch (handle) {
+  case Interaction::ResizeStart:
+  case Interaction::ResizeEnd:
+    if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
+        annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text)
+      return Qt::SizeHorCursor;
+    return Qt::PointingHandCursor;
+  case Interaction::ResizeTopLeft:
+  case Interaction::ResizeBottomRight:
+    return Qt::SizeFDiagCursor;
+  case Interaction::ResizeTopRight:
+  case Interaction::ResizeBottomLeft:
+    return Qt::SizeBDiagCursor;
+  case Interaction::ResizeTop:
+  case Interaction::ResizeBottom:
+    return Qt::SizeVerCursor;
+  case Interaction::ResizeLeft:
+  case Interaction::ResizeRight:
+    return Qt::SizeHorCursor;
+  default:
+    return Qt::ArrowCursor;
+  }
+}
+
+void CaptureEditor::applyBoxResize(Annotation &annotation, Interaction handle,
+                                   const QPointF &point,
+                                   const QRectF &original) {
+  if (annotation.kind == Annotation::Kind::Marker) {
+    annotation.size =
+        std::clamp(QLineF(annotation.start, point).length() / 3.0, 2.0, 30.0);
+    return;
+  }
+  const bool movesLeft = handle == Interaction::ResizeTopLeft ||
+                         handle == Interaction::ResizeLeft ||
+                         handle == Interaction::ResizeBottomLeft;
+  const bool movesRight = handle == Interaction::ResizeTopRight ||
+                          handle == Interaction::ResizeRight ||
+                          handle == Interaction::ResizeBottomRight;
+  const bool movesTop = handle == Interaction::ResizeTopLeft ||
+                        handle == Interaction::ResizeTop ||
+                        handle == Interaction::ResizeTopRight;
+  const bool movesBottom = handle == Interaction::ResizeBottomLeft ||
+                           handle == Interaction::ResizeBottom ||
+                           handle == Interaction::ResizeBottomRight;
+  QPointF target = point;
+  if (resizeConstraintActive_ && (movesLeft || movesRight) &&
+      (movesTop || movesBottom)) {
+    // Shift keeps the proportions, measured against the corner that stays.
+    const QPointF fixed(movesLeft ? original.right() : original.left(),
+                        movesTop ? original.bottom() : original.top());
+    const QPointF moving(movesLeft ? original.left() : original.right(),
+                         movesTop ? original.top() : original.bottom());
+    target = aspectLockedEndpoint(fixed, moving, point);
+  }
+  // An edge dragged past its opposite turns the layer inside out and keeps
+  // following the pointer, the way every drawing tool behaves. Pulling the
+  // right edge left across the shape gives a shape on the left, not a sliver
+  // pinned at the crossing point.
+  QRectF box = original;
+  if (movesLeft)
+    box.setLeft(target.x());
+  if (movesRight)
+    box.setRight(target.x());
+  if (movesTop)
+    box.setTop(target.y());
+  if (movesBottom)
+    box.setBottom(target.y());
+  box = box.normalized();
+  // A redaction still has a floor: it covers something, so it may not be
+  // reduced to a line. The edge nearer where it started is the one that holds.
+  const qreal minimum = annotation.kind == Annotation::Kind::Redaction
+                            ? kMinimumRedactionExtent
+                            : 0.0;
+  if (minimum > 0.0) {
+    const qreal fixedX = movesLeft ? original.right() : original.left();
+    const qreal fixedY = movesTop ? original.bottom() : original.top();
+    if (box.width() < minimum) {
+      if (std::abs(box.left() - fixedX) <= std::abs(box.right() - fixedX))
+        box.setRight(box.left() + minimum);
+      else
+        box.setLeft(box.right() - minimum);
+    }
+    if (box.height() < minimum) {
+      if (std::abs(box.top() - fixedY) <= std::abs(box.bottom() - fixedY))
+        box.setBottom(box.top() + minimum);
+      else
+        box.setTop(box.bottom() - minimum);
+    }
+  }
+
+  if (isStrokeKind(annotation.kind)) {
+    // Mirrored when the drag crossed over: the stroke flips with the box
+    // rather than piling up against the edge it crossed.
+    const bool flippedX = movesLeft ? target.x() > original.right()
+                          : movesRight ? target.x() < original.left()
+                                       : false;
+    const bool flippedY = movesTop ? target.y() > original.bottom()
+                          : movesBottom ? target.y() < original.top()
+                                        : false;
+    const qreal scaleX =
+        (original.width() > 0 ? box.width() / original.width() : 1.0) *
+        (flippedX ? -1.0 : 1.0);
+    const qreal scaleY =
+        (original.height() > 0 ? box.height() / original.height() : 1.0) *
+        (flippedY ? -1.0 : 1.0);
+    for (int index = 0; index < annotation.points.size(); ++index) {
+      const QPointF relative =
+          originalAnnotation_.points.at(index) - original.topLeft();
+      const QPointF anchor(scaleX < 0 ? box.right() : box.left(),
+                           scaleY < 0 ? box.bottom() : box.top());
+      annotation.points[index] =
+          anchor + QPointF(relative.x() * scaleX, relative.y() * scaleY);
+    }
+    if (!annotation.points.isEmpty()) {
+      annotation.start = annotation.points.first();
+      annotation.end = annotation.points.last();
+    }
+    return;
+  }
+  annotation.start = box.topLeft();
+  annotation.end = box.bottomRight();
 }
 
 int CaptureEditor::annotationAt(const QPointF &point) const {
@@ -1529,8 +1739,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     // Shift pressed mid-drag constrains the drag: creation for drawing
     // tools, handle resizing for the Select tool.
     const bool resizing =
-        tool_ == Tool::Select && (interaction_ == Interaction::ResizeStart ||
-                                  interaction_ == Interaction::ResizeEnd);
+        isLayerResize(interaction_);
     if (resizing)
       resizeConstraintActive_ = true;
     else if (supportsCreationConstraint(tool_))
@@ -1827,8 +2036,11 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
       } else {
         Annotation &annotation = annotations_[selectedAnnotation_];
         annotation = originalAnnotation_;
+      const QRectF originalBox = annotationBounds(originalAnnotation_);
       if (interaction_ == Interaction::Move) {
         translateAnnotation(annotation, point - dragStart_);
+      } else if (isBoxResize(interaction_)) {
+        applyBoxResize(annotation, interaction_, point, originalBox);
       } else if (interaction_ == Interaction::ResizeStart) {
         if (hasEndpointHandles(annotation.kind)) {
           annotation.start = constrainedResizeEndpoint(
@@ -2040,7 +2252,11 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     const bool additive =
         event->modifiers().testFlag(Qt::ControlModifier) ||
         event->modifiers().testFlag(Qt::MetaModifier);
-    const int hit = annotationAt(point);
+    // A handle of the layer already selected is a resize wherever it sits:
+    // a box's corner can lie well outside the shape it belongs to.
+    const Interaction handle = selectedHandleAt(point);
+    const int hit =
+        handle != Interaction::None ? selectedAnnotation_ : annotationAt(point);
     if (additive) {
       if (hit >= 0) {
         if (selectedAnnotations_.contains(hit)) {
@@ -2082,21 +2298,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       if (selectedAnnotations_.size() > 1) {
         interaction_ = Interaction::Move;
       } else {
-        const qreal tolerance = 9.0 / std::max<qreal>(editScale(), 0.01);
-        const Annotation &selected = annotations_.at(hit);
-        const QRectF bounds = annotationBounds(selected);
-        const QPointF first =
-            hasEndpointHandles(selected.kind) ? selected.start : bounds.topLeft();
-        const QPointF last = hasEndpointHandles(selected.kind)
-                                 ? selected.end
-                                 : bounds.bottomRight();
-        interaction_ =
-            QLineF(point, first).length() <= tolerance &&
-                    hasEndpointHandles(selected.kind)
-                ? Interaction::ResizeStart
-                : QLineF(point, last).length() <= tolerance
-                    ? Interaction::ResizeEnd
-                    : Interaction::Move;
+        const Interaction onHit = selectedHandleAt(point);
+        interaction_ = onHit != Interaction::None ? onHit : Interaction::Move;
       }
     }
     if (selectedAnnotation_ >= 0) {
@@ -2109,8 +2312,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       dragChanged_ = false;
       dragStart_ = point;
       dragging_ = true;
-      resizeConstraintActive_ = (interaction_ == Interaction::ResizeStart ||
-                                 interaction_ == Interaction::ResizeEnd) &&
+      resizeConstraintActive_ = isLayerResize(interaction_) &&
                                 event->modifiers().testFlag(Qt::ShiftModifier);
       setStatus(selectedAnnotations_.size() > 1
                     ? QStringLiteral("%1 layers selected · drag to move")
@@ -2385,6 +2587,11 @@ void CaptureEditor::updatePointerCursor() {
       setCursor(Qt::PointingHandCursor);
       return;
     }
+  }
+  const bool resizing = dragging_ && isLayerResize(interaction_);
+  if (resizing || (!dragging_ && pointerHandle() != Interaction::None)) {
+    setCursor(handleCursorShape(resizing ? interaction_ : pointerHandle()));
+    return;
   }
   if (tool_ == Tool::Select) {
     int cropHandle = cropHandleAt(cursor_);
@@ -2676,11 +2883,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       const qreal radius = 5.0 / scale;
       painter.setPen(QPen(Qt::white, 1.0 / scale));
       painter.setBrush(QColor(QStringLiteral("#0a84ff")));
-      if (hasEndpointHandles(selected.kind))
-        painter.drawEllipse(selected.start, radius, radius);
-      const QPointF last =
-          hasEndpointHandles(selected.kind) ? selected.end : bounds.bottomRight();
-      painter.drawEllipse(last, radius, radius);
+      for (const auto &[position, handle] : annotationHandles(selected))
+        painter.drawEllipse(position, radius, radius);
     }
   }
   painter.restore();
