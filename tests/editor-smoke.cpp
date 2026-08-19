@@ -1427,6 +1427,96 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+/** Checks that a modifier left over from the launch binding is not believed.
+ *  A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
+ *  leaves that modifier held as the overlay takes keyboard focus. Its release
+ *  goes to the compositor's binding rather than to us, so Qt keeps reporting
+ *  it held, and every arrow snaps to 45° until some later key event refreshes
+ *  the state. Nothing here presses a key before the check, because that is
+ *  exactly what a fresh capture looks like. */
+bool runStuckModifierSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  // Mouse only from here: the region, then the arrow tool from the toolbar
+  // (118,92, as the click-away check above uses).
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(118, 92));
+  application.processEvents();
+
+  // A shallow drag, with the stale Shift the compositor still reports. It must
+  // draw where it was dragged: snapped to 45°, this arrow would come out flat.
+  const QImage before = flushedSnapshot(editor, snapshotPath);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::ShiftModifier, QPoint(200, 400));
+  QTest::mouseMove(&editor, QPoint(400, 370), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                      QPoint(400, 370));
+  application.processEvents();
+  const QImage drawn = flushedSnapshot(editor, snapshotPath);
+  if (drawn == before) {
+    error = QStringLiteral("Stuck-modifier smoke: nothing was drawn");
+    return false;
+  }
+  // Annotation coords: the shaft runs from (100,295) to (300,265). At x 200 it
+  // sits at y 280; a 45° snap would have flattened it to 295.
+  const auto ink = [&drawn](int x, int y) {
+    for (int dy = -3; dy <= 3; ++dy) {
+      for (int dx = -3; dx <= 3; ++dx) {
+        if (drawn.pixelColor(x + dx, y + dy) !=
+            QColor(QStringLiteral("#182030")))
+          return true;
+      }
+    }
+    return false;
+  };
+  if (!ink(200, 280) || ink(200, 295)) {
+    error = QStringLiteral("A modifier left over from the launch chord was "
+                           "believed: the first stroke snapped on its own");
+    return false;
+  }
+  // Once a key has been pressed the reported state can be trusted again, so
+  // Shift means Shift: the same drag now snaps flat.
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::ShiftModifier, QPoint(200, 400));
+  QTest::mouseMove(&editor, QPoint(400, 370), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::ShiftModifier,
+                      QPoint(400, 370));
+  application.processEvents();
+  const QImage snapped = flushedSnapshot(editor, snapshotPath);
+  const auto snappedInk = [&snapped](int x, int y) {
+    for (int dy = -3; dy <= 3; ++dy) {
+      for (int dx = -3; dx <= 3; ++dx) {
+        if (snapped.pixelColor(x + dx, y + dy) !=
+            QColor(QStringLiteral("#182030")))
+          return true;
+      }
+    }
+    return false;
+  };
+  if (!snappedInk(200, 295)) {
+    error = QStringLiteral("Shift stopped meaning Shift after a key event");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1465,6 +1555,10 @@ int main(int argc, char **argv) {
   if (!runQuickOutputChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 73;
+  }
+  if (!runStuckModifierSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 97;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

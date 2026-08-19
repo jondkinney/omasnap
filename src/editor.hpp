@@ -126,6 +126,15 @@ private:
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
   [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   [[nodiscard]] bool annotationSelected(int index) const;
+  /// What a pointer event reports, or nothing until a key event has confirmed
+  /// it. A binding with a modifier in it, such as the README's ALT + SHIFT + 4,
+  /// leaves that modifier held as the overlay takes focus. Its release goes to
+  /// the compositor's binding rather than to us, so Qt keeps reporting it
+  /// held.
+  [[nodiscard]] Qt::KeyboardModifiers
+  heldModifiers(Qt::KeyboardModifiers reported) const {
+    return modifiersSeen_ ? reported : Qt::KeyboardModifiers(Qt::NoModifier);
+  }
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
@@ -175,6 +184,8 @@ private:
   CaptureData capture_;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
+  /// Set by the first key event, which carries a fresh modifier snapshot.
+  bool modifiersSeen_ = false;
   QRectF selection_;
   QPointF dragStart_;
   QRectF originalSelection_;

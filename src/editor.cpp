@@ -1420,6 +1420,7 @@ void CaptureEditor::handleToolbar(const QString &action) {
 }
 
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
+  modifiersSeen_ = true;
   if (capturePending_) {
     if (event->key() == Qt::Key_Escape)
       handleEscape();
@@ -1597,6 +1598,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
 }
 
 void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
+  modifiersSeen_ = true;
   if (event->key() == Qt::Key_Shift && creationConstraintActive_) {
     creationConstraintActive_ = false;
     event->accept();
@@ -1929,8 +1931,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   }
   if (tool_ == Tool::Select) {
     const bool additive =
-        event->modifiers().testFlag(Qt::ControlModifier) ||
-        event->modifiers().testFlag(Qt::MetaModifier);
+        heldModifiers(event->modifiers()).testFlag(Qt::ControlModifier) ||
+        heldModifiers(event->modifiers()).testFlag(Qt::MetaModifier);
     const int hit = annotationAt(point);
     if (additive) {
       if (hit >= 0) {
@@ -2036,7 +2038,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     dragStart_ = point;
     dragging_ = true;
     creationConstraintActive_ = supportsCreationConstraint(tool_) &&
-                                event->modifiers().testFlag(Qt::ShiftModifier);
+                                heldModifiers(event->modifiers()).testFlag(Qt::ShiftModifier);
     if (tool_ == Tool::Redact) {
       activeRedactionSeed_ = QRandomGenerator::system()->generate();
       if (activeRedactionSeed_ == 0)
