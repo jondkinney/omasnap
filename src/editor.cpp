@@ -1371,6 +1371,8 @@ void CaptureEditor::handleToolbar(const QString &action) {
   } else if (action == QStringLiteral("tool-text"))
     tool_ = Tool::Text;
   else if (action == QStringLiteral("tool-eyedropper")) {
+    if (tool_ != Tool::Eyedropper)
+      toolBeforeEyedropper_ = tool_;
     tool_ = Tool::Eyedropper;
     customColorPickerOpen_ = false;
   }
@@ -1565,6 +1567,8 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() == Qt::Key_T) {
     tool_ = Tool::Text;
   } else if (event->key() == Qt::Key_I) {
+    if (tool_ != Tool::Eyedropper)
+      toolBeforeEyedropper_ = tool_;
     tool_ = Tool::Eyedropper;
   } else if (event->key() == Qt::Key_O) {
     tool_ = Tool::Ocr;
@@ -1919,8 +1923,11 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     QString clipboardError;
     static_cast<void>(copyTextToClipboard(
         customColor_.name(QColor::HexRgb).toUpper(), clipboardError));
-    tool_ = Tool::Select;
-    selectedAnnotation_ = -1;
+    // Sampling a color is something you do in order to keep working: it
+    // hands back the tool that was in hand, and leaves the layer it just
+    // recolored selected so another color can be tried on it. Dropping both
+    // meant that taking a color cost you your place twice over.
+    tool_ = toolBeforeEyedropper_;
     setStatus(QStringLiteral("Sampled %1").arg(
         customColor_.name(QColor::HexRgb).toUpper()));
     updatePointerCursor();

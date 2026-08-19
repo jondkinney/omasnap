@@ -1362,7 +1362,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
     }
     application.processEvents();
   };
-  // Widget centre of the spotlight drawn above, and a point clear of it.
+  // Widget center of the spotlight drawn above, and a point clear of it.
   const QPointF overSpotlight(400, 325);
   const QPointF awayFromSpotlight(160, 160);
 
@@ -1427,6 +1427,81 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
 }
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
+/** Checks that sampling a color is not a change of tool: the eyedropper
+ *  hands back whatever was in hand, and recolors the layer that was selected
+ *  rather than dropping the selection with it. */
+bool runEyedropperSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  // A patch of a color nothing else uses, to sample from.
+  QPainter painter(&capture.source);
+  painter.fillRect(QRect(560, 380, 120, 120), QColor(QStringLiteral("#12b886")));
+  painter.fillRect(QRect(560, 140, 120, 120), QColor(QStringLiteral("#f59f00")));
+  painter.end();
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+
+  // An arrow, selected, then a color sampled from the patch.
+  QTest::keyClick(&editor, Qt::Key_A);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(360, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(360, 300));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(280, 250));
+  application.processEvents();
+  const QImage before = flushedSnapshot(editor, snapshotPath);
+  QTest::keyClick(&editor, Qt::Key_A); // back to the arrow tool
+  QTest::keyClick(&editor, Qt::Key_I); // eyedropper
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 440));
+  application.processEvents();
+  const QImage recolored = flushedSnapshot(editor, snapshotPath);
+  if (recolored == before) {
+    error = QStringLiteral("Sampling a color did not recolor the selected "
+                           "layer");
+    return false;
+  }
+  // The layer is still the selected one, so a second color lands on it too.
+  // That is the half a cleared selection would break: the recolor reads the
+  // selected index, and dropping it makes every later sample a no-op.
+  QTest::keyClick(&editor, Qt::Key_I);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 200));
+  application.processEvents();
+  const QImage twice = flushedSnapshot(editor, snapshotPath);
+  if (twice == recolored) {
+    error = QStringLiteral("Sampling a color dropped the selection");
+    return false;
+  }
+  // The tool that was in hand is still in hand: this drag draws a second
+  // arrow. With the tool dropped for the select tool it would only have
+  // marqueed, leaving the capture as it was.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 420));
+  QTest::mouseMove(&editor, QPoint(340, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(340, 470));
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath) == twice) {
+    error = QStringLiteral("Sampling a color took the tool away");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1465,6 +1540,10 @@ int main(int argc, char **argv) {
   if (!runQuickOutputChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 73;
+  }
+  if (!runEyedropperSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 94;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

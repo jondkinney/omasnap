@@ -175,6 +175,9 @@ private:
   CaptureData capture_;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
+  /// What to hand back to once a color has been sampled: taking a color is
+  /// not a change of tool.
+  Tool toolBeforeEyedropper_ = Tool::Select;
   QRectF selection_;
   QPointF dragStart_;
   QRectF originalSelection_;
