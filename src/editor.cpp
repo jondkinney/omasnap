@@ -551,6 +551,29 @@ bool CaptureEditor::annotationSelected(int index) const {
   return selectedAnnotations_.contains(index);
 }
 
+CaptureEditor::Interaction
+CaptureEditor::selectedHandleAt(const QPointF &point) const {
+  // A layer's handles can sit well outside the layer itself. A spotlight is
+  // hit-tested against its opening, and the corners of its bounds are out in
+  // the dimmed surround, so a press has to ask about handles before it asks
+  // what shape is under the pointer. Otherwise the handle misses, the press
+  // reads as empty canvas, and dragging a spotlight's corner starts a marquee
+  // instead of resizing it.
+  if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
+    return Interaction::None;
+  const Annotation &selected = annotations_.at(selectedAnnotation_);
+  const qreal tolerance = 9.0 / std::max<qreal>(editScale(), 0.01);
+  const QRectF bounds = annotationBounds(selected);
+  const bool endpoints = hasEndpointHandles(selected.kind);
+  const QPointF first = endpoints ? selected.start : bounds.topLeft();
+  const QPointF last = endpoints ? selected.end : bounds.bottomRight();
+  if (endpoints && QLineF(point, first).length() <= tolerance)
+    return Interaction::ResizeStart;
+  if (QLineF(point, last).length() <= tolerance)
+    return Interaction::ResizeEnd;
+  return Interaction::None;
+}
+
 int CaptureEditor::annotationAt(const QPointF &point) const {
   const auto containsPoint = [this, &point](const Annotation &annotation) {
     if (annotation.kind == Annotation::Kind::Arrow ||
@@ -2134,7 +2157,10 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     const bool additive =
         heldModifiers(event->modifiers()).testFlag(Qt::ControlModifier) ||
         heldModifiers(event->modifiers()).testFlag(Qt::MetaModifier);
-    const int hit = annotationAt(point);
+    // A handle of the layer already selected is a resize wherever it sits.
+    const Interaction handle = selectedHandleAt(point);
+    const int hit =
+        handle != Interaction::None ? selectedAnnotation_ : annotationAt(point);
     if (additive) {
       if (hit >= 0) {
         if (selectedAnnotations_.contains(hit)) {
@@ -2176,21 +2202,10 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       if (selectedAnnotations_.size() > 1) {
         interaction_ = Interaction::Move;
       } else {
-        const qreal tolerance = 9.0 / std::max<qreal>(editScale(), 0.01);
-        const Annotation &selected = annotations_.at(hit);
-        const QRectF bounds = annotationBounds(selected);
-        const QPointF first =
-            hasEndpointHandles(selected.kind) ? selected.start : bounds.topLeft();
-        const QPointF last = hasEndpointHandles(selected.kind)
-                                 ? selected.end
-                                 : bounds.bottomRight();
-        interaction_ =
-            QLineF(point, first).length() <= tolerance &&
-                    hasEndpointHandles(selected.kind)
-                ? Interaction::ResizeStart
-                : QLineF(point, last).length() <= tolerance
-                    ? Interaction::ResizeEnd
-                    : Interaction::Move;
+        // selectedAnnotation_ is the layer under the press now, so this asks
+        // about that layer's own handles.
+        const Interaction onHit = selectedHandleAt(point);
+        interaction_ = onHit != Interaction::None ? onHit : Interaction::Move;
       }
     }
     if (selectedAnnotation_ >= 0) {
