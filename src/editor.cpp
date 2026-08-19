@@ -42,6 +42,10 @@ constexpr std::array<const char *, 3> kTextSizeNames{"S", "M", "L"};
 constexpr qreal kToolbarWidth = 760;
 constexpr qreal kMinimumRedactionExtent = 5.0;
 constexpr int kBackdropDim = 143;
+/// How long after the last wheel notch the selection chrome stays faint. Long
+/// enough to cover a run of notches, short enough that it is back before the
+/// hand has left the wheel.
+constexpr int kAdjustSettleMs = 400;
 
 qreal toolbarScale(qreal availableWidth) {
   constexpr qreal sideMargins = 16.0;
@@ -403,6 +407,12 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     setStatus(QStringLiteral("Window mode · click or Super+Arrows then Enter · "
                              "Space returns to area"));
   }
+  adjustSettleTimer_.setSingleShot(true);
+  adjustSettleTimer_.setInterval(kAdjustSettleMs);
+  connect(&adjustSettleTimer_, &QTimer::timeout, this, [this] {
+    adjustingSelection_ = false;
+    update();
+  });
   updatePointerCursor();
 }
 
@@ -570,52 +580,96 @@ int CaptureEditor::hoveredSpotlightAt(const QPointF &position) const {
   return index;
 }
 
-void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
+bool CaptureEditor::adjustSelectedAnnotationRing(int step) {
+  // Alt+wheel is the secondary control, and with a layer selected it belongs
+  // to that layer rather than to what the next one will look like. Kinds with
+  // no second setting say so, and the wheel falls through to the armed tool.
+  beginSelectionAdjust();
+  if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
+    return false;
+  Annotation &annotation = annotations_[selectedAnnotation_];
+  if (annotation.kind != Annotation::Kind::Spotlight)
+    return false;
+  recordEdit();
+  annotation.size = std::clamp(annotation.size + step * 2.0, 0.0, 12.0);
+  setStatus(annotation.size <= 0.0
+                ? QStringLiteral("Spotlight · no border · Alt+wheel adds one")
+                : QStringLiteral("Spotlight · border %1 · Alt+wheel adjusts")
+                      .arg(qRound(annotation.size)));
+  scheduleSnapshot();
+  return true;
+}
+
+void CaptureEditor::beginSelectionAdjust() {
+  adjustingSelection_ = true;
+  adjustSettleTimer_.start();
+}
+
+void CaptureEditor::adjustSelectedAnnotation(int step) {
+  // The wheel is the weight control: a layer keeps the shape and the place it
+  // was drawn in, and only gets heavier or lighter. How big it is belongs to
+  // the corner handle, where Shift keeps the proportions: one gesture each,
+  // so neither has to be undone to reach the other.
+  beginSelectionAdjust();
   if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
     return;
   recordEdit();
   Annotation &annotation = annotations_[selectedAnnotation_];
-  if (annotation.kind == Annotation::Kind::Spotlight) {
+  const auto weigh = [step](qreal size, qreal lowest, qreal highest) {
+    return std::clamp(size + step, lowest, highest);
+  };
+  switch (annotation.kind) {
+  case Annotation::Kind::Spotlight:
     annotation.magnification =
-        std::clamp(annotation.magnification * factor, 1.0, 4.0);
-    setStatus(QStringLiteral("Spotlight magnification · %1× · wheel adjusts")
-                  .arg(annotation.magnification, 0, 'f', 1));
+        std::clamp(annotation.magnification + step * 0.25, 1.0, 4.0);
+    setStatus(annotation.magnification <= 1.0
+                  ? QStringLiteral("Spotlight · no zoom · wheel magnifies")
+                  : QStringLiteral("Spotlight · %1× · wheel adjusts")
+                        .arg(annotation.magnification, 0, 'f', 1));
+    scheduleSnapshot();
+    return;
+  case Annotation::Kind::Marker:
+    // A counter has no stroke to weigh: its size is the counter itself.
+    annotation.size = weigh(annotation.size, 2.0, 30.0);
+    setStatus(QStringLiteral("Counter %1 · size %2 · wheel resizes")
+                  .arg(annotation.number)
+                  .arg(qRound(annotation.size)));
+    scheduleSnapshot();
+    return;
+  case Annotation::Kind::Text:
+    // Type has no stroke either; its weight is its size.
+    annotation.size = weigh(annotation.size, 1.0, 24.0);
+    setStatus(QStringLiteral("Selected text · size %1 · wheel resizes")
+                  .arg(qRound(annotation.size)));
+    scheduleSnapshot();
+    return;
+  case Annotation::Kind::Redaction: {
+    // A cover-up is all fill, so the only thing its wheel can mean is how
+    // much it covers.
+    const qreal factor = step > 0 ? 1.1 : 1.0 / 1.1;
+    const QRectF bounds = annotationBounds(annotation);
+    const QPointF center = bounds.center();
+    const qreal scale =
+        bounds.width() > 0 && bounds.height() > 0
+            ? std::max({factor, kMinimumRedactionExtent / bounds.width(),
+                        kMinimumRedactionExtent / bounds.height()})
+            : factor;
+    annotation.start = center + (annotation.start - center) * scale;
+    annotation.end = center + (annotation.end - center) * scale;
+    setStatus(QStringLiteral("Redaction · %1%").arg(qRound(scale * 100)));
     scheduleSnapshot();
     return;
   }
-  const QPointF center = annotationBounds(annotation).center();
-  qreal geometryFactor = factor;
-  if (annotation.kind == Annotation::Kind::Redaction) {
-    const QRectF bounds = annotationBounds(annotation);
-    if (bounds.width() > 0 && bounds.height() > 0) {
-      geometryFactor =
-          std::max({factor, kMinimumRedactionExtent / bounds.width(),
-                    kMinimumRedactionExtent / bounds.height()});
-    }
+  case Annotation::Kind::Arrow:
+  case Annotation::Kind::Line:
+  case Annotation::Kind::Freehand:
+  case Annotation::Kind::Highlighter:
+  case Annotation::Kind::Rectangle:
+    break;
   }
-  const auto scaledPoint = [center, geometryFactor](const QPointF &point) {
-    return center + (point - center) * geometryFactor;
-  };
-  if (hasEndpointHandles(annotation.kind)) {
-    annotation.start = scaledPoint(annotation.start);
-    annotation.end = scaledPoint(annotation.end);
-    annotation.size = std::clamp(annotation.size * geometryFactor, 2.0, 30.0);
-  } else if (isStrokeKind(annotation.kind)) {
-    for (QPointF &point : annotation.points)
-      point = scaledPoint(point);
-    if (!annotation.points.isEmpty()) {
-      annotation.start = annotation.points.first();
-      annotation.end = annotation.points.last();
-    }
-    annotation.size = std::clamp(annotation.size * factor, 2.0, 30.0);
-  } else if (annotation.kind == Annotation::Kind::Marker) {
-    annotation.size = std::clamp(annotation.size * factor, 2.0, 30.0);
-  } else if (annotation.kind == Annotation::Kind::Text) {
-    annotation.size = std::clamp(annotation.size * factor, 1.0, 24.0);
-    annotation.start += center - annotationBounds(annotation).center();
-  }
-  setStatus(QStringLiteral("Selected layer · wheel zoom %1%")
-                .arg(qRound(factor * 100)));
+  annotation.size = weigh(annotation.size, 2.0, 30.0);
+  setStatus(QStringLiteral("Selected layer · thickness %1 · handle resizes")
+                .arg(qRound(annotation.size)));
   scheduleSnapshot();
 }
 
@@ -2382,8 +2436,16 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
   // Alt-adjusted setting able to rise and never fall.
   const int notch = vertical != 0 ? vertical : horizontal;
   const int step = notch > 0 ? 1 : -1;
-  const bool overLayer = tool_ == Tool::Select && selectedAnnotation_ >= 0 &&
-                         selectedAnnotation_ < annotations_.size();
+  // A selected layer owns the plain wheel whatever tool is armed. Selecting a
+  // layer to adjust it is the same gesture as selecting it to move it, and the
+  // tool still in hand should not change the answer, and the color keys
+  // already act on the selection this way. The spotlight tool keeps its own
+  // wheel,
+  // which deliberately follows the spotlight under the pointer.
+  const bool layerSelected = selectedAnnotation_ >= 0 &&
+                             selectedAnnotation_ < annotations_.size();
+  const bool overLayer = layerSelected && tool_ != Tool::Spotlight &&
+                         !modifiers.testFlag(Qt::AltModifier);
   const auto showZoom = [&] {
     setStatus(QStringLiteral("Zoom %1% · wheel scrolls · Ctrl+wheel zooms · "
                              "arrows and middle-drag pan · Shift+wheel goes "
@@ -2413,7 +2475,7 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
   // Shift+wheel, or Alt+wheel, goes sideways across a wide stitch: the
   // classic mapping of a vertical wheel to horizontal scrolling.
   if (modifiers.testFlag(Qt::ShiftModifier) ||
-      (tool_ == Tool::Select && !overLayer &&
+      (tool_ == Tool::Select && !layerSelected &&
        modifiers.testFlag(Qt::AltModifier))) {
     if (viewZoom_ > 1.0)
       panView(QPointF(scrollDelta.y() + scrollDelta.x(), 0));
@@ -2423,7 +2485,7 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
   // A plain wheel scrolls a zoomed capture like a document. Where only the
   // horizontal axis overflows, the vertical wheel scrolls that one rather
   // than doing nothing.
-  if (tool_ == Tool::Select && !overLayer) {
+  if (tool_ == Tool::Select && !layerSelected) {
     if (viewZoom_ > 1.0) {
       const QSizeF shown = baseImageRect().size() * viewZoom_;
       const bool verticalSlack = shown.height() > std::max(1, height() - 126);
@@ -2436,8 +2498,15 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     event->accept();
     return;
   }
+  // A selected layer owns Alt+wheel too: its ring, its corners.
+  if (layerSelected && modifiers.testFlag(Qt::AltModifier) &&
+      adjustSelectedAnnotationRing(step)) {
+    event->accept();
+    update();
+    return;
+  }
   if (overLayer) {
-    scaleSelectedAnnotation(step > 0 ? 1.1 : 1.0 / 1.1);
+    adjustSelectedAnnotation(step);
   } else if (tool_ == Tool::Text) {
     textSizeIndex_ = std::clamp(textSizeIndex_ + step, 0, 2);
     setStatus(QStringLiteral("Neucha · size %1 · wheel changes size")
@@ -2781,6 +2850,10 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         (multiple ? selectedAnnotationsBounds()
                   : annotationBounds(annotations_.at(selectedAnnotation_)))
             .adjusted(-4, -4, 4, 4);
+    // Faint while a wheel adjustment is in flight: the handles sit exactly
+    // where the change shows, so at full strength they hide it.
+    const qreal chromeOpacity = adjustingSelection_ ? 0.25 : 1.0;
+    painter.setOpacity(chromeOpacity);
     if (multiple ||
         showsSelectionBounds(annotations_.at(selectedAnnotation_).kind)) {
       painter.setPen(
@@ -2799,6 +2872,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
           hasEndpointHandles(selected.kind) ? selected.end : bounds.bottomRight();
       painter.drawEllipse(last, radius, radius);
     }
+    painter.setOpacity(1.0);
   }
   painter.restore();
 

@@ -6,6 +6,7 @@
 #include <QFutureWatcher>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QTimer>
 #include <QWidget>
 
 class QKeyEvent;
@@ -129,6 +130,11 @@ private:
 public:
   /// Current status line. Test accessor.
   [[nodiscard]] QString statusForTest() const { return status_; }
+  /// Whether the selection chrome is currently stepped back for an adjustment.
+  /// Test accessor.
+  [[nodiscard]] bool selectionFadedForTest() const {
+    return adjustingSelection_;
+  }
 
 private:
   [[nodiscard]] int annotationAt(const QPointF &point) const;
@@ -189,7 +195,18 @@ private:
   void refreshBackdropCache();
   void runOcr(const QRectF &localSelection = {});
   void setStatus(QString status);
-  void scaleSelectedAnnotation(qreal factor);
+  /// Wheel over a selected layer: weight, not size. Thickness for anything
+  /// with a stroke, the counter or text's own size, magnification for a
+  /// spotlight, extent for the one kind that is all fill.
+  void adjustSelectedAnnotation(int step);
+  /// Alt+wheel on the selected layer: a spotlight's ring. False when the layer
+  /// has no second setting to move.
+  bool adjustSelectedAnnotationRing(int step);
+  /// Starts (or extends) the window in which the selection chrome steps back
+  /// so a wheel adjustment can be seen. The handles sit exactly where a
+  /// corner radius or a spotlight's ring changes, so at full strength they
+  /// hide the thing being adjusted.
+  void beginSelectionAdjust();
   void undoEdit();
   void updatePointerCursor();
 
@@ -220,6 +237,10 @@ private:
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
+  /// True while a wheel adjustment is in flight; the selection chrome draws
+  /// faintly until it settles.
+  bool adjustingSelection_ = false;
+  QTimer adjustSettleTimer_;
   int textSizeIndex_ = 1;
   qreal spotlightMagnification_ = 2.0;
   SpotlightShape spotlightShape_ = SpotlightShape::Ellipse;
