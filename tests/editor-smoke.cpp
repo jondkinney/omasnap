@@ -4482,6 +4482,101 @@ bool runViewportZoomSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Checks that the wheel over a selected layer changes its weight, not its
+ *  extent: a stroke gets heavier where it already is, and resizing stays with
+ *  the corner handle. */
+bool runLayerWeightSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  // 600x400 selection shown 1:1 at widget offset (100, 105).
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+  const auto wheel = [&](int notches) {
+    for (int notch = 0; notch < std::abs(notches); ++notch) {
+      QWheelEvent event(QPointF(400, 300), QPointF(400, 300), {},
+                        {0, notches > 0 ? 120 : -120}, Qt::NoButton,
+                        Qt::NoModifier, Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&editor, &event);
+    }
+    application.processEvents();
+  };
+  const auto ink = [](const QImage &image, int x, int y) {
+    return image.pixelColor(x, y) != QColor(QStringLiteral("#182030"));
+  };
+
+  // A rectangle at annotation (100,95)-(300,195), stroke 4.
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(400, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 300));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 250));
+  application.processEvents();
+  {
+    const QImage drawn = flushedSnapshot(editor, snapshotPath);
+    if (!ink(drawn, 100, 145) || ink(drawn, 105, 145)) {
+      error = QStringLiteral("Weight smoke: the stroke is not where expected");
+      return false;
+    }
+  }
+  // Four notches take the stroke from 4 to 8: it thickens about the same
+  // outline, so the left edge stays at x 100 and now reaches x 103. Scaling
+  // instead would have carried that edge out to x 54.
+  wheel(4);
+  {
+    const QImage heavier = flushedSnapshot(editor, snapshotPath);
+    if (!ink(heavier, 100, 145) || !ink(heavier, 103, 145)) {
+      error = QStringLiteral("The wheel did not thicken the selected layer");
+      return false;
+    }
+    if (ink(heavier, 54, 145)) {
+      error = QStringLiteral("The wheel resized the layer instead of "
+                             "thickening it");
+      return false;
+    }
+  }
+  wheel(-4);
+  {
+    const QImage lighter = flushedSnapshot(editor, snapshotPath);
+    if (!ink(lighter, 100, 145) || ink(lighter, 105, 145)) {
+      error = QStringLiteral("The wheel did not thin the layer back down");
+      return false;
+    }
+  }
+  // The chrome steps back while the wheel is turning, because the handles sit
+  // where the change shows, and comes back once it settles.
+  wheel(2);
+  if (!editor.selectionFadedForTest()) {
+    error = QStringLiteral("Selection chrome did not step back for the wheel");
+    return false;
+  }
+  QTest::qWait(600);
+  application.processEvents();
+  if (editor.selectionFadedForTest()) {
+    error = QStringLiteral("Selection chrome stayed faint after the wheel "
+                           "settled");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -4593,6 +4688,10 @@ int main(int argc, char **argv) {
   if (!runViewportZoomSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 123;
+  }
+  if (!runLayerWeightSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 118;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
