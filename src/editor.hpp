@@ -108,11 +108,23 @@ public:
 private:
   enum class Phase { Select, Edit };
   enum class OutputMode { Copy, Save, Both };
+public:
   enum class Interaction {
     None,
     Move,
+    /// The two ends of a line or arrow, and the single handle on the kinds
+    /// that have only one (a text's wrap width).
     ResizeStart,
     ResizeEnd,
+    /// A box's eight handles, in the same clockwise order as the crop ones.
+    ResizeTopLeft,
+    ResizeTop,
+    ResizeTopRight,
+    ResizeRight,
+    ResizeBottomRight,
+    ResizeBottom,
+    ResizeBottomLeft,
+    ResizeLeft,
     CropTopLeft,
     CropTop,
     CropTopRight,
@@ -122,6 +134,8 @@ private:
     CropBottomLeft,
     CropLeft
   };
+
+private:
 
   struct ToolbarButton {
     QRectF rect;
@@ -159,10 +173,21 @@ private:
   heldModifiers(Qt::KeyboardModifiers reported) const {
     return modifiersSeen_ ? reported : Qt::KeyboardModifiers(Qt::NoModifier);
   }
+  /// Every handle a layer offers, with what dragging it does: two ends for a
+  /// line or arrow, four corners for a counter, eight for anything with a box
+  /// (the four sides stretch one axis), one for a text's wrap width.
+  [[nodiscard]] QVector<QPair<QPointF, Interaction>>
+  annotationHandles(const Annotation &annotation) const;
   /// Which handle of the selected layer is under `point`, if any. Asked
   /// before what shape is under the pointer, since a handle can sit outside
   /// the layer it belongs to.
   [[nodiscard]] Interaction selectedHandleAt(const QPointF &point) const;
+  [[nodiscard]] Interaction pointerHandle() const;
+  [[nodiscard]] Qt::CursorShape handleCursorShape(Interaction handle) const;
+  /// Moves the edges a box handle owns, keeping the opposite ones put; Shift
+  /// on a corner keeps the proportions.
+  void applyBoxResize(Annotation &annotation, Interaction handle,
+                      const QPointF &point, const QRectF &original);
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
