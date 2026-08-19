@@ -19,6 +19,9 @@
 #include <QRandomGenerator>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QTemporaryFile>
+#include <QTextLayout>
+#include <QTextOption>
 
 #include <QUrl>
 #include <algorithm>
@@ -44,16 +47,169 @@ QFont annotationTextFont(qreal size) {
   return font;
 }
 
-QRectF annotationTextBounds(const Annotation &annotation) {
+qreal annotationTextWrapWidth(const Annotation &annotation, qreal canvasWidth) {
+  // An explicit width wins; otherwise auto-fit by wrapping at the canvas
+  // edge, unless there is no sensible room left there.
+  if (annotation.textWidth > 0.0)
+    return annotation.textWidth;
+  if (canvasWidth <= 0.0)
+    return 0.0;
+  const qreal room =
+      canvasWidth - annotation.start.x() - textPillPadding(annotation);
+  return room >= kMinimumTextWrapWidth ? room : 0.0;
+}
+
+QVector<TextLine> layoutAnnotationText(const Annotation &annotation,
+                                       qreal canvasWidth) {
+  const QFont font = annotationTextFont(annotation.size);
+  const QFontMetricsF metrics(font);
+  QVector<TextLine> lines;
+  if (annotation.text.isEmpty())
+    return lines;
+  const qreal wrapWidth = annotationTextWrapWidth(annotation, canvasWidth);
+  QTextLayout layout(annotation.text, font);
+  QTextOption option;
+  option.setWrapMode(wrapWidth > 0.0 ? QTextOption::WrapAtWordBoundaryOrAnywhere
+                                     : QTextOption::NoWrap);
+  layout.setTextOption(option);
+  layout.beginLayout();
+  qreal baseline = annotation.start.y();
+  for (QTextLine line = layout.createLine(); line.isValid();
+       line = layout.createLine()) {
+    line.setLineWidth(wrapWidth > 0.0 ? wrapWidth
+                                      : std::numeric_limits<qreal>::max());
+    const QString text =
+        annotation.text.mid(line.textStart(), line.textLength()).trimmed();
+    lines.push_back({text, baseline, metrics.horizontalAdvance(text),
+                     line.textStart(), line.textLength()});
+    baseline += metrics.lineSpacing();
+  }
+  layout.endLayout();
+  return lines;
+}
+
+namespace {
+/// Index of the laid-out line holding caret index `cursor`: the line whose
+/// range contains it, or the last line for the end of the text.
+int textLineForCursor(const QVector<TextLine> &lines, int cursor) {
+  for (int index = 0; index < lines.size(); ++index) {
+    const TextLine &line = lines.at(index);
+    if (cursor < line.start + line.length)
+      return index;
+  }
+  return lines.size() - 1;
+}
+
+/// x offset of caret index `cursor` (clamped into the line) from the line's
+/// left edge; the drawn text is the trimmed range, so leading whitespace is
+/// discounted.
+qreal caretOffsetInLine(const Annotation &annotation, const TextLine &line,
+                        const QFontMetricsF &metrics, int cursor) {
+  const int clamped = std::clamp(cursor, line.start, line.start + line.length);
+  const QString range = annotation.text.mid(line.start, line.length);
+  int leading = 0;
+  while (leading < range.size() && range.at(leading).isSpace())
+    ++leading;
+  const int prefix = std::max(0, clamped - line.start - leading);
+  return metrics.horizontalAdvance(range.mid(leading, prefix));
+}
+} // namespace
+
+QPointF annotationTextCaret(const Annotation &annotation, int cursor,
+                            qreal canvasWidth) {
+  const QVector<TextLine> lines = layoutAnnotationText(annotation, canvasWidth);
+  if (lines.isEmpty())
+    return annotation.start;
   const QFontMetricsF metrics(annotationTextFont(annotation.size));
-  const QRectF glyphs(
-      annotation.start.x(), annotation.start.y() - metrics.ascent(),
-      metrics.horizontalAdvance(annotation.text), metrics.height());
+  const TextLine &line = lines.at(textLineForCursor(lines, cursor));
+  return {annotation.start.x() +
+              caretOffsetInLine(annotation, line, metrics, cursor),
+          line.baseline};
+}
+
+int annotationTextCursorAt(const Annotation &annotation, const QPointF &point,
+                           qreal canvasWidth) {
+  const QVector<TextLine> lines = layoutAnnotationText(annotation, canvasWidth);
+  if (lines.isEmpty())
+    return 0;
+  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  int lineIndex = lines.size() - 1;
+  for (int index = 0; index < lines.size(); ++index) {
+    if (point.y() <= lines.at(index).baseline + metrics.descent()) {
+      lineIndex = index;
+      break;
+    }
+  }
+  const TextLine &line = lines.at(lineIndex);
+  // The end of every line but the last belongs to the next line's start;
+  // stop one short so a click past the text lands before the break.
+  const int last = lineIndex == lines.size() - 1
+                       ? line.start + line.length
+                       : std::max(line.start, line.start + line.length - 1);
+  int best = line.start;
+  qreal bestDistance = std::numeric_limits<qreal>::max();
+  for (int cursor = line.start; cursor <= last; ++cursor) {
+    const qreal x = annotation.start.x() +
+                    caretOffsetInLine(annotation, line, metrics, cursor);
+    const qreal distance = std::abs(point.x() - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = cursor;
+    }
+  }
+  return best;
+}
+
+QVector<QRectF> annotationTextSelectionRects(const Annotation &annotation,
+                                             int from, int to,
+                                             qreal canvasWidth) {
+  QVector<QRectF> rects;
+  if (to <= from)
+    return rects;
+  const QVector<TextLine> lines = layoutAnnotationText(annotation, canvasWidth);
+  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  for (const TextLine &line : lines) {
+    const int begin = std::max(from, line.start);
+    const int end = std::min(to, line.start + line.length);
+    if (end <= begin)
+      continue;
+    const qreal left = annotation.start.x() +
+                       caretOffsetInLine(annotation, line, metrics, begin);
+    const qreal right = annotation.start.x() +
+                        caretOffsetInLine(annotation, line, metrics, end);
+    if (right <= left)
+      continue;
+    rects.push_back(QRectF(left, line.baseline - metrics.ascent(),
+                           right - left, metrics.ascent() + metrics.descent()));
+  }
+  return rects;
+}
+
+qreal textPillPadding(const Annotation &annotation) {
+  if (annotation.textBackground != TextBackground::Pill)
+    return 0.0;
+  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  return std::max<qreal>(4.0, metrics.height() * 0.18);
+}
+
+QRectF annotationTextBounds(const Annotation &annotation, qreal canvasWidth) {
+  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  const QVector<TextLine> lines = layoutAnnotationText(annotation, canvasWidth);
+  qreal widest = 0.0;
+  for (const TextLine &line : lines)
+    widest = std::max(widest, line.width);
+  const qreal width = std::max(widest, annotation.textWidth);
+  const qreal lastBaseline =
+      lines.isEmpty() ? annotation.start.y() : lines.last().baseline;
+  const QRectF glyphs(annotation.start.x(),
+                      annotation.start.y() - metrics.ascent(), width,
+                      lastBaseline + metrics.descent() -
+                          (annotation.start.y() - metrics.ascent()));
   if (annotation.textBackground != TextBackground::Pill)
     return glyphs;
   // The pill has even side/top padding and a bottom pad that grows with the
   // descender, so commas and tails stay inside the cream.
-  const qreal pad = std::max<qreal>(4.0, metrics.height() * 0.18);
+  const qreal pad = textPillPadding(annotation);
   const qreal bottom = std::max(pad, metrics.descent() + 2.0);
   return glyphs.adjusted(-pad, -pad, pad, bottom - metrics.descent());
 }
@@ -310,7 +466,8 @@ QVector<WindowTarget> parseWindows(const QByteArray &json,
   return result;
 }
 
-void drawAnnotation(QPainter &painter, const Annotation &annotation) {
+void drawAnnotation(QPainter &painter, const Annotation &annotation,
+                    qreal canvasWidth) {
   // Redactions replace source pixels in renderCapture before ordinary vector
   // annotations are painted. They must never be approximated by a translucent
   // overlay here because that could leave recoverable source data in exports.
@@ -399,19 +556,29 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
   }
 
   const QFont font = annotationTextFont(annotation.size);
+  const QFontMetricsF metrics(font);
+  const QVector<TextLine> lines = layoutAnnotationText(annotation, canvasWidth);
   if (annotation.textBackground == TextBackground::Pill) {
-    // A cream pill under the glyphs keeps text readable on any capture or
-    // shape beneath it (the default text background).
-    const QRectF pill = annotationTextBounds(annotation);
-    const qreal radius = std::min(pill.height() / 4.0, 6.0);
+    // A cream pill under each line's glyphs keeps text readable on any
+    // capture or shape beneath it (the default text background);
+    // wrapped text reads as a stack of pills sized to their lines.
+    const qreal pad = textPillPadding(annotation);
+    const qreal bottom = std::max(pad, metrics.descent() + 2.0);
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(248, 245, 235));
-    painter.drawRoundedRect(pill, radius, radius);
+    for (const TextLine &line : lines) {
+      const QRectF pill(annotation.start.x() - pad,
+                        line.baseline - metrics.ascent() - pad,
+                        line.width + 2 * pad, metrics.ascent() + pad + bottom);
+      const qreal radius = std::min(pill.height() / 4.0, 6.0);
+      painter.drawRoundedRect(pill, radius, radius);
+    }
   }
   painter.setFont(font);
   painter.setPen(annotation.color);
   painter.setBrush(Qt::NoBrush);
-  painter.drawText(annotation.start, annotation.text);
+  for (const TextLine &line : lines)
+    painter.drawText(QPointF(annotation.start.x(), line.baseline), line.text);
 }
 
 quint32 nextRedactionRandom(quint32 &state) {
@@ -570,8 +737,9 @@ QRect pixelSelection(const CaptureData &capture, const QRectF &selection) {
 
 } // namespace
 
-void paintAnnotation(QPainter &painter, const Annotation &annotation) {
-  drawAnnotation(painter, annotation);
+void paintAnnotation(QPainter &painter, const Annotation &annotation,
+                     qreal canvasWidth) {
+  drawAnnotation(painter, annotation, canvasWidth);
 }
 
 QPainterPath spotlightPath(const Annotation &annotation) {
@@ -665,7 +833,7 @@ void paintDefaultLayer(QPainter &painter, const QImage &redacted,
   paintSpotlights(painter, redacted, logicalBounds, QRectF(redacted.rect()),
                   annotations);
   for (const Annotation &annotation : annotations)
-    paintAnnotation(painter, annotation);
+    paintAnnotation(painter, annotation, logicalBounds.width());
 }
 
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,

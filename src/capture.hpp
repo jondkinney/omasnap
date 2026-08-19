@@ -69,6 +69,8 @@ struct Annotation {
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;
   quint32 redactionSeed = 0;
   TextBackground textBackground = TextBackground::Pill;
+  /// Wrap width for text layers in image px; 0 keeps the text on one line.
+  qreal textWidth = 0.0;
 
   bool operator==(const Annotation &) const = default;
 };
@@ -100,9 +102,50 @@ enum class AnnotationLayer { Redaction, Default };
 /** Convenience: probes the focused monitor, then captures its pixels. */
 [[nodiscard]] bool captureFocusedMonitor(CaptureData &capture,
                                          bool includeWindows, QString &error);
+/** One laid-out line of a text layer: its trimmed text, baseline y and
+ *  advance width; lines start at `Annotation::start.x()`. `start`/`length`
+ *  give the line's range in `Annotation::text` (untrimmed) so a caret index
+ *  can be mapped to a line while the text is being edited. */
+struct TextLine {
+  QString text;
+  qreal baseline = 0.0;
+  qreal width = 0.0;
+  int start = 0;
+  int length = 0;
+};
+/// Narrowest wrap width worth producing; below this text stays on one line.
+constexpr qreal kMinimumTextWrapWidth = 24.0;
+/** The width a text layer wraps to: its own `textWidth`, else the room left
+ *  before the canvas' right edge (`canvasWidth`, 0 = unbounded) when that is
+ *  at least `kMinimumTextWrapWidth`, else 0 (no wrapping). */
+[[nodiscard]] qreal annotationTextWrapWidth(const Annotation &annotation,
+                                            qreal canvasWidth = 0.0);
+/** Word-wraps a text layer to `annotationTextWrapWidth()`, so text never
+ *  runs off the capture. */
+[[nodiscard]] QVector<TextLine>
+layoutAnnotationText(const Annotation &annotation, qreal canvasWidth = 0.0);
+/** Padding the readability pill adds around a text layer's glyphs (0 when
+ *  the layer is plain). */
+[[nodiscard]] qreal textPillPadding(const Annotation &annotation);
 /** Bounds of a text layer's glyph box, or of its readability pill when it
- *  has one; `start` is the baseline origin. */
-[[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation);
+ *  has one; `start` is the first line's baseline origin and, when wrapping,
+ *  the box spans the wrap width so the resize handle stays put. */
+[[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation,
+                                          qreal canvasWidth = 0.0);
+/** Where a caret at character index `cursor` sits: x on the line and that
+ *  line's baseline, in the same coordinates as `Annotation::start`. */
+[[nodiscard]] QPointF annotationTextCaret(const Annotation &annotation,
+                                          int cursor, qreal canvasWidth = 0.0);
+/** The character index nearest `point` in the laid-out text (for placing the
+ *  caret with a click); clamps to the closest line. */
+[[nodiscard]] int annotationTextCursorAt(const Annotation &annotation,
+                                         const QPointF &point,
+                                         qreal canvasWidth = 0.0);
+/** Glyph-box rectangles covering characters [from, to) across the laid-out
+ *  lines, for painting a selection highlight. */
+[[nodiscard]] QVector<QRectF>
+annotationTextSelectionRects(const Annotation &annotation, int from, int to,
+                             qreal canvasWidth = 0.0);
 [[nodiscard]] bool captureWindowSurface(const WindowTarget &window,
                                         QImage &image, QString &error);
 /** Returns an upright image for captured Wayland buffer contents. */
@@ -116,7 +159,8 @@ enum class AnnotationLayer { Redaction, Default };
 [[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,
                                QString &error);
 [[nodiscard]] bool copyTextToClipboard(const QString &text, QString &error);
-void paintAnnotation(QPainter &painter, const Annotation &annotation);
+void paintAnnotation(QPainter &painter, const Annotation &annotation,
+                     qreal canvasWidth = 0.0);
 [[nodiscard]] QPainterPath spotlightPath(const Annotation &annotation);
 void paintSpotlights(QPainter &painter, const QImage &source,
                      const QRectF &targetBounds, const QRectF &sourceRect,

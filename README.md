@@ -248,13 +248,13 @@ Install the corresponding Tesseract language data before adding a language to
 | `C` | Numbered marker |
 | `R` | Rectangle |
 | `D` | Redact; press again to toggle randomized pixelation or solid redaction |
-| `T` | Neucha text on a cream readability pill; press again to toggle the pill (with a text layer selected, toggles that layer) |
+| `T` | Neucha text on a cream readability pill; press again to toggle the pill (with a text layer selected, toggles that layer). Text wraps at the canvas edge as you type; Enter or a click elsewhere commits it and hands it to Select, selected; drag its handle to set its wrap width; the wheel changes its size |
 | `O` | Drag an OCR region and copy recognized text |
 | `B` | Cycle backdrop |
 | `1`–`6` | Set annotation color |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size |
 | Hold `Shift` while dragging | Make rectangles and spotlights 1:1; snap lines and arrows to 45° |
-| Double-click text | Reopen text editing |
+| Double-click text | Reopen text editing (arms the text tool; with it armed, a single click on a text edits it) |
 | `Delete` | Delete selected layer |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |

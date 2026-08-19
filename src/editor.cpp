@@ -22,10 +22,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
-#include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QThread>
+#include <QStyleHints>
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -35,27 +35,20 @@
 #include <utility>
 #include <numbers>
 
-/// The inline text editor: a QLineEdit whose native caret is hidden (the
-/// editor paints a shorter one over Neucha's tall line box) and whose caret
-/// rectangle is exposed for that.
+/// The inline text editor: a QLineEdit that draws nothing and takes no mouse
+/// input. It only holds the text, caret and selection (and gives input
+/// methods a home); CaptureEditor paints the text being typed through the
+/// same layout as the committed layer, so it wraps as you type.
 class InlineTextEdit final : public QLineEdit {
 public:
   explicit InlineTextEdit(QWidget *parent) : QLineEdit(parent) {
-    setStyle(&caretlessStyle_);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setFrame(false);
   }
-  using QLineEdit::cursorRect;
 
-private:
-  class CaretlessStyle final : public QProxyStyle {
-  public:
-    int pixelMetric(PixelMetric metric, const QStyleOption *option,
-                    const QWidget *widget) const override {
-      return metric == PM_TextCursorWidth
-                 ? 0
-                 : QProxyStyle::pixelMetric(metric, option, widget);
-    }
-  };
-  CaretlessStyle caretlessStyle_;
+protected:
+  void paintEvent(QPaintEvent *) override {}
 };
 
 namespace {
@@ -293,36 +286,25 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
 
   textEditor_ = new InlineTextEdit(this);
   textEditor_->hide();
-  textEditor_->setFrame(false);
-  textEditor_->setTextMargins(0, 0, 0, 0);
-  textEditor_->setStyleSheet(
-      QStringLiteral("QLineEdit { color: #ff375f; background: transparent; "
-                     "border: none; padding: 0;"
-                     " selection-background-color: #0a84ff; }"));
   textEditor_->installEventFilter(this);
-  // The editor paints its own, shorter caret (see paintEdit); blink it.
+  // The editor paints the draft text and its own, shorter caret (see
+  // paintEdit); blink it.
   textCaretTimer_.setInterval(530);
   connect(&textCaretTimer_, &QTimer::timeout, this, [this] {
     textCaretOn_ = !textCaretOn_;
-    update(textEditor_->geometry().adjusted(-4, -4, 4, 4));
+    update();
   });
   connect(textEditor_, &QLineEdit::cursorPositionChanged, this, [this] {
     textCaretOn_ = true;
     textCaretTimer_.start();
     update();
   });
-  connect(
-      textEditor_, &QLineEdit::textChanged, this, [this](const QString &text) {
-        const QFontMetrics metrics(textEditor_->font());
-        const QMargins margins = textEditor_->textMargins();
-        const int desiredWidth = std::max(
-            48, metrics.horizontalAdvance(text + QStringLiteral("  ")) +
-                    margins.left() + margins.right());
-        const int availableWidth =
-            std::max(48, qRound(editImageRect().right() - textEditor_->x()));
-        textEditor_->resize(std::min(desiredWidth, availableWidth),
-                            textEditor_->height());
-      });
+  connect(textEditor_, &QLineEdit::selectionChanged, this,
+          qOverload<>(&QWidget::update));
+  connect(textEditor_, &QLineEdit::textChanged, this, [this] {
+    syncTextEditorGeometry();
+    update();
+  });
 
   connect(&ocrWatcher_, &QFutureWatcher<OcrResult>::finished, this, [this] {
     const OcrResult result = ocrWatcher_.result();
@@ -488,7 +470,7 @@ QRectF CaptureEditor::annotationBounds(const Annotation &annotation) const {
             annotation.start.y() - diameter / 2.0, diameter, diameter};
   }
   if (annotation.kind == Annotation::Kind::Text)
-    return annotationTextBounds(annotation);
+    return annotationTextBounds(annotation, selection_.width());
   if (isStrokeKind(annotation.kind)) {
     if (annotation.points.isEmpty())
       return {};
@@ -650,7 +632,9 @@ void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
   } else if (annotation.kind == Annotation::Kind::Marker) {
     annotation.size = std::clamp(annotation.size * factor, 2.0, 30.0);
   } else if (annotation.kind == Annotation::Kind::Text) {
+    const qreal before = annotation.size;
     annotation.size = std::clamp(annotation.size * factor, 1.0, 24.0);
+    annotation.textWidth *= annotation.size / before;
     annotation.start += center - annotationBounds(annotation).center();
   }
   setStatus(QStringLiteral("Selected layer · wheel zoom %1%")
@@ -1232,31 +1216,22 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex) {
     textSize_ = kTextSizes.at(static_cast<std::size_t>(textSizeIndex_));
   }
 
-  const QRectF image = editImageRect();
-  const qreal scale = editScale();
-  const QPointF position = image.topLeft() + textPoint_ * scale;
+  // The draft keeps the layer's own pill and wrap width; new text takes the
+  // armed defaults and wraps at the canvas edge like the committed layer.
+  if (annotationIndex >= 0 && annotationIndex < annotations_.size()) {
+    const Annotation &annotation = annotations_.at(annotationIndex);
+    textEditPill_ = annotation.textBackground == TextBackground::Pill;
+    textDraftWidth_ = annotation.textWidth;
+  } else {
+    textEditPill_ = textBackground_ == TextBackground::Pill;
+    textDraftWidth_ = 0.0;
+  }
   QFont displayFont = annotationTextFont(textSize_);
   displayFont.setPixelSize(
-      std::max(12, qRound(displayFont.pixelSize() * scale)));
-  const QFontMetrics metrics(displayFont);
+      std::max(12, qRound(displayFont.pixelSize() * editScale())));
   textEditor_->setFont(displayFont);
-  // While typing, show the same cream pill the committed text will have.
-  const TextBackground background =
-      annotationIndex >= 0 && annotationIndex < annotations_.size()
-          ? annotations_.at(annotationIndex).textBackground
-          : textBackground_;
-  const bool pill = background == TextBackground::Pill;
-  textEditPill_ = pill;
-  const int pillPad = pill ? qRound(std::max(4.0, metrics.height() * 0.18)) : 0;
-  textEditor_->setStyleSheet(
-      QStringLiteral("QLineEdit { color: %1; background: transparent; "
-                     "border: none; margin: 0; padding: 0;"
-                     " selection-background-color: #0a84ff; }")
-          .arg(textColor_.name()));
-  textEditor_->setTextMargins(pillPad, 0, pillPad, 0);
-  textEditor_->setGeometry(qRound(position.x()) - pillPad, qRound(position.y()),
-                           72 + 2 * pillPad, metrics.height());
   textEditor_->setText(existingText);
+  syncTextEditorGeometry();
   textEditor_->show();
   textEditor_->raise();
   textEditor_->setFocus(Qt::MouseFocusReason);
@@ -1264,6 +1239,38 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex) {
     textEditor_->selectAll();
   textCaretOn_ = true;
   textCaretTimer_.start();
+  updatePointerCursor();
+  update();
+}
+
+Annotation CaptureEditor::textDraft() const {
+  Annotation draft;
+  draft.kind = Annotation::Kind::Text;
+  draft.start =
+      textPoint_ + QPointF(0, QFontMetricsF(annotationTextFont(textSize_)).ascent());
+  draft.text = textEditor_->text();
+  draft.color = textColor_;
+  draft.size = textSize_;
+  draft.textBackground =
+      textEditPill_ ? TextBackground::Pill : TextBackground::Plain;
+  draft.textWidth = textDraftWidth_;
+  return draft;
+}
+
+void CaptureEditor::syncTextEditorGeometry() {
+  // The invisible QLineEdit sits over the draft so input methods pop up in
+  // the right place; an empty draft gets a caret-sized box.
+  const Annotation draft = textDraft();
+  QRectF bounds = annotationTextBounds(draft, selection_.width());
+  if (draft.text.isEmpty()) {
+    const QFontMetricsF metrics(annotationTextFont(draft.size));
+    bounds.setWidth(std::max(bounds.width(), metrics.averageCharWidth()));
+  }
+  const QRectF image = editImageRect();
+  const qreal scale = editScale();
+  const QRectF box(image.topLeft() + bounds.topLeft() * scale,
+                   bounds.size() * scale);
+  textEditor_->setGeometry(box.toAlignedRect());
 }
 
 void CaptureEditor::acceptText() {
@@ -1278,23 +1285,46 @@ void CaptureEditor::acceptText() {
     annotation.text = text;
     annotation.color = textColor_;
     annotation.size = textSize_;
-    annotation.textBackground =
-        editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()
-            ? annotations_.at(editingAnnotation_).textBackground
-            : textBackground_;
+    if (editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()) {
+      const Annotation &edited = annotations_.at(editingAnnotation_);
+      annotation.textBackground = edited.textBackground;
+      annotation.textWidth = edited.textWidth;
+    } else {
+      annotation.textBackground = textBackground_;
+    }
+    // Text that wrapped at the canvas edge while it was typed keeps that
+    // shape: freeze its wrap width (as tight as its widest line) so moving
+    // the layer never reflows it; the handle can still re-wrap it.
+    if (annotation.textWidth <= 0.0) {
+      const QVector<TextLine> lines =
+          layoutAnnotationText(annotation, selection_.width());
+      if (lines.size() > 1) {
+        qreal widest = 0.0;
+        for (const TextLine &line : lines)
+          widest = std::max(widest, line.width);
+        annotation.textWidth =
+            std::min(annotationTextWrapWidth(annotation, selection_.width()),
+                     widest + 2.0);
+      }
+    }
+    // Committing (Enter or a click elsewhere) leaves the new layer selected:
+    // the next thing you nearly always do is move, wrap or resize it.
     if (editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()) {
       annotations_[editingAnnotation_] = std::move(annotation);
       selectedAnnotation_ = editingAnnotation_;
-      tool_ = Tool::Select;
-      setStatus(QStringLiteral("Text updated · drag to move · handle resizes"));
+      setStatus(QStringLiteral(
+          "Text updated · drag to move · handle wraps · double-click edits"));
     } else {
       annotations_.push_back(std::move(annotation));
-      selectedAnnotation_ = -1;
-      setStatus(QStringLiteral("Text added · Esc for select mode"));
+      selectedAnnotation_ = annotations_.size() - 1;
+      setStatus(QStringLiteral(
+          "Text added · drag to move · handle wraps · double-click edits"));
     }
+    selectedAnnotations_ = {selectedAnnotation_};
+    // The text tool stays armed, so the next click types again. The committed
+    // layer is left selected and is grabbable by its pill, so it can be moved
+    // straight away without changing tools; double-click reopens it.
     scheduleSnapshot();
-  } else if (editingAnnotation_ >= 0) {
-    tool_ = Tool::Select;
   }
   editingAnnotation_ = -1;
   textEditor_->clear();
@@ -1645,10 +1675,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
               .arg(redactionStyleName(redactionStyle_)));
     }
   } else if (event->key() == Qt::Key_T) {
-    const bool textSelected =
-        selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
-        annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text;
-    if (tool_ == Tool::Text || textSelected)
+    // T arms the text tool; T again toggles the pill, of the selected text
+    // layer if there is one (a just-committed text stays selected), else of
+    // the default for new text.
+    if (tool_ == Tool::Text)
       toggleTextBackground();
     else
       tool_ = Tool::Text;
@@ -1841,17 +1871,18 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
           annotation.size = std::clamp(
               QLineF(annotation.start, point).length() / 3.0, 2.0, 30.0);
         } else if (annotation.kind == Annotation::Kind::Text) {
-          const QRectF originalBounds = annotationBounds(originalAnnotation_);
-          const qreal ratio =
-              originalBounds.width() > 0
-                  ? std::abs(point.x() - originalBounds.left()) /
-                        originalBounds.width()
-                  : 1.0;
-          annotation.size =
-              std::clamp(originalAnnotation_.size * ratio, 1.0, 24.0);
-          annotation.start.setY(
-              originalBounds.top() +
-              QFontMetricsF(annotationTextFont(annotation.size)).ascent());
+          // The handle sets the wrap width; the wheel changes the size.
+          // Dragging back past the natural width returns the text to a
+          // single line.
+          Annotation single = originalAnnotation_;
+          single.textWidth = 0.0;
+          const qreal naturalWidth = annotationTextBounds(single).width() -
+                                     2 * textPillPadding(single);
+          const qreal width =
+              point.x() - annotation.start.x() - textPillPadding(annotation);
+          annotation.textWidth = width >= naturalWidth
+                                     ? 0.0
+                                     : std::max(kMinimumTextWrapWidth, width);
         }
       }
       }
@@ -1882,16 +1913,34 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
   update();
 }
 
+void CaptureEditor::editTextAnnotation(int index) {
+  // Editing a text layer from any tool selects it and arms the text tool.
+  selectedAnnotation_ = index;
+  tool_ = Tool::Text;
+  beginText({}, index);
+}
+
 void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
+  // Kept for platforms where Qt swallows the second press in favor of this
+  // event; mousePressEvent detects it too (see clickTimer_).
   if (phase_ != Phase::Edit || event->button() != Qt::LeftButton ||
       !editImageRect().contains(event->position()))
     return;
-  const int index = annotationAt(toAnnotationPoint(event->position()));
+  const QPointF point = toAnnotationPoint(event->position());
+  if (textEditor_->isVisible()) {
+    if (annotationTextBounds(textDraft(), selection_.width()).contains(point)) {
+      textEditor_->cursorWordBackward(false);
+      textEditor_->cursorWordForward(true);
+      textEditor_->setFocus(Qt::MouseFocusReason);
+      event->accept();
+      update();
+    }
+    return;
+  }
+  const int index = annotationAt(point);
   if (index < 0 || annotations_.at(index).kind != Annotation::Kind::Text)
     return;
-  selectedAnnotation_ = index;
-  tool_ = Tool::Select;
-  beginText({}, index);
+  editTextAnnotation(index);
   event->accept();
   update();
 }
@@ -1924,6 +1973,48 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (event->button() != Qt::LeftButton)
     return;
   cursor_ = event->position();
+  // A second click at the same spot within the double-click interval, which
+  // Qt will not report here (see clickTimer_).
+  const bool secondClick =
+      clickTimer_.isValid() &&
+      clickTimer_.elapsed() <
+          QGuiApplication::styleHints()->mouseDoubleClickInterval() &&
+      (cursor_ - lastClickPos_).manhattanLength() <
+          QGuiApplication::styleHints()->mouseDoubleClickDistance();
+  clickTimer_.start();
+  lastClickPos_ = cursor_;
+  // Clicking inside the text being typed moves the caret (a second click
+  // selects the word); clicking anywhere else commits the text (Esc
+  // cancels) and does nothing more; toolbar buttons still act after
+  // committing.
+  if (phase_ == Phase::Edit && textEditor_->isVisible()) {
+    const Annotation draft = textDraft();
+    const QPointF point = toAnnotationPoint(cursor_);
+    if (editImageRect().contains(cursor_) &&
+        annotationTextBounds(draft, selection_.width()).contains(point)) {
+      textEditor_->deselect();
+      textEditor_->setCursorPosition(
+          annotationTextCursorAt(draft, point, selection_.width()));
+      if (secondClick) {
+        textEditor_->cursorWordBackward(false);
+        textEditor_->cursorWordForward(true);
+      }
+      // The press gave this widget focus (the QLineEdit is mouse-transparent).
+      textEditor_->setFocus(Qt::MouseFocusReason);
+      update();
+      return;
+    }
+    const bool committed = !textEditor_->text().trimmed().isEmpty();
+    acceptText();
+    bool overToolbar = false;
+    for (const ToolbarButton &button : toolbarButtons())
+      overToolbar = overToolbar || button.rect.contains(cursor_);
+    // A committed text hands off to the select tool, so the click stops
+    // there. An empty editor committed nothing, so the click simply moves
+    // it to where you clicked.
+    if (committed && !overToolbar)
+      return;
+  }
   if (phase_ == Phase::Select) {
     if (windowMode_) {
       chooseWindow(windowAt(cursor_));
@@ -1989,6 +2080,15 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     return;
 
   const QPointF point = toAnnotationPoint(cursor_);
+  if (secondClick && phase_ == Phase::Edit && !dragging_) {
+    // Double-clicking a text layer from any tool edits it.
+    const int index = annotationAt(point);
+    if (index >= 0 && annotations_.at(index).kind == Annotation::Kind::Text) {
+      editTextAnnotation(index);
+      update();
+      return;
+    }
+  }
   if (tool_ == Tool::Eyedropper) {
     customColor_ = sampleSourceColor(capture_.source, capture_.previewSize,
                                      selection_, editImageRect(), cursor_);
@@ -2119,7 +2219,16 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     scheduleSnapshot();
     updatePointerCursor();
   } else if (tool_ == Tool::Text) {
-    beginText(point);
+    // Clicking an existing text layer edits it (so a double-click on it does
+    // too); anywhere else starts a new one.
+    const int existing = annotationAt(point);
+    if (existing >= 0 &&
+        annotations_.at(existing).kind == Annotation::Kind::Text) {
+      selectedAnnotation_ = existing;
+      beginText({}, existing);
+    } else {
+      beginText(point);
+    }
   } else {
     dragStart_ = point;
     dragging_ = true;
@@ -2360,6 +2469,12 @@ void CaptureEditor::updatePointerCursor() {
       setCursor(Qt::PointingHandCursor);
       return;
     }
+  }
+  if (textEditor_->isVisible() && editImageRect().contains(cursor_) &&
+      annotationTextBounds(textDraft(), selection_.width())
+          .contains(toAnnotationPoint(cursor_))) {
+    setCursor(Qt::IBeamCursor);
+    return;
   }
   if (tool_ == Tool::Select) {
     int cropHandle = cropHandleAt(cursor_);
@@ -2629,7 +2744,42 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                       QRectF(QPointF(), selection_.size()), defaultAnnotations);
   } else {
     for (const Annotation &annotation : defaultAnnotations)
-      paintAnnotation(painter, annotation);
+      paintAnnotation(painter, annotation, selection_.width());
+  }
+  if (textEditor_->isVisible()) {
+    // The draft, laid out exactly as it will be committed (see textEditPill_).
+    const Annotation draft = textDraft();
+    const qreal canvasWidth = selection_.width();
+    const QFontMetricsF metrics(annotationTextFont(draft.size));
+    if (draft.text.isEmpty() && draft.textBackground == TextBackground::Pill) {
+      Annotation placeholder = draft;
+      placeholder.text = QStringLiteral(" ");
+      QRectF pill = annotationTextBounds(placeholder, canvasWidth);
+      pill.setWidth(pill.width() + metrics.averageCharWidth());
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(248, 245, 235));
+      const qreal radius = std::min(pill.height() / 4.0, 6.0);
+      painter.drawRoundedRect(pill, radius, radius);
+    } else {
+      paintAnnotation(painter, draft, canvasWidth);
+    }
+    if (textEditor_->hasSelectedText()) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(10, 132, 255, 110));
+      const int from = textEditor_->selectionStart();
+      for (const QRectF &rect : annotationTextSelectionRects(
+               draft, from, from + textEditor_->selectedText().size(),
+               canvasWidth))
+        painter.drawRect(rect);
+    }
+    if (textCaretOn_ && textEditor_->hasFocus()) {
+      const QPointF caret = annotationTextCaret(
+          draft, textEditor_->cursorPosition(), canvasWidth);
+      const qreal top = caret.y() - metrics.capHeight() * 1.15;
+      const qreal bottom = caret.y() + metrics.descent() * 0.35;
+      painter.setPen(QPen(textColor_, std::max(1.0, metrics.height() / 18.0)));
+      painter.drawLine(QPointF(caret.x(), top), QPointF(caret.x(), bottom));
+    }
   }
   painter.restore();
   if (tool_ == Tool::Select && marqueeSelecting_ &&
@@ -2735,29 +2885,6 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     const qreal hueY = hue.top() + customHue_ * hue.height();
     painter.drawLine(QPointF(hue.left() - 2, hueY),
                      QPointF(hue.right() + 2, hueY));
-  }
-
-  if (textEditor_->isVisible()) {
-    // Cream pill under the inline editor (the QLineEdit is transparent), and
-    // a caret spanning the glyph box rather than Neucha's whole line height.
-    const QRectF box = textEditor_->geometry();
-    if (textEditPill_) {
-      const qreal radius = std::min(box.height() / 4.0, 6.0);
-      painter.setPen(Qt::NoPen);
-      painter.setBrush(QColor(248, 245, 235));
-      painter.drawRoundedRect(box, radius, radius);
-    }
-    if (textCaretOn_ && textEditor_->hasFocus()) {
-      const QFontMetricsF metrics(textEditor_->font());
-      const QRectF cursor =
-          QRectF(textEditor_->cursorRect()).translated(box.topLeft());
-      const qreal baseline = box.top() + metrics.ascent();
-      const qreal top = baseline - metrics.capHeight() * 1.15;
-      const qreal bottom = baseline + metrics.descent() * 0.35;
-      painter.setPen(QPen(textColor_, std::max(1.0, box.height() / 18.0)));
-      painter.drawLine(QPointF(cursor.center().x(), top),
-                       QPointF(cursor.center().x(), bottom));
-    }
   }
 
   const QString currentTool = toolAction(tool_);

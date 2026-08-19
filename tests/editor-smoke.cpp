@@ -14,6 +14,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QStyleHints>
 #include <QScopeGuard>
 #include <QThread>
 #include <QFile>
@@ -764,6 +765,11 @@ bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
 
   const Annotation toolbar =
       textAnnotation({325, 180}, QStringLiteral("Toolbar"));
+  // The text tool stays armed, but a click that commits does nothing more, so
+  // one more click opens the next editor. This case is about the toolbar click
+  // not discarding what is being typed.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(450, 300));
+  application.processEvents();
   // 118,92 is the arrow tool button: the toolbar row sits above the capture.
   QTest::keyClicks(QApplication::focusWidget(), toolbar.text);
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(118, 92));
@@ -1171,28 +1177,48 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
     return false;
   }
 
+  // Text is continuous like every other tool: committing keeps it armed, and
+  // leaves the new layer selected so it can be moved or wrapped straight away.
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 450));
   application.processEvents();
   QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("Text 1"));
   QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  QTest::mouseMove(&editor, QPoint(660, 470), 10);
   application.processEvents();
   if (editor.cursor().shape() != Qt::IBeamCursor) {
-    error = QStringLiteral(
-        "Text tool did not remain active after submitting new text");
+    error = QStringLiteral("Submitting text did not keep the text tool armed");
     return false;
   }
+  {
+    // ...and selected: Delete removes it (undo brings it back).
+    const QImage committed = editor.grab().toImage();
+    QTest::keyClick(&editor, Qt::Key_Delete);
+    application.processEvents();
+    if (editor.grab().toImage() == committed) {
+      error = QStringLiteral("Submitted text was not left selected");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    application.processEvents();
+  }
 
+  // A click that commits does nothing more, so the next click opens the next
+  // editor, still without leaving the text tool.
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 450));
   application.processEvents();
   QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("Text 2"));
-  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(600, 250));
+  QTest::mouseMove(&editor, QPoint(660, 470), 10);
   application.processEvents();
-  if (editor.cursor().shape() != Qt::IBeamCursor) {
+  if (editor.cursor().shape() != Qt::IBeamCursor ||
+      QApplication::focusWidget() != &editor) {
     error = QStringLiteral(
-        "Text tool did not remain active after second text commit");
+        "Committing text by clicking away left the text tool");
     return false;
   }
 
+  QTest::keyClick(&editor, Qt::Key_T);
+  application.processEvents();
   QTest::mouseClick(&editor, Qt::RightButton, Qt::NoModifier, QPoint(100, 100));
   application.processEvents();
   if (editor.cursor().shape() != Qt::ArrowCursor) {
@@ -1365,7 +1391,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
     }
     application.processEvents();
   };
-  // Widget centre of the spotlight drawn above, and a point clear of it.
+  // Widget center of the spotlight drawn above, and a point clear of it.
   const QPointF overSpotlight(400, 325);
   const QPointF awayFromSpotlight(160, 160);
 
@@ -1521,8 +1547,9 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
                          BackgroundStyle::None);
   };
   const auto snapshotMatches = [&](const QImage &image) {
-    return flushedSnapshot(editor, snapshotPath)
-                   .convertToFormat(image.format()) == image;
+    // Snapshots are written off the UI thread, so flush before reading.
+    return flushedSnapshot(editor, snapshotPath).convertToFormat(image.format()) ==
+           image;
   };
   const qreal ascent = QFontMetricsF(annotationTextFont(5.0)).ascent();
   const auto text = [&](const QPointF &clicked, const QString &content,
@@ -1554,7 +1581,12 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
     return false;
   }
 
-  // T again (tool still armed) switches the next text to plain.
+  // Committing leaves the text tool armed with the new layer selected, and T
+  // with a text selected restyles that layer. So step out to Select, drop the
+  // selection, then arm text and press T once more: the next text is plain.
+  QTest::keyClick(&editor, Qt::Key_Escape);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 200));
+  QTest::keyClick(&editor, Qt::Key_T);
   QTest::keyClick(&editor, Qt::Key_T);
   typeText(QPoint(300, 400), QStringLiteral("Plain"));
   const Annotation plain =
@@ -1564,19 +1596,22 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
     return false;
   }
 
-  // T with a text layer selected toggles that layer, undoably.
+  // With a text layer selected, T arms the text tool (keeping the
+  // selection) and T again toggles that layer's pill, undoably.
   QTest::keyClick(&editor, Qt::Key_V);
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 290));
+  QTest::keyClick(&editor, Qt::Key_T);
+  application.processEvents();
+  if (!snapshotMatches(expected({pill, plain}))) {
+    error = QStringLiteral("T with a text selected toggled instead of arming");
+    return false;
+  }
   QTest::keyClick(&editor, Qt::Key_T);
   application.processEvents();
   Annotation pillNowPlain = pill;
   pillNowPlain.textBackground = TextBackground::Plain;
   if (!snapshotMatches(expected({pillNowPlain, plain}))) {
-    error = QStringLiteral("T did not toggle the selected text's pill");
-    return false;
-  }
-  if (editor.cursor().shape() != Qt::ArrowCursor) {
-    error = QStringLiteral("Toggling a selected text switched tools");
+    error = QStringLiteral("T again did not toggle the selected text's pill");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
@@ -1600,6 +1635,416 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
     return false;
   }
 
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
+bool runTextWrapRenderingCheck(QString &error) {
+  error = QStringLiteral("Text wrap rendering check failed");
+  Annotation text;
+  text.kind = Annotation::Kind::Text;
+  text.text = QStringLiteral("wrap these words onto several lines");
+  text.color = QColor(QStringLiteral("#ff375f"));
+  text.size = 5;
+  text.start = {20, 40};
+  const QVector<TextLine> single = layoutAnnotationText(text);
+  if (single.size() != 1 || single.first().text != text.text) {
+    error = QStringLiteral("Unwrapped text did not lay out as one line");
+    return false;
+  }
+  text.textWidth = single.first().width / 2.5;
+  const QVector<TextLine> wrapped = layoutAnnotationText(text);
+  if (wrapped.size() < 3) {
+    error = QStringLiteral("Wrap width did not produce several lines");
+    return false;
+  }
+  const QFontMetricsF metrics(annotationTextFont(text.size));
+  for (int index = 0; index < wrapped.size(); ++index) {
+    const TextLine &line = wrapped.at(index);
+    if (line.width > text.textWidth + 0.5 ||
+        !qFuzzyCompare(line.baseline,
+                       text.start.y() + index * metrics.lineSpacing())) {
+      error = QStringLiteral("Wrapped line overflowed the width or baseline");
+      return false;
+    }
+  }
+  // Bounds span the wrap width and every line; the pill covers each line.
+  const QRectF bounds = annotationTextBounds(text);
+  if (bounds.width() < text.textWidth ||
+      bounds.bottom() < wrapped.last().baseline) {
+    error = QStringLiteral("Wrapped text bounds do not cover the lines");
+    return false;
+  }
+  // Line ranges tile the text, so caret indexes map onto lines: the caret
+  // for the first index of a line sits at that line's left edge on its
+  // baseline, a click at a caret position finds that index again, and a
+  // selection spanning the break yields one rectangle per line.
+  int covered = 0;
+  for (const TextLine &line : wrapped) {
+    if (line.start != covered) {
+      error = QStringLiteral("Wrapped line ranges do not tile the text");
+      return false;
+    }
+    covered += line.length;
+  }
+  if (covered != text.text.size()) {
+    error = QStringLiteral("Wrapped line ranges do not cover the text");
+    return false;
+  }
+  const TextLine &second = wrapped.at(1);
+  const QPointF secondStart = annotationTextCaret(text, second.start);
+  if (!qFuzzyCompare(secondStart.x(), text.start.x()) ||
+      !qFuzzyCompare(secondStart.y(), second.baseline) ||
+      annotationTextCaret(text, 0) != text.start ||
+      annotationTextCaret(text, text.text.size()).y() !=
+          wrapped.last().baseline) {
+    error = QStringLiteral("Caret positions do not follow the wrapped lines");
+    return false;
+  }
+  for (const int index :
+       {0, second.start + 2, static_cast<int>(text.text.size())}) {
+    const QPointF caret = annotationTextCaret(text, index);
+    if (annotationTextCursorAt(text, caret - QPointF(0, metrics.ascent() / 2)) !=
+        index) {
+      error = QStringLiteral("Clicking at a caret position lost its index");
+      return false;
+    }
+  }
+  const QVector<QRectF> selection =
+      annotationTextSelectionRects(text, second.start - 3, second.start + 3);
+  if (selection.size() != 2 || selection.first().right() > bounds.right() ||
+      !qFuzzyCompare(selection.last().left(), text.start.x())) {
+    error = QStringLiteral("Selection rectangles do not follow the lines");
+    return false;
+  }
+  CaptureData capture;
+  capture.monitor.scale = 1.0;
+  capture.monitor.pixelSize = {300, 200};
+  capture.source = QImage(300, 200, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::transparent);
+  capture.previewSize = capture.source.size();
+  const QImage rendered = renderCapture(capture, QRectF(0, 0, 300, 200), {text},
+                                        BackgroundStyle::None);
+  const QPoint secondLine(qRound(text.start.x() - 2),
+                          qRound(wrapped.at(1).baseline - 4));
+  if (rendered.pixelColor(secondLine) != QColor(248, 245, 235)) {
+    error = QStringLiteral("Second wrapped line has no pill");
+    return false;
+  }
+  return true;
+}
+
+bool runTextWrapSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(700, 500));
+  application.processEvents();
+  const QRectF selection(100, 100, 600, 400);
+  const auto expected = [&](const QVector<Annotation> &annotations) {
+    return renderCapture(capture, selection, annotations,
+                         BackgroundStyle::None);
+  };
+  const auto snapshotMatches = [&](const QImage &image) {
+    return flushedSnapshot(editor, snapshotPath)
+                   .convertToFormat(image.format()) == image;
+  };
+
+  // Type a long line at annotation (200,195); the widget offset is (100,105).
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 300));
+  application.processEvents();
+  QTest::keyClicks(QApplication::focusWidget(),
+                   QStringLiteral("wrap me onto more than one line"));
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  application.processEvents();
+  const auto ascentOf = [](qreal size) {
+    return QFontMetricsF(annotationTextFont(size)).ascent();
+  };
+  Annotation text;
+  text.kind = Annotation::Kind::Text;
+  text.start = QPointF(200, 195) + QPointF(0, ascentOf(5.0));
+  text.text = QStringLiteral("wrap me onto more than one line");
+  text.color = QColor(QStringLiteral("#ff375f"));
+  text.size = 5;
+  if (!snapshotMatches(expected({text}))) {
+    error = QStringLiteral("Wrap smoke: text did not render on one line");
+    return false;
+  }
+
+  // Drag the bottom-right handle left: the text wraps to that width and the
+  // font size stays; the handle sits on the pill's corner.
+  QTest::keyClick(&editor, Qt::Key_V);
+  const QRectF bounds = annotationTextBounds(text);
+  const QPoint handle(qRound(bounds.right()) + 100,
+                      qRound(bounds.bottom()) + 105);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(handle.x() - 40, handle.y() - 10));
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, handle);
+  const QPoint dropped(handle.x() - qRound(bounds.width() / 2),
+                       handle.y() + 40);
+  QTest::mouseMove(&editor, dropped, 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, dropped);
+  application.processEvents();
+  Annotation wrapped = text;
+  wrapped.textWidth =
+      (dropped.x() - 100) - text.start.x() - textPillPadding(text);
+  if (layoutAnnotationText(wrapped).size() < 2) {
+    error = QStringLiteral("Wrap smoke expected the drop to produce lines");
+    return false;
+  }
+  if (!snapshotMatches(expected({wrapped}))) {
+    error = QStringLiteral("Dragging the text handle left did not wrap");
+    return false;
+  }
+  // Undo restores the single line.
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({text}))) {
+    error = QStringLiteral("Undo did not restore the unwrapped text");
+    return false;
+  }
+
+  // Text that would run off the canvas wraps at its right edge instead;
+  // clicking elsewhere while typing commits it and nothing more, so the next
+  // click starts the following text. Deselect first: T with a text layer
+  // selected toggles that layer's pill.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 200));
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(560, 460));
+  application.processEvents();
+  QTest::keyClicks(QApplication::focusWidget(),
+                   QStringLiteral("this runs well past the right edge"));
+  application.processEvents();
+  Annotation edge = text;
+  edge.start = QPointF(460, 355) + QPointF(0, ascentOf(5.0));
+  edge.text = QStringLiteral("this runs well past the right edge");
+  const QVector<TextLine> edgeLines =
+      layoutAnnotationText(edge, selection.width());
+  const QRectF edgeBounds = annotationTextBounds(edge, selection.width());
+  if (edgeLines.size() < 2 || edgeBounds.right() > selection.width() + 0.5) {
+    error = QStringLiteral("Text near the edge did not wrap inside the canvas");
+    return false;
+  }
+  // The wrap already shows while typing: the second line's pill is on the
+  // screen before the text is committed, and hovering the draft shows the
+  // I-beam.
+  {
+    const QImage typing = editor.grab().toImage();
+    const QPoint secondLine(
+        qRound(edge.start.x() - 2) + 100,
+        qRound(edgeLines.at(1).baseline - ascentOf(5.0) / 2) + 105);
+    if (typing.pixelColor(secondLine) != QColor(248, 245, 235)) {
+      error = QStringLiteral("Text did not wrap on screen while typing");
+      return false;
+    }
+    QTest::mouseMove(&editor, secondLine, 20);
+    application.processEvents();
+    if (editor.cursor().shape() != Qt::IBeamCursor) {
+      error = QStringLiteral("Hovering the text being typed is not an I-beam");
+      return false;
+    }
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(150, 150));
+  application.processEvents();
+  if (QApplication::focusWidget() != &editor) {
+    error = QStringLiteral("Clicking away opened another text editor");
+    return false;
+  }
+  if (!snapshotMatches(expected({text, edge}))) {
+    error = QStringLiteral("Clicking away did not commit the typed text");
+    return false;
+  }
+
+  // Committing froze the wrap width the edge produced (as tight as the
+  // widest line), so dragging the text left keeps its line breaks instead of
+  // reflowing onto fewer lines.
+  Annotation frozen = edge;
+  {
+    qreal widest = 0.0;
+    for (const TextLine &line : edgeLines)
+      widest = std::max(widest, line.width);
+    frozen.textWidth =
+        std::min(annotationTextWrapWidth(edge, selection.width()), widest + 2.0);
+  }
+  Annotation movedFrozen = frozen;
+  movedFrozen.start.rx() -= 150;
+  Annotation movedLoose = edge;
+  movedLoose.start.rx() -= 150;
+  if (layoutAnnotationText(movedFrozen, selection.width()).size() !=
+          edgeLines.size() ||
+      layoutAnnotationText(movedLoose, selection.width()).size() ==
+          edgeLines.size()) {
+    error = QStringLiteral("Frozen-wrap move check is not meaningful");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(570, 475));
+  QTest::mouseMove(&editor, QPoint(420, 475), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(420, 475));
+  application.processEvents();
+  if (!snapshotMatches(expected({text, movedFrozen}))) {
+    error = QStringLiteral("Moving edge-wrapped text reflowed its lines");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({text, edge}))) {
+    error = QStringLiteral("Undo did not restore the moved text");
+    return false;
+  }
+
+  // Clicking inside the text being typed moves the caret there instead of
+  // committing: click between "ab" and "cd", type "X", commit. (Deselect,
+  // then re-arm the text tool: T with a text selected toggles its pill.)
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 200));
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(150, 250));
+  application.processEvents();
+  QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("abcd"));
+  application.processEvents();
+  Annotation caretDraft = text;
+  caretDraft.start = QPointF(50, 145) + QPointF(0, ascentOf(5.0));
+  caretDraft.text = QStringLiteral("abcd");
+  const QPointF between =
+      annotationTextCaret(caretDraft, 2, selection.width()) -
+      QPointF(0, ascentOf(5.0) / 2);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(qRound(between.x()) + 100, qRound(between.y()) + 105));
+  application.processEvents();
+  if (QApplication::focusWidget() == &editor) {
+    error = QStringLiteral("Clicking inside the draft committed it");
+    return false;
+  }
+  QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("X"));
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  application.processEvents();
+  Annotation caretDone = caretDraft;
+  caretDone.text = QStringLiteral("abXcd");
+  if (!snapshotMatches(expected({text, edge, caretDone}))) {
+    error = QStringLiteral("Clicking inside the draft did not move the caret");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({text, edge}))) {
+    error = QStringLiteral("Undo did not remove the caret-test text");
+    return false;
+  }
+
+  // With the text tool armed, clicking (or double-clicking) an existing text
+  // edits it instead of starting a new one on top of it.
+  QTest::mouseDClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 320));
+  application.processEvents();
+  if (QApplication::focusWidget() == &editor ||
+      QApplication::focusWidget() == nullptr) {
+    error = QStringLiteral("Double-click on text with the text tool did not "
+                           "open the editor");
+    return false;
+  }
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_End);
+  QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("!"));
+  QTest::keyClick(QApplication::focusWidget(), Qt::Key_Return);
+  application.processEvents();
+  Annotation bang = text;
+  bang.text = text.text + QStringLiteral("!");
+  if (!snapshotMatches(expected({bang, edge}))) {
+    error = QStringLiteral("Editing the existing text via double-click failed");
+    return false;
+  }
+
+  // A double-click must re-open a text for editing every time, from the
+  // Select tool (after a commit) as well as from the Text tool, whether Qt
+  // synthesizes MouseButtonDblClick (press, release, double-click, release,
+  // since it swallows the second press) or, as under Hyprland where button
+  // events carry no timestamps, never does (press, release, press, release)
+  // and the editor's own second-click detection has to catch it.
+  const auto doubleClick = [&](const QPoint &at, bool qtSynthesizes) {
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    if (qtSynthesizes)
+      QTest::mouseDClick(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    else
+      QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, at);
+    application.processEvents();
+  };
+  QString rounds;
+  for (int round = 0; round < 3; ++round) {
+    // From the Select tool, with the text selected (rounds 1, 3) or not (2);
+    // round 1 through Qt's double-click event, the rest through plain
+    // presses.
+    QTest::keyClick(&editor, Qt::Key_V);
+    if (round == 1)
+      QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                        QPoint(650, 200));
+    application.processEvents();
+    doubleClick(QPoint(310, 320), round == 0);
+    if (QApplication::focusWidget() == &editor ||
+        QApplication::focusWidget() == nullptr) {
+      error = QStringLiteral("Double-click round %1 did not open the editor")
+                  .arg(round + 1);
+      return false;
+    }
+    // ...and armed the text tool (I-beam over empty canvas).
+    QTest::mouseMove(&editor, QPoint(650, 200), 20);
+    application.processEvents();
+    if (editor.cursor().shape() != Qt::IBeamCursor) {
+      error = QStringLiteral("Double-click round %1 did not arm the text tool")
+                  .arg(round + 1);
+      return false;
+    }
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_End);
+    QTest::keyClicks(QApplication::focusWidget(), QStringLiteral("."));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(650, 200));
+    application.processEvents();
+    rounds += QStringLiteral(".");
+    Annotation again = bang;
+    again.text = bang.text + rounds;
+    if (!snapshotMatches(expected({again, edge}))) {
+      error = QStringLiteral("Double-click round %1 edit was not committed")
+                  .arg(round + 1);
+      return false;
+    }
+  }
+  // Committing leaves the text tool armed with the new layer selected, and
+  // the click that committed does nothing more: no second text appears.
+  QTest::mouseMove(&editor, QPoint(660, 470), 20);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::IBeamCursor) {
+    error = QStringLiteral("Committing did not keep the text tool armed");
+    return false;
+  }
+  // Two clicks further apart than the double-click interval are not one.
+  // Checked from Select, so this is about double-click detection rather than
+  // about what the text tool does with a single click.
+  QTest::keyClick(&editor, Qt::Key_V);
+  application.processEvents();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 320));
+  QTest::qWait(QGuiApplication::styleHints()->mouseDoubleClickInterval() + 50);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 320));
+  application.processEvents();
+  if (QApplication::focusWidget() != &editor) {
+    error = QStringLiteral("Two slow clicks on a text opened the editor");
+    return false;
+  }
   editor.close();
   QFile::remove(snapshotPath);
   return true;
@@ -1671,6 +2116,14 @@ int main(int argc, char **argv) {
   if (!runContinuousAnnotationToolsSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 80;
+  }
+  if (!runTextWrapRenderingCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 104;
+  }
+  if (!runTextWrapSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 105;
   }
   if (!runTextPillRenderingCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;

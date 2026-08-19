@@ -153,6 +153,9 @@ private:
   [[nodiscard]] QColor annotationColor() const;
 
   void acceptText();
+  void editTextAnnotation(int index);
+  [[nodiscard]] Annotation textDraft() const;
+  void syncTextEditorGeometry();
   void applyCustomColor(const QPointF &position);
   void applyEditState(const EditState &state);
   void cancelActiveDragForHistory();
@@ -281,10 +284,19 @@ private:
   QVector<int> selectedAnnotations_;
   qreal textSize_ = 4.0;
   QElapsedTimer escapeTimer_;
-  /// The inline editor's pill and caret are painted by the editor itself
-  /// (the QLineEdit stays transparent with its own caret hidden) so the
-  /// caret can be shorter than Neucha's tall line box.
+  /// Second-click detection of our own: Qt only synthesizes
+  /// MouseButtonDblClick when the platform stamps button events with
+  /// increasing timestamps, and under Hyprland (Wayland, touchpad) they
+  /// arrive as 0, so mouseDoubleClickEvent never fires there.
+  QElapsedTimer clickTimer_;
+  QPointF lastClickPos_;
+  /// While typing, the text is drawn by the editor through the same layout
+  /// as the committed layer (so it wraps at the canvas edge or its dragged
+  /// width as you type, at any zoom); the invisible QLineEdit only holds the
+  /// text, caret and selection. The caret is painted here too, shorter than
+  /// Neucha's tall line box.
   bool textEditPill_ = false;
+  qreal textDraftWidth_ = 0.0;
   bool textCaretOn_ = true;
   QTimer textCaretTimer_;
   QColor textColor_;
