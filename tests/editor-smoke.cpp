@@ -1365,7 +1365,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
     }
     application.processEvents();
   };
-  // Widget centre of the spotlight drawn above, and a point clear of it.
+  // Widget center of the spotlight drawn above, and a point clear of it.
   const QPointF overSpotlight(400, 325);
   const QPointF awayFromSpotlight(160, 160);
 
@@ -1694,6 +1694,97 @@ bool runHoverMoveSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Checks the stacking: the last layer picked up sits on top of the ones it
+ *  overlaps, and text and counters stay above whatever the order. */
+bool runLayerOrderSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  const QString snapshotPath = temporarySnapshotPath();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(700, 500), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(700, 500));
+  application.processEvents();
+
+  // Two overlapping strokes in different colors: the second is on top.
+  QTest::keyClick(&editor, Qt::Key_L);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 300));
+  QTest::mouseMove(&editor, QPoint(500, 300), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(500, 300));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_4);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 200));
+  QTest::mouseMove(&editor, QPoint(350, 400), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(350, 400));
+  application.processEvents();
+  const QPoint crossing(250, 195); // annotation coords, where they meet
+  const QImage drawn = flushedSnapshot(editor, snapshotPath);
+  const QColor second = drawn.pixelColor(crossing);
+  if (second == QColor(QStringLiteral("#182030"))) {
+    error = QStringLiteral("Layer order smoke: the strokes did not cross");
+    return false;
+  }
+
+  // Picking the first one up puts it back on top.
+  QTest::keyClick(&editor, Qt::Key_V);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(220, 300));
+  application.processEvents();
+  const QColor raised =
+      flushedSnapshot(editor, snapshotPath).pixelColor(crossing);
+  if (raised == second) {
+    error = QStringLiteral("Clicking a layer did not bring it to the top");
+    return false;
+  }
+  // And that reorder is an edit like any other.
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath).pixelColor(crossing) != second) {
+    error = QStringLiteral("Undo did not put the order back");
+    return false;
+  }
+
+  // A counter keeps the top even when something is drawn over it afterwards.
+  // The undo left a layer selected, so the first click puts it down and the
+  // second places the counter.
+  QTest::keyClick(&editor, Qt::Key_C);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 200));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(620, 200));
+  application.processEvents();
+  const QPoint counterCenter(520, 95);
+  const QColor counterInk =
+      flushedSnapshot(editor, snapshotPath).pixelColor(counterCenter);
+  if (counterInk == QColor(QStringLiteral("#182030"))) {
+    error = QStringLiteral("Layer order smoke: the counter did not go down");
+    return false;
+  }
+  // A line straight through it, drawn afterwards and painted in the same pass:
+  // in plain order it would take the middle of the counter.
+  QTest::keyClick(&editor, Qt::Key_L);
+  QTest::keyClick(&editor, Qt::Key_4); // a color the counter is not
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(560, 200));
+  QTest::mouseMove(&editor, QPoint(690, 200), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(690, 200));
+  application.processEvents();
+  if (flushedSnapshot(editor, snapshotPath).pixelColor(counterCenter) !=
+      counterInk) {
+    error = QStringLiteral("A layer drawn later covered the counter");
+    return false;
+  }
+  editor.close();
+  QFile::remove(snapshotPath);
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -1732,6 +1823,10 @@ int main(int argc, char **argv) {
   if (!runQuickOutputChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 73;
+  }
+  if (!runLayerOrderSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 122;
   }
   if (!runAsyncCaptureRegionSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

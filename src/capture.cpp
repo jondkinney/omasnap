@@ -641,8 +641,23 @@ void paintDefaultLayer(QPainter &painter, const QImage &redacted,
                        const QVector<Annotation> &annotations) {
   paintSpotlights(painter, redacted, logicalBounds, QRectF(redacted.rect()),
                   annotations);
-  for (const Annotation &annotation : annotations)
-    paintAnnotation(painter, annotation);
+  // What a capture is annotated *with* goes over what it is annotated *on*:
+  // text, then counters, after everything else. A label buried under a
+  // rectangle is a label nobody can read, and the number that points at it
+  // belongs above even that. Within each pass the stored order holds, which is
+  // the order things were drawn or last picked up in.
+  const auto passOver = [&](bool (*belongs)(Annotation::Kind)) {
+    for (const Annotation &annotation : annotations) {
+      if (belongs(annotation.kind))
+        paintAnnotation(painter, annotation);
+    }
+  };
+  passOver([](Annotation::Kind kind) {
+    return kind != Annotation::Kind::Text && kind != Annotation::Kind::Marker;
+  });
+  passOver([](Annotation::Kind kind) { return kind == Annotation::Kind::Text; });
+  passOver(
+      [](Annotation::Kind kind) { return kind == Annotation::Kind::Marker; });
 }
 
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
