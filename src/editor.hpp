@@ -212,6 +212,9 @@ private:
   Tool tool_ = Tool::Select;
   /// Set by the first key event, which carries a fresh modifier snapshot.
   bool modifiersSeen_ = false;
+  /// What to hand back to once a color has been sampled: taking a color is
+  /// not a change of tool.
+  Tool toolBeforeEyedropper_ = Tool::Select;
   QRectF selection_;
   QPointF dragStart_;
   QRectF originalSelection_;
