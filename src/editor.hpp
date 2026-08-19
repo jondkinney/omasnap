@@ -211,6 +211,9 @@ public:
 private:
   [[nodiscard]] int annotationAt(const QPointF &point) const;
   /// Whether the armed tool picks a layer up rather than working over it.
+  /// Moves a layer to the top of the stack, remapping every index that
+  /// pointed into it. Returns where it ended up.
+  int raiseAnnotation(int index);
   [[nodiscard]] bool toolGrabsLayer(int index) const;
   /// Whether a press here would grab a layer, which is what the cursor reads.
   [[nodiscard]] bool pointerGrabsLayer() const;

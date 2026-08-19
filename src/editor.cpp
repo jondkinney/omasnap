@@ -1039,16 +1039,18 @@ bool CaptureEditor::annotationContains(const Annotation &annotation,
 }
 
 int CaptureEditor::annotationAt(const QPointF &point) const {
-  for (const int layer : {0, 1, 2}) {
+  for (const int layer : {0, 1, 2, 3, 4}) {
     for (int index = annotations_.size() - 1; index >= 0; --index) {
       const Annotation &annotation = annotations_.at(index);
       const int annotationLayer =
-          annotation.kind == Annotation::Kind::Spotlight
-              ? 1
-              : annotation.kind == Annotation::Kind::Redaction ? 2 : 0;
+          annotation.kind == Annotation::Kind::Marker      ? 0
+          : annotation.kind == Annotation::Kind::Text      ? 1
+          : annotation.kind == Annotation::Kind::Spotlight ? 3
+          : annotation.kind == Annotation::Kind::Redaction ? 4
+                                                           : 2;
       if (annotationLayer != layer)
         continue;
-      if (layer == 1) {
+      if (layer == 3) {
         if (spotlightPath(annotation).contains(point))
           return index;
         continue;
@@ -1077,16 +1079,18 @@ bool CaptureEditor::pointerGrabsLayer() const {
 }
 
 int CaptureEditor::annotationEdgeAt(const QPointF &point) const {
-  for (const int layer : {0, 1, 2}) {
+  for (const int layer : {0, 1, 2, 3, 4}) {
     for (int index = annotations_.size() - 1; index >= 0; --index) {
       const Annotation &annotation = annotations_.at(index);
       const int annotationLayer =
-          annotation.kind == Annotation::Kind::Spotlight
-              ? 1
-              : annotation.kind == Annotation::Kind::Redaction ? 2 : 0;
+          annotation.kind == Annotation::Kind::Marker      ? 0
+          : annotation.kind == Annotation::Kind::Text      ? 1
+          : annotation.kind == Annotation::Kind::Spotlight ? 3
+          : annotation.kind == Annotation::Kind::Redaction ? 4
+                                                           : 2;
       if (annotationLayer != layer)
         continue;
-      if (layer == 1) {
+      if (layer == 3) {
         const QPainterPath opening = spotlightPath(annotation);
         if (!opening.contains(point))
           continue;
@@ -1819,13 +1823,18 @@ void CaptureEditor::replayLog() {
         annotations.push_back(annotation);
       break;
     case Operation::Type::Patch:
+      // A patch is a pick-up: the layer you just changed comes to the top,
+      // same as raiseAnnotation(), so a click-to-raise survives replay.
       for (const Annotation &annotation : op.annotations) {
         const auto match = std::ranges::find_if(
             annotations, [&](const Annotation &current) {
               return current.id != 0 && current.id == annotation.id;
             });
-        if (match != annotations.end())
-          *match = annotation;
+        if (match != annotations.end()) {
+          Annotation updated = annotation;
+          annotations.erase(match);
+          annotations.push_back(std::move(updated));
+        }
       }
       break;
     case Operation::Type::Delete:
@@ -1892,6 +1901,29 @@ void CaptureEditor::replayLog() {
   redactionBaseStale_ = true;
   updatePointerCursor();
   update();
+}
+
+int CaptureEditor::raiseAnnotation(int index) {
+  // Picking a layer up puts it on top of the ones it overlaps: the last thing
+  // you touched is the thing you are working on. Text and counters are painted
+  // above everything regardless, so this never buries a label or a callout.
+  if (index < 0 || index >= annotations_.size() - 1)
+    return index;
+  Annotation raised = annotations_.takeAt(index);
+  annotations_.push_back(std::move(raised));
+  const int top = static_cast<int>(annotations_.size()) - 1;
+  const auto remap = [index, top](int position) {
+    if (position < 0)
+      return position;
+    if (position == index)
+      return top;
+    return position > index ? position - 1 : position;
+  };
+  selectedAnnotation_ = remap(selectedAnnotation_);
+  for (int &position : selectedAnnotations_)
+    position = remap(position);
+  editingAnnotation_ = remap(editingAnnotation_);
+  return top;
 }
 
 void CaptureEditor::undoEdit() {
@@ -3072,13 +3104,17 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       }
     }
     if (selectedAnnotation_ >= 0) {
+      // Snapshot before the raise, so undo puts the order back too.
+      dragStartState_ = editState();
+      const int wasAt = selectedAnnotation_;
+      const bool raised = selectedAnnotations_.size() == 1 &&
+                          raiseAnnotation(selectedAnnotation_) != wasAt;
       originalAnnotation_ = annotations_.at(selectedAnnotation_);
       originalSelectedAnnotations_.clear();
       for (const int index : selectedAnnotations_)
         originalSelectedAnnotations_.push_back(annotations_.at(index));
-      dragStartState_ = editState();
       dragStartStateValid_ = true;
-      dragChanged_ = false;
+      dragChanged_ = raised;
       dragStart_ = point;
       dragging_ = true;
       resizeConstraintActive_ = isLayerResize(interaction_) &&
@@ -3118,15 +3154,18 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       grabInteraction = handle;
     }
     if (grabbed >= 0) {
+      const EditState before = editState();
       selectedAnnotation_ = grabbed;
       selectedAnnotations_ = {grabbed};
+      const bool raised = raiseAnnotation(grabbed) != grabbed;
+      grabbed = selectedAnnotation_;
       originalAnnotation_ = annotations_.at(grabbed);
       originalSelectedAnnotations_.clear();
       originalSelectedAnnotations_.push_back(annotations_.at(grabbed));
       interaction_ = grabInteraction;
-      dragStartState_ = editState();
+      dragStartState_ = before;
       dragStartStateValid_ = true;
-      dragChanged_ = false;
+      dragChanged_ = raised;
       dragStart_ = point;
       dragging_ = true;
       setStatus(QStringLiteral("Moving layer · release to keep drawing"));
