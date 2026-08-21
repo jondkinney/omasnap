@@ -2465,7 +2465,7 @@ bool runEllipseToolSmoke(QApplication &application, QString &error) {
       return false;
     }
   }
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(250, 200));
   QTest::keyClick(&editor, Qt::Key_Delete);
   application.processEvents();
   if (!snapshotMatches(expected({circle}))) {
@@ -2480,10 +2480,11 @@ bool runEllipseToolSmoke(QApplication &application, QString &error) {
   }
 
   // Selected ellipse moves with its whole (hollow) body like other layers.
-  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
-  QTest::mouseMove(&editor, QPoint(320, 230), 20);
+  // Off the mid-side handle (300,200) so this is a move, not a resize.
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(250, 200));
+  QTest::mouseMove(&editor, QPoint(270, 230), 20);
   QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
-                      QPoint(320, 230));
+                      QPoint(270, 230));
   application.processEvents();
   if (!snapshotMatches(
           expected({ellipseAnnotation({120, 125}, {320, 225}), circle}))) {
