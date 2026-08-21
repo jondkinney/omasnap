@@ -2740,6 +2740,10 @@ bool runShapeFillToolSmoke(QApplication &application, QString &error) {
     error = QStringLiteral("R did not fill the selected rectangle");
     return false;
   }
+  // Off any handle: with eight box handles the press point may be a resize
+  // cursor even though the tool is still Select.
+  QTest::mouseMove(&editor, QPoint(160, 480));
+  application.processEvents();
   if (editor.cursor().shape() != Qt::ArrowCursor) {
     error = QStringLiteral("Toggling a selected rectangle switched tools");
     return false;
