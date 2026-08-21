@@ -2200,8 +2200,9 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_V);
-  // Press the top edge, clear of the corner handles, so this is a move.
-  drag(QPoint(575, 300), QPoint(675, 300));
+  // Press the top edge, clear of the corner and mid-side handles (eight on
+  // a box), so this is a move.
+  drag(QPoint(540, 300), QPoint(640, 300));
   Annotation shifted = rectangle;
   shifted.start.rx() += 100;
   shifted.end.rx() += 100;
@@ -2227,9 +2228,9 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
     return false;
   }
 
-  // Its right edge is outside the canvas too (widget x 750); grabbing the
-  // layer there drags it back in.
-  drag(QPoint(750, 375), QPoint(650, 375));
+  // Its right edge is outside the canvas too (widget x 750); grab off the
+  // mid-side handle so this is a move, not a one-axis resize.
+  drag(QPoint(750, 340), QPoint(650, 340));
   if (!snapshotMatches(expected({rectangle}))) {
     error = QStringLiteral(
         "Grabbing a selected layer outside the canvas did not move it");
