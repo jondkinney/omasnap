@@ -1711,6 +1711,21 @@ bool quickOutput(const QImage &image, QuickOutputMode mode, QString &error,
   return true;
 }
 
+QString screenshotRootDir() {
+  QString root = qEnvironmentVariable("OMASNAP_SCREENSHOT_DIR");
+  if (root.isEmpty())
+    root =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation))
+            .filePath(QStringLiteral("Screenshots"));
+  return root;
+}
+
+QString defaultScreenshotFileName() {
+  return QStringLiteral("screenshot-%1.png")
+      .arg(QDateTime::currentDateTime().toString(
+          QStringLiteral("yyyy-MM-dd_HH-mm-ss")));
+}
+
 QString appFilenameSlug(const QString &appClass) {
   // Reverse-DNS classes (org.gnome.Nautilus) name the app in their last
   // segment; everything before it is noise in a filename.

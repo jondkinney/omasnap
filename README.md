@@ -487,6 +487,7 @@ region after changing the display layout.
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |
 | `Ctrl+C` | Copy PNG only |
 | `Ctrl+S` | Save PNG only |
+| `Ctrl+Shift+S` | Save As: pick a destination in a file dialog; the editor stays open, and the chosen folder is remembered for the next Save As |
 | `Enter` | Copy and save (with a text layer selected: edit it) |
 | `Ctrl+P` / `P` | Keep the capture pinned on screen and close the editor |
 | `Esc` / `Super+W` | Dismiss the annotator; keep an originating pin in place with its edits and undo history |
