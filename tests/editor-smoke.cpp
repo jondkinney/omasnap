@@ -1276,6 +1276,89 @@ bool runSpotlightAndSampleChecks(QString &error) {
   return true;
 }
 
+/** The view holds still while a text draft is open: no wheel zoom or scroll,
+ *  no middle-drag pan, until the text commits. */
+bool runDraftViewLockCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  {
+    // A checkerboard, so even a one-pixel pan or zoom of the view flips
+    // sampled pixels; a flat fill would hide a moving view entirely.
+    QPainter painter(&capture.source);
+    for (int y = 0; y < 600; y += 20)
+      for (int x = 0; x < 800; x += 20)
+        painter.fillRect(QRect(x, y, 20, 20), ((x + y) / 20) % 2 == 0
+                                                  ? QColor(24, 32, 48)
+                                                  : QColor(96, 128, 176));
+  }
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+
+  // Sampled well inside the canvas: below even the zoomed draft's descent,
+  // above the status pill, and clear of the legend and the blinking caret.
+  const QRect sample(140, 430, 400, 60);
+  const auto ctrlWheel = [&] {
+    QWheelEvent wheel(QPointF(400, 300), QPointF(400, 300), {}, {0, 120},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase,
+                      false);
+    QApplication::sendEvent(&editor, &wheel);
+    application.processEvents();
+  };
+  const auto grab = [&] { return editor.grab().toImage().copy(sample); };
+
+  // Zoom well in first so a middle-drag pan has real slack to move within.
+  ctrlWheel();
+  ctrlWheel();
+  ctrlWheel();
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 300));
+  application.processEvents();
+  QWidget *draft = QApplication::focusWidget();
+  QTest::keyClicks(draft, QStringLiteral("hold"));
+  application.processEvents();
+
+  const QImage before = grab();
+  ctrlWheel();
+  if (grab() != before) {
+    error = QStringLiteral("Zooming during a text draft moved the view");
+    return false;
+  }
+  // The middle press hands focus away, which commits the draft (the same
+  // click-away contract as a left click); the view must still hold through
+  // that very drag.
+  QTest::mousePress(&editor, Qt::MiddleButton, Qt::NoModifier, QPoint(400, 300));
+  QTest::mouseMove(&editor, QPoint(460, 350), 20);
+  QTest::mouseRelease(&editor, Qt::MiddleButton, Qt::NoModifier,
+                      QPoint(460, 350));
+  application.processEvents();
+  if (grab() != before) {
+    error = QStringLiteral("Panning during a text draft moved the view");
+    return false;
+  }
+
+  // With the draft gone the view is handed back: the same wheel must zoom
+  // again, or this check is asserting nothing.
+  const QImage committed = grab();
+  ctrlWheel();
+  if (grab() == committed) {
+    error = QStringLiteral("The view stayed locked after the text committed");
+    return false;
+  }
+  return true;
+}
+
 /** Checks that clicking away commits in-progress text instead of losing it. */
 bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -5642,6 +5725,10 @@ int main(int argc, char **argv) {
   if (!runSpotlightAndSampleChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 79;
+  }
+  if (!runDraftViewLockCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 11;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

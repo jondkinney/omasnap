@@ -3726,7 +3726,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     return;
   }
   if (event->button() == Qt::MiddleButton) {
-    if (phase_ == Phase::Edit && viewZoom_ > 1.0) {
+    if (phase_ == Phase::Edit && viewZoom_ > 1.0 &&
+        !textEditor_->isVisible()) {
       panning_ = true;
       panAnchor_ = event->position();
       setCursor(Qt::ClosedHandCursor);
@@ -4292,6 +4293,14 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     QWidget::wheelEvent(event);
     return;
   }
+  if (textEditor_->isVisible()) {
+    // The draft widget is laid out for the view it opened in; a zoom or pan
+    // under it would leave the text adrift mid-edit. The view holds still
+    // until the text commits.
+    event->accept();
+    return;
+  }
+
   // High-resolution touchpads can arrive with an empty angleDelta and only a
   // pixelDelta; treat the two interchangeably, preferring the exact pixels
   // for panning and the notch units for discrete steps.
