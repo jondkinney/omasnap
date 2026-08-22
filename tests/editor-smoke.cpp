@@ -1305,6 +1305,26 @@ bool runNativeCaretHiddenCheck(QApplication &application, QString &error) {
     error = QStringLiteral("Text draft did not open for the caret check");
     return false;
   }
+  const auto caretInkWidth = [&editor, draft] {
+    const QRect caret = draft->cursorRect();
+    const QPoint origin = draft->viewport()->mapTo(&editor, caret.topLeft());
+    const QImage frame = editor.grab().toImage();
+    const int y = origin.y() + caret.height() / 2;
+    const auto red = [&frame](int x, int y) {
+      if (!frame.rect().contains(x, y))
+        return false;
+      const QColor color = frame.pixelColor(x, y);
+      return color.red() > 200 && color.green() < 120;
+    };
+    int left = origin.x();
+    while (red(left - 1, y))
+      --left;
+    int right = origin.x();
+    while (red(right + 1, y))
+      ++right;
+    return red(origin.x(), y) ? right - left + 1 : 0;
+  };
+  const int lonelyCaret = caretInkWidth();
   QTest::keyClicks(draft, QStringLiteral("Caret"));
   application.processEvents();
 
@@ -1329,6 +1349,22 @@ bool runNativeCaretHiddenCheck(QApplication &application, QString &error) {
   }
   if (!paintedCaretInk) {
     error = QStringLiteral("The painted caret did not show in the draft");
+    return false;
+  }
+
+  // Five more lines: the widget is now several times taller, and the caret
+  // on the empty last line must be as wide as it was on the first.
+  // Shift+Enter, because a plain Enter commits once the entry is out of
+  // room, and a clicked label starts with room for one line.
+  for (int line = 0; line < 5; ++line)
+    QTest::keyClick(draft, Qt::Key_Return, Qt::ShiftModifier);
+  application.processEvents();
+  const int tallDraftCaret = caretInkWidth();
+  if (lonelyCaret <= 0 || tallDraftCaret <= 0 ||
+      std::abs(tallDraftCaret - lonelyCaret) > 1) {
+    error = QStringLiteral("The caret thickened as lines were added: %1 vs %2")
+                .arg(lonelyCaret)
+                .arg(tallDraftCaret);
     return false;
   }
   return true;

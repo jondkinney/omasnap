@@ -5494,7 +5494,10 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       const qreal baseline = cursor.top() + metrics.ascent();
       const qreal top = baseline - metrics.capHeight() * 1.15;
       const qreal bottom = baseline + metrics.descent() * 0.35;
-      painter.setPen(QPen(textColor_, std::max(1.0, box.height() / 18.0)));
+      // Scale the pen to one line, not the widget: the multiline editor grows
+      // taller with every Return, and the caret must not thicken with it.
+      const qreal lineBox = metrics.lineSpacing() + metrics.descent() + 4.0;
+      painter.setPen(QPen(textColor_, std::max(1.0, lineBox / 18.0)));
       painter.drawLine(QPointF(cursor.center().x(), top),
                        QPointF(cursor.center().x(), bottom));
     }
