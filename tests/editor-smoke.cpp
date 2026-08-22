@@ -1276,6 +1276,64 @@ bool runSpotlightAndSampleChecks(QString &error) {
   return true;
 }
 
+/** The draft's caret is the painted one alone; the widget's own stays hidden. */
+bool runNativeCaretHiddenCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::white);
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_T);
+  // Low in the selection, clear of the key legend and the toolbar, so the
+  // only ink near the caret is the draft's own.
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(180, 300));
+  application.processEvents();
+  auto *draft = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!draft) {
+    error = QStringLiteral("Text draft did not open for the caret check");
+    return false;
+  }
+  QTest::keyClicks(draft, QStringLiteral("Caret"));
+  application.processEvents();
+
+  // Scan the caret's column in the grabbed frame. Over a white capture with a
+  // cream pill and the default red palette, near-black ink there can only be
+  // the widget's own caret; the painted caret reads as red-dominant.
+  const QRect caret = draft->cursorRect();
+  const QPoint origin = draft->viewport()->mapTo(&editor, caret.topLeft());
+  const QImage frame = editor.grab().toImage();
+  bool paintedCaretInk = false;
+  for (int x = origin.x() - 2; x <= origin.x() + 2; ++x) {
+    for (int y = origin.y(); y < origin.y() + caret.height(); ++y) {
+      if (!frame.rect().contains(x, y))
+        continue;
+      const QColor color = frame.pixelColor(x, y);
+      if (std::max({color.red(), color.green(), color.blue()}) < 90) {
+        error = QStringLiteral("The widget's own caret showed under the painted one");
+        return false;
+      }
+      paintedCaretInk = paintedCaretInk || color.red() - color.green() > 80;
+    }
+  }
+  if (!paintedCaretInk) {
+    error = QStringLiteral("The painted caret did not show in the draft");
+    return false;
+  }
+  return true;
+}
+
 /** Checks that clicking away commits in-progress text instead of losing it. */
 bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -5642,6 +5700,10 @@ int main(int argc, char **argv) {
   if (!runSpotlightAndSampleChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 79;
+  }
+  if (!runNativeCaretHiddenCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 121;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

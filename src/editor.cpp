@@ -31,7 +31,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
-#include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollBar>
@@ -48,11 +47,14 @@
 
 /// The inline text editor: a multiline editor whose native caret is hidden (the
 /// editor paints a shorter one over Neucha's tall line box) and whose caret
-/// rectangle is exposed for that.
+/// rectangle is exposed for that. The caret is hidden through cursorWidth
+/// because QPlainTextEdit never consults PM_TextCursorWidth, so a proxy style
+/// zeroing that metric leaves the widget's own caret showing under the
+/// painted one.
 class InlineTextEdit final : public QPlainTextEdit {
 public:
   explicit InlineTextEdit(QWidget *parent) : QPlainTextEdit(parent) {
-    setStyle(&caretlessStyle_);
+    setCursorWidth(0);
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -61,18 +63,6 @@ public:
   }
   using QPlainTextEdit::cursorRect;
   using QPlainTextEdit::setViewportMargins;
-
-private:
-  class CaretlessStyle final : public QProxyStyle {
-  public:
-    int pixelMetric(PixelMetric metric, const QStyleOption *option,
-                    const QWidget *widget) const override {
-      return metric == PM_TextCursorWidth
-                 ? 0
-                 : QProxyStyle::pixelMetric(metric, option, widget);
-    }
-  };
-  CaretlessStyle caretlessStyle_;
 };
 
 namespace {
