@@ -1,35 +1,76 @@
-/** @fileoverview Implements pinned-window stacking and clamping helpers. */
+/** @fileoverview Implements pinned-window stacking and dispatch helpers. */
 #include "pin-layout.hpp"
 
 #include <algorithm>
+#include <cmath>
 
-QPoint pinPositionFromGlobalPointer(const QPoint &globalPointer,
-                                    const QPoint &screenOrigin,
-                                    const QPoint &pressOffset) {
-  return globalPointer - screenOrigin - pressOffset;
+QPoint pinPackedPosition(const QVector<QRect> &blockers,
+                         const QSize &screenSize, const QSize &frame, int gap,
+                         int margin) {
+  int x = screenSize.width() - margin - frame.width();
+  for (int column = 0; column < 8; ++column) {
+    int y = screenSize.height() - margin - frame.height();
+    while (y >= margin) {
+      const QRect candidate(x, y, frame.width(), frame.height());
+      int lowestTop = -1;
+      for (const QRect &blocker : blockers) {
+        if (candidate.intersects(blocker))
+          lowestTop = std::max(lowestTop, blocker.top());
+      }
+      if (lowestTop < 0)
+        return {x, y};
+      // Climb to one gap above the lowest pin in the way, then look again:
+      // the spot up there may graze another one.
+      y = lowestTop - gap - frame.height();
+    }
+    x -= frame.width() + gap;
+  }
+  return {screenSize.width() - margin - frame.width(),
+          screenSize.height() - margin - frame.height()};
 }
 
-QPoint pinSlotPosition(const QSize &screenSize, const QSize &pinSize,
-                       const QSize &slotSize, int index, int gap, int margin) {
-  const int verticalSpace = std::max(1, screenSize.height() - 2 * margin);
-  const int rowHeight = std::max(1, slotSize.height() + gap);
-  const int rows = std::max(1, (verticalSpace + gap) / rowHeight);
-  const int row = std::max(0, index) % rows;
-  const int column = std::max(0, index) / rows;
-  const int x = screenSize.width() - margin - pinSize.width() -
-                column * (std::max(1, slotSize.width()) + gap);
-  const int y =
-      screenSize.height() - margin - pinSize.height() - row * rowHeight;
-  return {x, y};
+bool pinInColumn(const QRect &rect, const QSize &screenSize, int margin) {
+  constexpr int tolerance = 6;
+  return std::abs(rect.right() + 1 - (screenSize.width() - margin)) <=
+         tolerance;
 }
 
-QRect clampPinGeometry(const QRect &pin, const QRect &bounds) {
-  if (bounds.isEmpty())
-    return pin;
-  const int x = std::clamp(pin.x(), bounds.left(),
-                           std::max(bounds.left(), bounds.right() - pin.width() + 1));
-  const int y = std::clamp(
-      pin.y(), bounds.top(),
-      std::max(bounds.top(), bounds.bottom() - pin.height() + 1));
-  return {x, y, pin.width(), pin.height()};
+namespace {
+// The whole expression is one dispatch argument; the title has a space in
+// it, so the selector is quoted inside the expression rather than around it.
+QString windowSelector(const QString &title) {
+  return QStringLiteral("window = \"title:^(%1)$\"").arg(title);
+}
+} // namespace
+
+QString pinFloatDispatch(const QString &title) {
+  return QStringLiteral("hl.dsp.window.float({ %1 })")
+      .arg(windowSelector(title));
+}
+
+QString pinPinDispatch(const QString &title) {
+  return QStringLiteral("hl.dsp.window.pin({ %1 })").arg(windowSelector(title));
+}
+
+QString pinMoveDispatch(const QString &title, int x, int y) {
+  return QStringLiteral(
+             "hl.dsp.window.move({ x = %1, y = %2, relative = false, %3 })")
+      .arg(x)
+      .arg(y)
+      .arg(windowSelector(title));
+}
+
+QString pinSwayArrangeCommand(const QString &title, int x, int y) {
+  return QStringLiteral("[title=\"^%1$\"] floating enable, sticky enable, "
+                        "move absolute position %2 %3")
+      .arg(title)
+      .arg(x)
+      .arg(y);
+}
+
+QString pinSwayMoveCommand(const QString &title, int x, int y) {
+  return QStringLiteral("[title=\"^%1$\"] move absolute position %2 %3")
+      .arg(title)
+      .arg(x)
+      .arg(y);
 }
