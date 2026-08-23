@@ -4,6 +4,17 @@
 #include <algorithm>
 #include <cmath>
 
+QSize pinFrameSize(const QSize &screenSize) {
+  constexpr int width = 200;
+  const double aspect =
+      screenSize.width() > 0 && screenSize.height() > 0
+          ? static_cast<double>(screenSize.height()) / screenSize.width()
+          : 9.0 / 16.0;
+  const int height = std::clamp(static_cast<int>(std::lround(width * aspect)),
+                                width / 4, width * 2);
+  return {width, height};
+}
+
 QPoint pinPackedPosition(const QVector<QRect> &blockers,
                          const QSize &screenSize, const QSize &frame, int gap,
                          int margin) {

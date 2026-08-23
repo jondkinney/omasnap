@@ -4,6 +4,18 @@
 #include "pin-layout.hpp"
 
 bool runPinLayoutSmoke(QString &error) {
+  // The frame follows the display's shape at a fixed width, clamps the
+  // extremes, and guesses 16:9 when the display cannot be asked.
+  if (pinFrameSize(QSize(2560, 1600)) != QSize(200, 125) ||
+      pinFrameSize(QSize(3440, 1440)) != QSize(200, 84) ||
+      pinFrameSize(QSize(1080, 1920)) != QSize(200, 356) ||
+      pinFrameSize(QSize(1000, 5000)) != QSize(200, 400) ||
+      pinFrameSize(QSize(5000, 500)) != QSize(200, 50) ||
+      pinFrameSize(QSize()) != QSize(200, 113)) {
+    error = QStringLiteral("Pin frames did not follow the display's shape");
+    return false;
+  }
+
   const QSize screen(400, 300);
   const QSize pin(100, 80);
 
