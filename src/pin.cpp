@@ -20,6 +20,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QProcess>
+#include <QSocketNotifier>
 #include <QCloseEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -33,6 +34,7 @@
 #include <QWindow>
 
 #include <fcntl.h>
+#include <linux/input.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -266,7 +268,7 @@ public:
     // its own instead of first stretching it into a tile.
     setFixedSize(frame);
     setAttribute(Qt::WA_AlwaysShowToolTips, true);
-    dragWatchTimer_.setInterval(300);
+    dragWatchTimer_.setInterval(80);
     connect(&dragWatchTimer_, &QTimer::timeout, this,
             [this] { observeDrag(); });
   }
@@ -386,15 +388,17 @@ protected:
     dragStablePolls_ = 0;
     spreadActive_ = false;
     snapSpot_ = {};
+    openButtonWatch();
     dragWatchTimer_.start();
   }
 
   void observeDrag() {
     const QRect rect = ownCompositorRect();
     ++dragPolls_;
-    const bool clickTimeout = !dragMoved_ && dragPolls_ >= 10;
-    if (rect.isNull() || clickTimeout || dragPolls_ >= 200) {
+    const bool clickTimeout = !dragMoved_ && dragPolls_ >= 12;
+    if (rect.isNull() || clickTimeout || dragPolls_ >= 750) {
       dragWatchTimer_.stop();
+      closeButtonWatch();
       if (spreadActive_)
         compactPinColumn(desktop_, windowTitle());
       spreadActive_ = false;
@@ -403,16 +407,92 @@ protected:
     dragMoved_ = dragMoved_ || rect != dragStartRect_;
     if (dragMoved_)
       previewInsertion(rect);
-    dragStablePolls_ = dragMoved_ && rect == dragPreviousRect_
-                           ? dragStablePolls_ + 1
-                           : 0;
+    const bool still = rect == dragPreviousRect_;
+    dragStablePolls_ = dragMoved_ && still ? dragStablePolls_ + 1 : 0;
     dragPreviousRect_ = rect;
-    if (dragMoved_ && dragStablePolls_ >= 3)
+    // The release normally arrives from the input device watch or as a
+    // pointer event; this long stillness fallback only catches a session
+    // where neither could be established.
+    if (dragMoved_ && dragStablePolls_ >= 25)
       finishDrag();
+  }
+
+  // The kernel pushes the button release the instant it happens, no matter
+  // whether the pointer ever moves again; the compositor tells this window
+  // nothing until it does. Best effort: without permission to read the
+  // devices, the pointer-event and stillness paths still finish the drag.
+  void openButtonWatch() {
+    closeButtonWatch();
+    QDir devices(QStringLiteral("/dev/input/by-id"));
+    const QStringList entries =
+        devices.entryList({QStringLiteral("*-event-mouse")},
+                          QDir::System | QDir::Files | QDir::NoDotAndDotDot);
+    for (const QString &entry : entries) {
+      const int fd =
+          ::open(QFile::encodeName(devices.filePath(entry)).constData(),
+                 O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+      if (fd < 0)
+        continue;
+      auto *notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
+      connect(notifier, &QSocketNotifier::activated, this,
+              [this, fd] { readButtonEvents(fd); });
+      buttonWatches_.push_back({fd, notifier});
+    }
+  }
+
+  void readButtonEvents(int fd) {
+    struct input_event events[16];
+    for (;;) {
+      const ssize_t bytes = ::read(fd, events, sizeof events);
+      if (bytes <= 0)
+        return;
+      const int count = static_cast<int>(bytes / sizeof(input_event));
+      for (int index = 0; index < count; ++index) {
+        if (events[index].type != EV_KEY || events[index].code != BTN_LEFT ||
+            events[index].value != 0 || !dragWatchTimer_.isActive())
+          continue;
+        const QRect rect = ownCompositorRect();
+        dragMoved_ =
+            dragMoved_ || (!rect.isNull() && rect != dragStartRect_);
+        if (dragMoved_)
+          finishDrag();
+        else
+          dragWatchTimer_.stop();
+        closeButtonWatch();
+        return;
+      }
+    }
+  }
+
+  void closeButtonWatch() {
+    for (const auto &[fd, notifier] : buttonWatches_) {
+      delete notifier;
+      ::close(fd);
+    }
+    buttonWatches_.clear();
+  }
+
+  // The compositor's move grab starves this window of pointer events, so
+  // the first enter or hover after the grab began is the release itself,
+  // and the snap can happen right then instead of waiting for a poll.
+  // Holding the pin still mid-drag stays a drag for as long as the button
+  // is down.
+  void pointerWokeDuringWatch() {
+    if (!dragWatchTimer_.isActive())
+      return;
+    const QRect rect = ownCompositorRect();
+    dragMoved_ = dragMoved_ || (!rect.isNull() && rect != dragStartRect_);
+    if (!dragMoved_) {
+      // A click, not a drag: nothing moved, nothing to restore.
+      dragWatchTimer_.stop();
+      return;
+    }
+    finishDrag();
   }
 
   void finishDrag() {
     dragWatchTimer_.stop();
+    closeButtonWatch();
     // One last look at the true final position; the last poll can be a
     // frame behind it.
     const QRect rect = ownCompositorRect();
@@ -425,8 +505,6 @@ protected:
     spreadActive_ = false;
   }
 
-  // While the drag hovers the column, the others step aside around a hole
-  // where this pin would land, live; leaving the column packs them back.
   // While the drag hovers the column, the others step aside around a hole
   // where this pin would land, live; leaving the column packs them back.
   void previewInsertion(const QRect &rect) {
@@ -467,7 +545,6 @@ protected:
     snapSpot_ = plan.spot;
   }
 
-
   [[nodiscard]] QRect ownCompositorRect() const {
     for (const CompositorPin &pin : compositorPinRects(desktop_)) {
       if (pin.title == windowTitle())
@@ -487,6 +564,7 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
+    pointerWokeDuringWatch();
     const QPointF position = event->position();
     setCursor(controlRectAt(position) >= 0 ? Qt::PointingHandCursor
                                            : Qt::ArrowCursor);
@@ -566,6 +644,7 @@ protected:
   }
 
   void enterEvent(QEnterEvent *) override {
+    pointerWokeDuringWatch();
     hovered_ = true;
     hoveredControl_ = -1;
     update();
@@ -627,6 +706,7 @@ private:
   QRect dragPreviousRect_;
   QSize dragScreen_;
   QHash<QString, QPoint> commandedTargets_;
+  QVector<QPair<int, QSocketNotifier *>> buttonWatches_;
   QRect snapSpot_;
   bool spreadActive_ = false;
   bool dragMoved_ = false;

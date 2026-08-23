@@ -8,17 +8,17 @@
 #include <QString>
 #include <QVector>
 
+/// The frame a pin fills: the display's aspect at a fixed width, clamped
+/// so a tall pivot or an ultrawide still yields a pin rather than a line;
+/// 16:9 when the display cannot be asked.
+[[nodiscard]] QSize pinFrameSize(const QSize &screenSize);
+
 /// Where a frame of `frame` size lands so it covers none of `blockers`:
 /// snug in the bottom-right corner, or one gap above whatever occupies it,
 /// climbing the column and starting a new column to the left when this one
 /// is full. Blockers can be any size; the pin packs against what is
 /// actually there rather than onto a grid that wastes a slot for every
 /// straddled boundary.
-/// The frame a pin fills: the display's aspect at a fixed width, clamped
-/// so a tall pivot or an ultrawide still yields a pin rather than a line;
-/// 16:9 when the display cannot be asked.
-[[nodiscard]] QSize pinFrameSize(const QSize &screenSize);
-
 [[nodiscard]] QPoint pinPackedPosition(const QVector<QRect> &blockers,
                                        const QSize &screenSize,
                                        const QSize &frame, int gap,
