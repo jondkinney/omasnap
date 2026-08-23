@@ -1,49 +1,78 @@
-/** @fileoverview Tests stacked pin slots and drag clamping. */
+/** @fileoverview Tests stacked pin slots and compositor dispatch strings. */
 #include "pin-layout-smoke.hpp"
 
 #include "pin-layout.hpp"
 
 bool runPinLayoutSmoke(QString &error) {
-  const QPoint firstDrag = pinPositionFromGlobalPointer(
-      QPoint(446, 306), QPoint(100, 50), QPoint(50, 40));
-  const QPoint secondDrag = pinPositionFromGlobalPointer(
-      QPoint(456, 316), QPoint(100, 50), QPoint(50, 40));
-  if (firstDrag != QPoint(296, 216) || secondDrag != QPoint(306, 226)) {
-    error = QStringLiteral("Pin drag did not follow the global pointer");
-    return false;
-  }
-
   const QSize screen(400, 300);
   const QSize pin(100, 80);
-  const QPoint first = pinSlotPosition(screen, pin, pin, 0, 10, 14);
-  const QPoint second = pinSlotPosition(screen, pin, pin, 1, 10, 14);
-  const QPoint third = pinSlotPosition(screen, pin, pin, 2, 10, 14);
-  const QPoint wrapped = pinSlotPosition(screen, pin, pin, 3, 10, 14);
-  if (first != QPoint(286, 206) || second != QPoint(286, 116) ||
-      third != QPoint(286, 26) || wrapped != QPoint(176, 206)) {
-    error = QStringLiteral("Pinned slots did not stack and wrap correctly");
+
+  // An empty corner takes the first pin snug against the margins; the next
+  // ones pack one gap above whatever is there, whatever its size, and a
+  // full column starts a new one to the left.
+  const QPoint first = pinPackedPosition({}, screen, pin, 10, 14);
+  if (first != QPoint(286, 206)) {
+    error = QStringLiteral("The first pin did not land in the corner");
+    return false;
+  }
+  const QPoint second =
+      pinPackedPosition({QRect(first, pin)}, screen, pin, 10, 14);
+  if (second != QPoint(286, 116)) {
+    error = QStringLiteral("The second pin did not pack above the first");
+    return false;
+  }
+  const QRect oddSize(QPoint(280, 150), QSize(110, 130));
+  if (pinPackedPosition({oddSize}, screen, pin, 10, 14) != QPoint(286, 60)) {
+    error = QStringLiteral("An odd-sized pin was not packed above snugly");
+    return false;
+  }
+  const QVector<QRect> fullColumn{QRect(286, 206, 100, 80),
+                                  QRect(286, 116, 100, 80),
+                                  QRect(286, 26, 100, 80)};
+  if (pinPackedPosition(fullColumn, screen, pin, 10, 14) !=
+      QPoint(176, 206)) {
+    error = QStringLiteral("A full column did not wrap to a new one");
+    return false;
+  }
+  const QRect elsewhere(QPoint(20, 20), QSize(100, 80));
+  if (pinPackedPosition({elsewhere}, screen, pin, 10, 14) !=
+      QPoint(286, 206)) {
+    error = QStringLiteral("A pin away from the column blocked the corner");
     return false;
   }
 
-  const QSize cell(120, 90);
-  const QRect large(pinSlotPosition(screen, QSize(120, 90), cell, 0, 10, 14),
-                    QSize(120, 90));
-  const QRect small(pinSlotPosition(screen, QSize(60, 40), cell, 1, 10, 14),
-                    QSize(60, 40));
-  if (large.intersects(small)) {
-    error = QStringLiteral("Different pin sizes overlapped their layout slots");
+  // Column membership is hugging the right edge; dragging a pin away from
+  // it takes the pin out of the column, whatever its height.
+  if (!pinInColumn(QRect(286, 26, 100, 80), screen, 14) ||
+      !pinInColumn(QRect(282, 140, 104, 120), screen, 14) ||
+      pinInColumn(QRect(200, 26, 100, 80), screen, 14)) {
+    error = QStringLiteral("Column membership did not follow the right edge");
     return false;
   }
 
-  const QRect bounds(QPoint(10, 20), QSize(400, 300));
-  if (clampPinGeometry(QRect(380, 290, 100, 80), bounds) !=
-      QRect(310, 240, 100, 80)) {
-    error = QStringLiteral("Pinned geometry was not clamped to the screen");
+  // The dispatch expressions are Lua for a Lua-configured Hyprland and the
+  // classic criteria grammar for sway; a placement that silently does
+  // nothing is exactly the failure these guard.
+  const QString title = QStringLiteral("omasnap-pin 1234");
+  if (pinFloatDispatch(title) !=
+          QStringLiteral(
+              "hl.dsp.window.float({ window = \"title:^(omasnap-pin 1234)$\" })") ||
+      pinPinDispatch(title) !=
+          QStringLiteral(
+              "hl.dsp.window.pin({ window = \"title:^(omasnap-pin 1234)$\" })") ||
+      pinMoveDispatch(title, 120, 40) !=
+          QStringLiteral("hl.dsp.window.move({ x = 120, y = 40, relative = "
+                         "false, window = \"title:^(omasnap-pin 1234)$\" })")) {
+    error = QStringLiteral("Hyprland dispatch expressions were malformed");
     return false;
   }
-  if (clampPinGeometry(QRect(-20, 0, 100, 80), bounds) !=
-      QRect(10, 20, 100, 80)) {
-    error = QStringLiteral("Pinned geometry did not clamp at top-left");
+  if (pinSwayArrangeCommand(title, 120, 40) !=
+          QStringLiteral("[title=\"^omasnap-pin 1234$\"] floating enable, "
+                         "sticky enable, move absolute position 120 40") ||
+      pinSwayMoveCommand(title, 120, 40) !=
+          QStringLiteral(
+              "[title=\"^omasnap-pin 1234$\"] move absolute position 120 40")) {
+    error = QStringLiteral("Sway commands were malformed");
     return false;
   }
   return true;
