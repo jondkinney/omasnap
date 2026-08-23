@@ -24,6 +24,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTimer>
+#include <QToolTip>
 
 #include <QUrl>
 #include <QWheelEvent>
@@ -262,6 +263,7 @@ public:
     // honors when floating, and Hyprland floats an unresizable window on
     // its own instead of first stretching it into a tile.
     setFixedSize(frame);
+    setAttribute(Qt::WA_AlwaysShowToolTips, true);
     dragWatchTimer_.setInterval(300);
     connect(&dragWatchTimer_, &QTimer::timeout, this,
             [this] { observeDrag(); });
@@ -429,6 +431,25 @@ protected:
       update();
     }
   }
+
+  // The window is an ordinary toplevel now, so the app's own tooltip can
+  // appear at the cursor instead of a pill painted in one corner. Anchored
+  // to the control's rect so it stays up while the cursor is inside it.
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::ToolTip) {
+      auto *help = static_cast<QHelpEvent *>(event);
+      const int control = controlRectAt(help->pos());
+      if (control >= 0) {
+        QToolTip::showText(help->globalPos(), pinControlTip(control), this,
+                           controlRect(control).toAlignedRect());
+      } else {
+        QToolTip::hideText();
+      }
+      return true;
+    }
+    return QWidget::event(event);
+  }
+
 
   // A layer surface can still initiate a Wayland uri-list drag just like a
   // file manager; the six-dot control is the drag handle.

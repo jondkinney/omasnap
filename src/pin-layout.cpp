@@ -85,3 +85,20 @@ QString pinSwayMoveCommand(const QString &title, int x, int y) {
       .arg(x)
       .arg(y);
 }
+
+QString pinControlTip(int index) {
+  switch (index) {
+  case 0:
+    return QStringLiteral("Close · Esc or middle-click");
+  case 1:
+    return QStringLiteral("Copy image to clipboard");
+  case 2:
+    return QStringLiteral("Copy file path");
+  case 3:
+    return QStringLiteral("Edit in omasnap");
+  case 4:
+    return QStringLiteral("Drag this image out");
+  default:
+    return {};
+  }
+}

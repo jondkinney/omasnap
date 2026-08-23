@@ -3,6 +3,8 @@
 
 #include "pin-layout.hpp"
 
+#include <QSet>
+
 bool runPinLayoutSmoke(QString &error) {
   // The frame follows the display's shape at a fixed width, clamps the
   // extremes, and guesses 16:9 when the display cannot be asked.
@@ -13,6 +15,21 @@ bool runPinLayoutSmoke(QString &error) {
       pinFrameSize(QSize(5000, 500)) != QSize(200, 50) ||
       pinFrameSize(QSize()) != QSize(200, 113)) {
     error = QStringLiteral("Pin frames did not follow the display's shape");
+    return false;
+  }
+
+  // Every control explains itself; an index outside the controls is empty.
+  QSet<QString> tips;
+  for (int control = 0; control < 5; ++control) {
+    if (pinControlTip(control).isEmpty()) {
+      error = QStringLiteral("A pin control has no tooltip");
+      return false;
+    }
+    tips.insert(pinControlTip(control));
+  }
+  if (tips.size() != 5 || !pinControlTip(5).isEmpty() ||
+      !pinControlTip(-1).isEmpty()) {
+    error = QStringLiteral("Pin control tooltips repeat or overflow");
     return false;
   }
 
