@@ -37,3 +37,6 @@
 [[nodiscard]] QString pinMoveDispatch(const QString &title, int x, int y);
 [[nodiscard]] QString pinSwayArrangeCommand(const QString &title, int x, int y);
 [[nodiscard]] QString pinSwayMoveCommand(const QString &title, int x, int y);
+
+/** The hover tip for a pin control, empty outside the known controls. */
+[[nodiscard]] QString pinControlTip(int index);
