@@ -79,6 +79,98 @@ bool runPinLayoutSmoke(QString &error) {
     return false;
   }
 
+  // Dragging a pin over the column spreads the others around a hole where
+  // it would land; covering half the hole or more is close enough to snap.
+  const QVector<QPair<QString, QRect>> column{
+      {QStringLiteral("low"), QRect(286, 206, 100, 80)},
+      {QStringLiteral("high"), QRect(286, 116, 100, 80)}};
+  const PinInsertionPlan between = pinInsertionPlan(
+      column, {}, QRect(286, 140, 100, 80), screen, 10, 14);
+  if (between.index != 1 || between.spot != QRect(286, 116, 100, 80) ||
+      between.spread.size() != 2 ||
+      between.spread.at(0) !=
+          QPair(QStringLiteral("low"), QRect(286, 206, 100, 80)) ||
+      between.spread.at(1) !=
+          QPair(QStringLiteral("high"), QRect(286, 26, 100, 80))) {
+    error = QStringLiteral("Hovering between pins did not open a hole there");
+    return false;
+  }
+  // Any overlap with the stack joins it, however slight; a drag that
+  // clears the stack entirely, even right beside it, stays out.
+  const PinInsertionPlan grazing = pinInsertionPlan(
+      column, {}, QRect(200, 140, 100, 80), screen, 10, 14);
+  if (grazing.index != 1) {
+    error = QStringLiteral("A partial overlap with the stack did not join it");
+    return false;
+  }
+  if (pinInsertionPlan(column, {}, QRect(120, 140, 100, 80), screen, 10, 14)
+          .index != -1) {
+    error = QStringLiteral("A drag clear of the stack joined it anyway");
+    return false;
+  }
+  const QVector<QPair<QString, QRect>> emptyColumn;
+  if (pinInsertionPlan(emptyColumn, {}, QRect(240, 180, 100, 80), screen, 10,
+                       14)
+          .index != 0 ||
+      pinInsertionPlan(emptyColumn, {}, QRect(60, 60, 100, 80), screen, 10,
+                       14)
+          .index != -1) {
+    error = QStringLiteral("An empty stack's corner spot did not gate joining");
+    return false;
+  }
+  // A pin nudged off the top of the stack still overlaps the spot it came
+  // from and snaps back there; dragged fully past it, it is free.
+  const PinInsertionPlan nudged = pinInsertionPlan(
+      column, {}, QRect(250, 10, 100, 80), screen, 10, 14);
+  if (nudged.index != 2 || nudged.spot != QRect(286, 26, 100, 80)) {
+    error = QStringLiteral("A nudged top pin did not snap back to its seat");
+    return false;
+  }
+  if (pinInsertionPlan(column, {}, QRect(150, 20, 100, 80), screen, 10, 14)
+          .index != -1) {
+    error = QStringLiteral("A pin dragged past its seat was still captured");
+    return false;
+  }
+  // A stack that has not packed down yet is still the stack the user sees:
+  // overlapping a pin's live position joins even when the packed baseline
+  // is elsewhere.
+  const QVector<QPair<QString, QRect>> floating{
+      {QStringLiteral("high"), QRect(286, 40, 100, 80)}};
+  if (pinInsertionPlan(floating, {}, QRect(240, 20, 100, 80), screen, 10, 14)
+          .index == -1) {
+    error = QStringLiteral("Overlapping a live pin did not join the stack");
+    return false;
+  }
+  // The band spans the vacancies too: with one pin floating high on a
+  // tall screen, a drag into the empty stretch between it and the bottom
+  // seats still folds in; beside the band it stays out.
+  const QSize tall(400, 600);
+  const QVector<QPair<QString, QRect>> lofty{
+      {QStringLiteral("high"), QRect(286, 30, 100, 80)}};
+  if (pinInsertionPlan(lofty, {}, QRect(240, 200, 100, 80), tall, 10, 14)
+          .index == -1) {
+    error = QStringLiteral("A drag into the column's vacancy stayed out");
+    return false;
+  }
+  if (pinInsertionPlan(lofty, {}, QRect(100, 200, 100, 80), tall, 10, 14)
+          .index != -1) {
+    error = QStringLiteral("A drag beside the column folded in");
+    return false;
+  }
+  const PinInsertionPlan below = pinInsertionPlan(
+      column, {}, QRect(286, 216, 100, 80), screen, 10, 14);
+  if (below.index != 0 || below.spot != QRect(286, 206, 100, 80) ||
+      below.spread.at(0) !=
+          QPair(QStringLiteral("low"), QRect(286, 116, 100, 80))) {
+    error = QStringLiteral("Hovering the corner did not open the bottom slot");
+    return false;
+  }
+  if (pinInsertionPlan(column, {}, QRect(60, 140, 100, 80), screen, 10, 14)
+          .index != -1) {
+    error = QStringLiteral("A drag far from the column planned an insertion");
+    return false;
+  }
+
   // The dispatch expressions are Lua for a Lua-configured Hyprland and the
   // classic criteria grammar for sway; a placement that silently does
   // nothing is exactly the failure these guard.

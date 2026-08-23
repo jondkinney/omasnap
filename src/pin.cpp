@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QEnterEvent>
 #include <QFontMetrics>
+#include <QHash>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMimeData>
@@ -35,6 +36,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <climits>
 #include <memory>
 #include <utility>
 
@@ -376,10 +378,14 @@ protected:
     dragStartRect_ = ownCompositorRect();
     if (dragStartRect_.isNull())
       return;
+    dragScreen_ = compositorScreenSize(desktop_);
     dragPreviousRect_ = {};
+    commandedTargets_.clear();
     dragMoved_ = false;
     dragPolls_ = 0;
     dragStablePolls_ = 0;
+    spreadActive_ = false;
+    snapSpot_ = {};
     dragWatchTimer_.start();
   }
 
@@ -389,18 +395,78 @@ protected:
     const bool clickTimeout = !dragMoved_ && dragPolls_ >= 10;
     if (rect.isNull() || clickTimeout || dragPolls_ >= 200) {
       dragWatchTimer_.stop();
+      if (spreadActive_)
+        compactPinColumn(desktop_, windowTitle());
+      spreadActive_ = false;
       return;
     }
     dragMoved_ = dragMoved_ || rect != dragStartRect_;
+    if (dragMoved_)
+      previewInsertion(rect);
     dragStablePolls_ = dragMoved_ && rect == dragPreviousRect_
                            ? dragStablePolls_ + 1
                            : 0;
     dragPreviousRect_ = rect;
-    if (dragStablePolls_ >= 3) {
-      dragWatchTimer_.stop();
-      compactPinColumn(desktop_, QString());
-    }
+    if (dragMoved_ && dragStablePolls_ >= 3)
+      finishDrag();
   }
+
+  void finishDrag() {
+    dragWatchTimer_.stop();
+    // One last look at the true final position; the last poll can be a
+    // frame behind it.
+    const QRect rect = ownCompositorRect();
+    if (!rect.isNull())
+      previewInsertion(rect);
+    if (!snapSpot_.isNull())
+      movePin(desktop_, windowTitle(), snapSpot_.topLeft());
+    else
+      compactPinColumn(desktop_, QString());
+    spreadActive_ = false;
+  }
+
+  // While the drag hovers the column, the others step aside around a hole
+  // where this pin would land, live; leaving the column packs them back.
+  // While the drag hovers the column, the others step aside around a hole
+  // where this pin would land, live; leaving the column packs them back.
+  void previewInsertion(const QRect &rect) {
+    if (dragScreen_.isEmpty())
+      return;
+    QVector<QPair<QString, QRect>> column;
+    QVector<QRect> blockers;
+    for (const CompositorPin &pin : compositorPinRects(desktop_)) {
+      if (pin.title == windowTitle())
+        continue;
+      if (pinInColumn(pin.rect, dragScreen_, qRound(kCornerMargin)))
+        column.push_back({pin.title, pin.rect});
+      else
+        blockers.push_back(pin.rect);
+    }
+    const PinInsertionPlan plan = pinInsertionPlan(
+        column, blockers, rect, dragScreen_, kPinGap, qRound(kCornerMargin));
+    if (plan.index < 0) {
+      if (spreadActive_)
+        compactPinColumn(desktop_, windowTitle());
+      spreadActive_ = false;
+      snapSpot_ = {};
+      commandedTargets_.clear();
+      return;
+    }
+    // Dispatch each move once, against what was last commanded rather than
+    // the live rect: a pin mid-animation is never at its target yet, and
+    // re-sending the same move every poll restarts the animation, which
+    // reads as flicker. One command per new target lets the slide play out.
+    for (const auto &[title, target] : plan.spread) {
+      if (commandedTargets_.value(title, QPoint(INT_MIN, INT_MIN)) !=
+          target.topLeft()) {
+        movePin(desktop_, title, target.topLeft());
+        commandedTargets_.insert(title, target.topLeft());
+      }
+    }
+    spreadActive_ = true;
+    snapSpot_ = plan.spot;
+  }
+
 
   [[nodiscard]] QRect ownCompositorRect() const {
     for (const CompositorPin &pin : compositorPinRects(desktop_)) {
@@ -559,6 +625,10 @@ private:
   QTimer dragWatchTimer_;
   QRect dragStartRect_;
   QRect dragPreviousRect_;
+  QSize dragScreen_;
+  QHash<QString, QPoint> commandedTargets_;
+  QRect snapSpot_;
+  bool spreadActive_ = false;
   bool dragMoved_ = false;
   int dragPolls_ = 0;
   int dragStablePolls_ = 0;
