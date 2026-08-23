@@ -40,6 +40,80 @@ QPoint pinPackedPosition(const QVector<QRect> &blockers,
           screenSize.height() - margin - frame.height()};
 }
 
+PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
+                                  const QVector<QRect> &blockers,
+                                  const QRect &dragged,
+                                  const QSize &screenSize, int gap,
+                                  int margin) {
+  PinInsertionPlan plan;
+  std::sort(column.begin(), column.end(),
+            [](const auto &a, const auto &b) {
+              return a.second.y() > b.second.y();
+            });
+  // The dragged pin's place in the order comes from its center against the
+  // column as it would pack, not against the possibly already-spread live
+  // positions, so the preview does not chase its own moves.
+  QVector<QRect> seed = blockers;
+  QVector<QRect> packed;
+  QVector<int> packedCenters;
+  for (const auto &pair : column) {
+    const QPoint at =
+        pinPackedPosition(seed, screenSize, pair.second.size(), gap, margin);
+    seed.push_back(QRect(at, pair.second.size()));
+    packed.push_back(QRect(at, pair.second.size()));
+    packedCenters.push_back(at.y() + pair.second.height() / 2);
+  }
+  // Touching any part of the stack joins it; fully outside stays out. The
+  // stack includes the open spot on top, which is where a pin dragged off
+  // the top of the stack came from: it snaps back until it has been
+  // dragged fully past where it would sit. For an empty column that spot
+  // is the corner itself.
+  QVector<QRect> stack = packed;
+  stack.push_back(
+      QRect(pinPackedPosition(seed, screenSize, dragged.size(), gap, margin),
+            dragged.size()));
+  // The pins' live positions count too: a stack that has not packed down
+  // yet is still the stack the user sees and aims for.
+  for (const auto &pair : column)
+    stack.push_back(pair.second);
+  // The region a drag folds back into is the whole column band: the
+  // bounding box of every pin and seat, which always reaches the bottom
+  // corner because packing anchors there. Anywhere inside it is where some
+  // pin would live, not just the dragged pin's own former spot; only fully
+  // outside it stays out.
+  QRect band;
+  for (const QRect &rect : stack)
+    band |= rect;
+  if (!dragged.intersects(band))
+    return plan;
+  int index = 0;
+  for (const int centerY : packedCenters)
+    index += centerY > dragged.center().y() ? 1 : 0;
+  plan.index = index;
+
+  // Pack again with a dragged-sized hole at the insertion point.
+  seed = blockers;
+  for (int position = 0; position < column.size(); ++position) {
+    if (position == index) {
+      const QPoint at =
+          pinPackedPosition(seed, screenSize, dragged.size(), gap, margin);
+      plan.spot = QRect(at, dragged.size());
+      seed.push_back(plan.spot);
+    }
+    const auto &pair = column.at(position);
+    const QPoint at =
+        pinPackedPosition(seed, screenSize, pair.second.size(), gap, margin);
+    seed.push_back(QRect(at, pair.second.size()));
+    plan.spread.push_back({pair.first, QRect(at, pair.second.size())});
+  }
+  if (index == column.size()) {
+    const QPoint at =
+        pinPackedPosition(seed, screenSize, dragged.size(), gap, margin);
+    plan.spot = QRect(at, dragged.size());
+  }
+  return plan;
+}
+
 bool pinInColumn(const QRect &rect, const QSize &screenSize, int margin) {
   constexpr int tolerance = 6;
   return std::abs(rect.right() + 1 - (screenSize.width() - margin)) <=

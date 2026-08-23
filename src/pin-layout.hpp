@@ -24,6 +24,22 @@
                                        const QSize &frame, int gap,
                                        int margin);
 
+/// What inserting a dragged pin into the column would look like right now.
+/// `index` is -1 while the drag touches no part of the stack; any overlap
+/// with a stacked pin (or with the empty corner spot) is enough to join,
+/// and fully outside is what keeps a pin out. While joined, the column
+/// pins in `spread` step aside around a dragged-sized hole at `spot`, and
+/// releasing snaps the pin into it.
+struct PinInsertionPlan {
+  int index = -1;
+  QRect spot;
+  QVector<QPair<QString, QRect>> spread;
+};
+[[nodiscard]] PinInsertionPlan
+pinInsertionPlan(QVector<QPair<QString, QRect>> column,
+                 const QVector<QRect> &blockers, const QRect &dragged,
+                 const QSize &screenSize, int gap, int margin);
+
 /// Whether a pin still hugs the right edge column; dragging one away from
 /// the edge takes it out of the column, and compaction leaves it alone.
 [[nodiscard]] bool pinInColumn(const QRect &rect, const QSize &screenSize,
