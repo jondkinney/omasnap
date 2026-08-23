@@ -39,8 +39,8 @@
 
 namespace {
 
-constexpr qreal kCloseButtonSize = 22;
-constexpr qreal kCloseButtonInset = 8;
+constexpr qreal kCloseButtonSize = 18;
+constexpr qreal kCloseButtonInset = 7;
 constexpr qreal kControlGap = 6;
 constexpr qreal kDragButtonWidth = kCloseButtonSize * 2 + kControlGap;
 constexpr qreal kCornerMargin = 14;
@@ -253,7 +253,7 @@ void compactPinColumn(Desktop desktop, const QString &excludedTitle) {
 
 class PinWindow final : public QWidget {
 public:
-  explicit PinWindow(QImage image, QString path)
+  explicit PinWindow(QImage image, QString path, const QSize &frame)
       : image_(std::move(image)), path_(std::move(path)), snapshotFile_(path_),
         desktop_(detectDesktop()) {
     setWindowTitle(pinTitle());
@@ -261,7 +261,7 @@ public:
     // Fixed, not merely sized: min equal to max is the hint a compositor
     // honors when floating, and Hyprland floats an unresizable window on
     // its own instead of first stretching it into a tile.
-    setFixedSize(QSize(250, 200));
+    setFixedSize(frame);
     dragWatchTimer_.setInterval(300);
     connect(&dragWatchTimer_, &QTimer::timeout, this,
             [this] { observeDrag(); });
@@ -556,7 +556,8 @@ int runPinnedCapture(const QString &path) {
   }
 
   const Desktop desktop = detectDesktop();
-  PinWindow window(std::move(image), path);
+  PinWindow window(std::move(image), path,
+                   pinFrameSize(compositorScreenSize(desktop)));
   if (!window.hasPinLock()) {
     qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;
