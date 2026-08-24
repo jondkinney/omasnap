@@ -31,7 +31,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
-#include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollBar>
@@ -50,11 +49,14 @@
 
 /// The inline text editor: a multiline editor whose native caret is hidden (the
 /// editor paints a shorter one over Neucha's tall line box) and whose caret
-/// rectangle is exposed for that.
+/// rectangle is exposed for that. The caret is hidden through cursorWidth
+/// because QPlainTextEdit never consults PM_TextCursorWidth, so a proxy style
+/// zeroing that metric leaves the widget's own caret showing under the
+/// painted one.
 class InlineTextEdit final : public QPlainTextEdit {
 public:
   explicit InlineTextEdit(QWidget *parent) : QPlainTextEdit(parent) {
-    setStyle(&caretlessStyle_);
+    setCursorWidth(0);
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -65,18 +67,6 @@ public:
   }
   using QPlainTextEdit::cursorRect;
   using QPlainTextEdit::setViewportMargins;
-
-private:
-  class CaretlessStyle final : public QProxyStyle {
-  public:
-    int pixelMetric(PixelMetric metric, const QStyleOption *option,
-                    const QWidget *widget) const override {
-      return metric == PM_TextCursorWidth
-                 ? 0
-                 : QProxyStyle::pixelMetric(metric, option, widget);
-    }
-  };
-  CaretlessStyle caretlessStyle_;
 };
 
 namespace {
@@ -5607,7 +5597,10 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       const qreal baseline = cursor.top() + metrics.ascent();
       const qreal top = baseline - metrics.capHeight() * 1.15;
       const qreal bottom = baseline + metrics.descent() * 0.35;
-      painter.setPen(QPen(textColor_, std::max(1.0, box.height() / 18.0)));
+      // Scale the pen to one line, not the widget: the multiline editor grows
+      // taller with every Return, and the caret must not thicken with it.
+      const qreal lineBox = metrics.lineSpacing() + metrics.descent() + 4.0;
+      painter.setPen(QPen(textColor_, std::max(1.0, lineBox / 18.0)));
       painter.drawLine(QPointF(cursor.center().x(), top),
                        QPointF(cursor.center().x(), bottom));
     }
