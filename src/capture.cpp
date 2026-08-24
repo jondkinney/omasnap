@@ -15,8 +15,8 @@
 #include <QJsonValue>
 #include <QLinearGradient>
 #include <QPainter>
-#include <QPointF>
 #include <QPainterPath>
+#include <QPointF>
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QSaveFile>
@@ -24,23 +24,42 @@
 
 #include <QUrl>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <fcntl.h>
+#include <numbers>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 bool loadCaptureFonts() {
-  static const int fontId =
-      QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/Neucha.ttf"));
-  return fontId >= 0;
+  static const std::array<int, 3> fontIds{
+      QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/Neucha.ttf")),
+      QFontDatabase::addApplicationFont(
+          QStringLiteral(":/fonts/JetBrainsMono-Regular.ttf")),
+      QFontDatabase::addApplicationFont(
+          QStringLiteral(":/fonts/InterDisplay-SemiBold.ttf"))};
+  return std::ranges::all_of(fontIds, [](int id) { return id >= 0; });
 }
 
-QFont annotationTextFont(qreal size) {
+QString annotationTextFontName(TextFont textFont) {
+  switch (textFont) {
+  case TextFont::Neucha:
+    return QStringLiteral("Neucha");
+  case TextFont::JetBrainsMono:
+    return QStringLiteral("JetBrains Mono");
+  case TextFont::InterDisplay:
+    return QStringLiteral("Inter Display");
+  }
+  return QStringLiteral("Neucha");
+}
+
+QFont annotationTextFont(qreal size, TextFont textFont) {
   static_cast<void>(loadCaptureFonts());
-  QFont font(QStringLiteral("Neucha"));
-  font.setWeight(QFont::Normal);
+  QFont font(annotationTextFontName(textFont));
+  font.setWeight(textFont == TextFont::InterDisplay ? QFont::DemiBold
+                                                    : QFont::Normal);
   font.setItalic(false);
   font.setPixelSize(qRound(std::max<qreal>(18.0, size * 5.0)));
   return font;
@@ -64,7 +83,8 @@ QStringList annotationTextLines(const Annotation &annotation,
   const qreal wrap = annotationTextWrapWidth(annotation, canvasWidth);
   if (wrap <= 0.0)
     return paragraphs;
-  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  const QFontMetricsF metrics(
+      annotationTextFont(annotation.size, annotation.textFont));
   QStringList lines;
   for (const QString &paragraph : paragraphs) {
     if (metrics.horizontalAdvance(paragraph) <= wrap) {
@@ -102,7 +122,8 @@ QStringList annotationTextLines(const Annotation &annotation,
 
 QRectF annotationTextBounds(const Annotation &annotation,
                            qreal canvasWidth) {
-  const QFontMetricsF metrics(annotationTextFont(annotation.size));
+  const QFontMetricsF metrics(
+      annotationTextFont(annotation.size, annotation.textFont));
   const QStringList lines = annotationTextLines(annotation, canvasWidth);
   qreal widestLine = 0.0;
   for (const QString &line : lines)
@@ -119,6 +140,107 @@ QRectF annotationTextBounds(const Annotation &annotation,
   const qreal pad = std::max<qreal>(4.0, metrics.height() * 0.18);
   const qreal bottom = std::max(pad, metrics.descent() + 2.0);
   return glyphs.adjusted(-pad, -pad, pad, bottom - metrics.descent());
+}
+
+QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
+                         const QVector<Annotation> &annotations) {
+  QRectF canvas(QPointF(), sourceFrameSize);
+  if (canvas.isEmpty())
+    return {};
+
+  const auto pointBounds = [](const QVector<QPointF> &points) {
+    if (points.isEmpty())
+      return QRectF();
+    qreal left = points.constFirst().x();
+    qreal right = left;
+    qreal top = points.constFirst().y();
+    qreal bottom = top;
+    for (const QPointF &point : points) {
+      left = std::min(left, point.x());
+      right = std::max(right, point.x());
+      top = std::min(top, point.y());
+      bottom = std::max(bottom, point.y());
+    }
+    return QRectF(QPointF(left, top), QPointF(right, bottom));
+  };
+  const auto paintedBounds = [&](const Annotation &annotation) {
+    // Redaction only replaces pixels inside the source frame. Its geometry
+    // can extend past that frame, but there are no painted pixels there for a
+    // larger canvas to reveal.
+    if (annotation.kind == Annotation::Kind::Redaction)
+      return QRectF();
+    if (annotation.kind == Annotation::Kind::Text) {
+      qreal extent = 1.0;
+      if (annotation.textBackground == TextBackground::Outline) {
+        const int fontPixels =
+            annotationTextFont(annotation.size, annotation.textFont)
+                .pixelSize();
+        extent += fontPixels * 0.17 / 2.0;
+      }
+      return annotationTextBounds(annotation, sourceFrameSize.width())
+          .adjusted(-extent, -extent, extent, extent);
+    }
+    if (annotation.kind == Annotation::Kind::Marker) {
+      const qreal diameter = std::max<qreal>(24.0, annotation.size * 6.0);
+      const qreal antialias =
+          std::max<qreal>(1.0, annotation.size * 0.35) / 2.0 + 1.0;
+      return QRectF(annotation.start.x() - diameter / 2.0,
+                    annotation.start.y() - diameter / 2.0, diameter, diameter)
+          .adjusted(-antialias, -antialias, antialias, antialias);
+    }
+    if (annotation.kind == Annotation::Kind::Freehand ||
+        annotation.kind == Annotation::Kind::Highlighter) {
+      if (annotation.points.size() < 2)
+        return QRectF();
+      const qreal width =
+          annotation.kind == Annotation::Kind::Highlighter
+              ? std::max<qreal>(6.0, annotation.size * 3.0)
+              : std::max<qreal>(2.0, annotation.size);
+      const qreal extent = width / 2.0 + 1.0;
+      return pointBounds(annotation.points)
+          .adjusted(-extent, -extent, extent, extent);
+    }
+
+    if (annotation.kind == Annotation::Kind::Arrow)
+      return arrowVisualBounds(annotation).adjusted(-1, -1, 1, 1);
+
+    QRectF bounds(annotation.start, annotation.end);
+    bounds = bounds.normalized();
+    qreal extent = 1.0;
+    if (annotation.kind == Annotation::Kind::Line ||
+        ((annotation.kind == Annotation::Kind::Rectangle ||
+          annotation.kind == Annotation::Kind::Ellipse) &&
+         !annotation.filled)) {
+      extent += std::max<qreal>(2.0, annotation.size) / 2.0;
+    } else if (annotation.kind == Annotation::Kind::Spotlight) {
+      extent += std::max<qreal>(1.0, annotation.size / 2.0) / 2.0;
+    }
+    return bounds.adjusted(-extent, -extent, extent, extent);
+  };
+
+  for (const Annotation &annotation : annotations) {
+    const QRectF bounds = paintedBounds(annotation);
+    if (!bounds.isNull())
+      canvas = canvas.united(bounds);
+  }
+
+  // Quantize only newly exposed strips. A fractional crop is itself the
+  // stable source frame; rounding its untouched right/bottom edges would look
+  // like growth and would resample an otherwise exact native-pixel export.
+  const QRectF sourceFrame(QPointF(), sourceFrameSize);
+  const qreal left = canvas.left() < sourceFrame.left()
+                         ? std::floor(canvas.left())
+                         : sourceFrame.left();
+  const qreal top = canvas.top() < sourceFrame.top()
+                        ? std::floor(canvas.top())
+                        : sourceFrame.top();
+  const qreal right = canvas.right() > sourceFrame.right()
+                          ? std::ceil(canvas.right())
+                          : sourceFrame.right();
+  const qreal bottom = canvas.bottom() > sourceFrame.bottom()
+                           ? std::ceil(canvas.bottom())
+                           : sourceFrame.bottom();
+  return {left, top, right - left, bottom - top};
 }
 
 bool ensurePrivateDirectory(const QString &path) {
@@ -330,8 +452,236 @@ QVector<WindowTarget> parseWindows(const QByteArray &json,
   return result;
 }
 
+namespace {
+constexpr std::array<qreal, 6> kArrowLineWidths{1.5, 3.0, 5.0, 7.0, 11.0, 16.0};
+constexpr std::array<qreal, 6> kStandardBodyWidths{5.5,  7.0,  11.5,
+                                                   14.5, 19.5, 29.5};
+constexpr std::array<qreal, 6> kStandardBackWidths{1.5, 2.5, 3.5,
+                                                   4.5, 6.0, 8.5};
+constexpr std::array<qreal, 6> kStandardHeadLengths{15.0, 20.0, 31.5,
+                                                    38.0, 52.0, 78.5};
+constexpr std::array<qreal, 6> kStandardHeadHeights{14.0, 18.5, 29.0,
+                                                    36.0, 49.0, 75.0};
+constexpr std::array<qreal, 6> kPointyBodyWidths{8.0,  10.0, 16.0,
+                                                 20.0, 27.0, 41.0};
+constexpr std::array<qreal, 6> kPointyBackWidths{1.5, 1.5, 1.75, 2.0, 2.5, 3.5};
+constexpr std::array<qreal, 6> kPointyHeadLengths{15.5, 22.0, 34.5,
+                                                  43.0, 59.0, 89.5};
+constexpr std::array<qreal, 6> kPointyHeadHeights{15.5, 22.0, 33.0,
+                                                  41.5, 56.5, 85.5};
+constexpr std::array<qreal, 6> kCurvedHeadSides{9.0,  9.0,  15.0,
+                                                19.0, 26.0, 40.0};
+constexpr std::array<qreal, 6> kCurvedShaftWidths{3.0, 3.0,  6.0,
+                                                  7.5, 11.5, 18.5};
+constexpr qreal kStandardShoulderRatio = 0.05;
+constexpr qreal kPointyWingBackRatio = 0.22;
+constexpr qreal kPointyWingHeightRatio = 0.22;
+constexpr qreal kCurveAmount = 0.25;
+constexpr qreal kOpenHeadHalfAngle = std::numbers::pi_v<qreal> / 4.0;
+
+qreal arrowMetric(qreal lineWidth, const std::array<qreal, 6> &values) {
+  const qreal width = std::max<qreal>(0.01, lineWidth);
+  if (width <= kArrowLineWidths.front())
+    return values.front() * width / kArrowLineWidths.front();
+  if (width >= kArrowLineWidths.back())
+    return values.back() * width / kArrowLineWidths.back();
+  const auto upper =
+      std::upper_bound(kArrowLineWidths.begin(), kArrowLineWidths.end(), width);
+  const auto high =
+      static_cast<std::size_t>(std::distance(kArrowLineWidths.begin(), upper));
+  const auto low = high - 1;
+  const qreal amount = (width - kArrowLineWidths.at(low)) /
+                       (kArrowLineWidths.at(high) - kArrowLineWidths.at(low));
+  return std::lerp(values.at(low), values.at(high), amount);
+}
+
+struct ArrowGeometry {
+  QPainterPath fill;
+  QPainterPath stroke;
+  qreal strokeWidth = 0.0;
+};
+
+QPointF arrowPoint(const QPointF &origin, const QPointF &along,
+                   const QPointF &across, qreal x, qreal y) {
+  return origin + along * x + across * y;
+}
+
+QPointF defaultCurveControl(const Annotation &annotation) {
+  const QPointF chord = annotation.end - annotation.start;
+  return (annotation.start + annotation.end) / 2.0 +
+         QPointF(chord.y(), -chord.x()) * kCurveAmount;
+}
+
+QPointF curveControl(const Annotation &annotation) {
+  return annotation.curveControl.value_or(defaultCurveControl(annotation));
+}
+
+QPointF quadraticPoint(const QPointF &start, const QPointF &control,
+                       const QPointF &end, qreal amount) {
+  const qreal remaining = 1.0 - amount;
+  return start * (remaining * remaining) +
+         control * (2.0 * remaining * amount) + end * (amount * amount);
+}
+
+qreal pointToSegmentDistance(const QPointF &point, const QPointF &start,
+                             const QPointF &end) {
+  const QPointF segment = end - start;
+  const qreal lengthSquared = QPointF::dotProduct(segment, segment);
+  if (lengthSquared <= 0.000001)
+    return QLineF(point, start).length();
+  const qreal amount = std::clamp(
+      QPointF::dotProduct(point - start, segment) / lengthSquared, 0.0, 1.0);
+  return QLineF(point, start + segment * amount).length();
+}
+
+void addOpenArrowHead(QPainterPath &path, const QPointF &tip,
+                      const QPointF &direction, qreal sideLength) {
+  const qreal length = QLineF(QPointF(), direction).length();
+  if (length < 0.001)
+    return;
+  const QPointF along = direction / length;
+  const QPointF across(-along.y(), along.x());
+  const qreal back = sideLength * std::cos(kOpenHeadHalfAngle);
+  const qreal side = sideLength * std::sin(kOpenHeadHalfAngle);
+  const QPointF root = tip - along * back;
+  path.moveTo(root + across * side);
+  path.lineTo(tip);
+  path.lineTo(root - across * side);
+}
+
+ArrowGeometry makeArrowGeometry(const Annotation &annotation,
+                                qreal displayScale = 1.0) {
+  ArrowGeometry geometry;
+  const QPointF chord = annotation.end - annotation.start;
+  const qreal length = QLineF(QPointF(), chord).length();
+  if (length < 1.0)
+    return geometry;
+  const QPointF along = chord / length;
+  const QPointF across(-along.y(), along.x());
+
+  if (annotation.arrowStyle == ArrowStyle::Curved ||
+      annotation.arrowStyle == ArrowStyle::Double) {
+    const QPointF control = curveControl(annotation);
+    geometry.stroke.moveTo(annotation.start);
+    geometry.stroke.quadTo(control, annotation.end);
+    const qreal headSide = arrowMetric(annotation.size, kCurvedHeadSides);
+    addOpenArrowHead(geometry.stroke, annotation.end, annotation.end - control,
+                     headSide);
+    if (annotation.arrowStyle == ArrowStyle::Double)
+      addOpenArrowHead(geometry.stroke, annotation.start,
+                       annotation.start - control, headSide);
+    geometry.strokeWidth = arrowMetric(annotation.size, kCurvedShaftWidths);
+    return geometry;
+  }
+
+  const bool pointy = annotation.arrowStyle == ArrowStyle::Pointy;
+  const qreal bodyWidth = arrowMetric(
+      annotation.size, pointy ? kPointyBodyWidths : kStandardBodyWidths);
+  const qreal naturalBackWidth = arrowMetric(
+      annotation.size, pointy ? kPointyBackWidths : kStandardBackWidths);
+  // Keep the tail at its 1:1 screen width while zoomed out.
+  // The cap keeps an extreme fit from widening it past the body; at and above
+  // 1:1 this is exactly the calibrated natural geometry.
+  const qreal backWidth =
+      std::min(naturalBackWidth /
+                   std::clamp(displayScale, qreal(0.0001), qreal(1.0)),
+               bodyWidth);
+  qreal headLength = arrowMetric(
+      annotation.size, pointy ? kPointyHeadLengths : kStandardHeadLengths);
+  const qreal headHalfHeight =
+      arrowMetric(annotation.size,
+                  pointy ? kPointyHeadHeights : kStandardHeadHeights) /
+      2.0;
+  headLength = std::min(headLength, length * 0.95);
+  const qreal outerX = length - headLength;
+  const qreal innerX =
+      outerX + (pointy ? 0.0 : headLength * kStandardShoulderRatio);
+  const qreal wingX =
+      pointy ? outerX - headLength * kPointyWingBackRatio : outerX;
+  const qreal wingHalfHeight =
+      pointy ? headHalfHeight * (1.0 + kPointyWingHeightRatio) : headHalfHeight;
+  // Standard gets a same-color rounded outline. Inset its body path so the
+  // visible width after that outline matches the calibrated body width.
+  const qreal bodyHalf =
+      std::max<qreal>(0.0, bodyWidth - (pointy ? 0.0 : backWidth)) / 2.0;
+  const qreal backHalf = pointy ? backWidth / 2.0 : 0.0;
+
+  geometry.fill.moveTo(
+      arrowPoint(annotation.start, along, across, 0.0, backHalf));
+  geometry.fill.lineTo(
+      arrowPoint(annotation.start, along, across, innerX, bodyHalf));
+  geometry.fill.lineTo(
+      arrowPoint(annotation.start, along, across, wingX, wingHalfHeight));
+  geometry.fill.lineTo(annotation.end);
+  geometry.fill.lineTo(
+      arrowPoint(annotation.start, along, across, wingX, -wingHalfHeight));
+  geometry.fill.lineTo(
+      arrowPoint(annotation.start, along, across, innerX, -bodyHalf));
+  geometry.fill.lineTo(
+      arrowPoint(annotation.start, along, across, 0.0, -backHalf));
+  geometry.fill.closeSubpath();
+  if (!pointy) {
+    geometry.stroke = geometry.fill;
+    geometry.strokeWidth = backWidth;
+  }
+  return geometry;
+}
+
+QRectF strokedBounds(const QPainterPath &path, qreal width) {
+  if (path.isEmpty())
+    return {};
+  const qreal radius = width / 2.0;
+  return path.boundingRect().adjusted(-radius, -radius, radius, radius);
+}
+} // namespace
+
+QRectF arrowVisualBoundsInternal(const Annotation &annotation,
+                                 qreal displayScale) {
+  const ArrowGeometry geometry = makeArrowGeometry(annotation, displayScale);
+  QRectF bounds = geometry.fill.boundingRect();
+  const QRectF stroke = strokedBounds(geometry.stroke, geometry.strokeWidth);
+  if (bounds.isEmpty())
+    bounds = stroke;
+  else if (!stroke.isEmpty())
+    bounds = bounds.united(stroke);
+  return bounds;
+}
+
+bool arrowContainsPointInternal(const Annotation &annotation,
+                                const QPointF &point, qreal tolerance) {
+  const QPointF chord = annotation.end - annotation.start;
+  if (QPointF::dotProduct(chord, chord) < 1.0)
+    return false;
+
+  const bool pointy = annotation.arrowStyle == ArrowStyle::Pointy;
+  const qreal headLength = arrowMetric(
+      annotation.size, pointy ? kPointyHeadLengths : kStandardHeadLengths);
+  if (annotation.arrowStyle == ArrowStyle::Standard || pointy) {
+    const qreal bodyWidth = arrowMetric(
+        annotation.size, pointy ? kPointyBodyWidths : kStandardBodyWidths);
+    const qreal pick = std::max(bodyWidth, headLength) / 2.0 + tolerance;
+    return pointToSegmentDistance(point, annotation.start, annotation.end) <=
+           pick;
+  }
+
+  const qreal shaftWidth = arrowMetric(annotation.size, kCurvedShaftWidths);
+  const qreal pick = std::max(shaftWidth, headLength) / 2.0 + tolerance;
+  const QPointF control = curveControl(annotation);
+  constexpr int segments = 24;
+  QPointF previous = annotation.start;
+  for (int index = 1; index <= segments; ++index) {
+    const QPointF next = quadraticPoint(annotation.start, control,
+                                        annotation.end,
+                                        qreal(index) / qreal(segments));
+    if (pointToSegmentDistance(point, previous, next) <= pick)
+      return true;
+    previous = next;
+  }
+  return false;
+}
+
 void drawAnnotation(QPainter &painter, const Annotation &annotation,
-                    qreal canvasWidth = 0.0) {
+                    qreal canvasWidth, qreal arrowDisplayScale) {
   // Redactions replace source pixels in renderCapture before ordinary vector
   // annotations are painted. They must never be approximated by a translucent
   // overlay here because that could leave recoverable source data in exports.
@@ -406,22 +756,21 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation,
   }
 
   if (annotation.kind == Annotation::Kind::Arrow) {
-    const QLineF line(annotation.start, annotation.end);
-    if (line.length() < 1.0)
-      return;
-    const qreal angle = std::atan2(line.dy(), line.dx());
-    const qreal headLength = std::max<qreal>(14.0, annotation.size * 4.2);
-    const qreal halfWidth = headLength * 0.46;
-    const QPointF direction(std::cos(angle), std::sin(angle));
-    const QPointF perpendicular(-direction.y(), direction.x());
-    const QPointF base = annotation.end - direction * headLength;
-    const QPointF stemEnd = annotation.end - direction * (headLength * 0.5);
-    painter.drawLine(annotation.start, stemEnd);
-    QPolygonF head;
-    head << annotation.end << base + perpendicular * halfWidth
-         << base - perpendicular * halfWidth;
-    painter.setPen(Qt::NoPen);
-    painter.drawPolygon(head);
+    const ArrowGeometry geometry =
+        makeArrowGeometry(annotation, arrowDisplayScale);
+    painter.save();
+    if (!geometry.fill.isEmpty()) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(annotation.color);
+      painter.drawPath(geometry.fill);
+    }
+    if (!geometry.stroke.isEmpty()) {
+      painter.setPen(QPen(annotation.color, geometry.strokeWidth,
+                          Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawPath(geometry.stroke);
+    }
+    painter.restore();
     return;
   }
 
@@ -445,7 +794,7 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation,
     return;
   }
 
-  const QFont font = annotationTextFont(annotation.size);
+  const QFont font = annotationTextFont(annotation.size, annotation.textFont);
   if (annotation.textBackground == TextBackground::Pill) {
     // A cream pill under the glyphs keeps text readable on any capture or
     // shape beneath it (the default text background).
@@ -636,9 +985,23 @@ QRect pixelSelection(const CaptureData &capture, const QRectF &selection) {
 
 } // namespace
 
+QRectF arrowVisualBounds(const Annotation &annotation, qreal displayScale) {
+  return arrowVisualBoundsInternal(annotation, displayScale);
+}
+
+QPointF arrowCurveHandlePoint(const Annotation &annotation) {
+  return quadraticPoint(annotation.start, curveControl(annotation),
+                        annotation.end, 0.5);
+}
+
+bool arrowContainsPoint(const Annotation &annotation, const QPointF &point,
+                        qreal tolerance) {
+  return arrowContainsPointInternal(annotation, point, tolerance);
+}
+
 void paintAnnotation(QPainter &painter, const Annotation &annotation,
-                     qreal canvasWidth) {
-  drawAnnotation(painter, annotation, canvasWidth);
+                     qreal canvasWidth, qreal arrowDisplayScale) {
+  drawAnnotation(painter, annotation, canvasWidth, arrowDisplayScale);
 }
 
 QPainterPath spotlightPath(const Annotation &annotation) {
@@ -732,9 +1095,12 @@ void paintSpotlights(QPainter &painter, const QImage &source,
 
 void paintDefaultLayer(QPainter &painter, const QImage &redacted,
                        const QRectF &logicalBounds,
-                       const QVector<Annotation> &annotations) {
+                       const QVector<Annotation> &annotations,
+                       qreal textCanvasWidth, qreal arrowDisplayScale) {
   paintSpotlights(painter, redacted, logicalBounds, QRectF(redacted.rect()),
                   annotations);
+  const qreal wrapWidth =
+      textCanvasWidth > 0.0 ? textCanvasWidth : logicalBounds.width();
   // What a capture is annotated *with* goes over what it is annotated *on*:
   // text, then counters, after everything else. A label buried under a
   // rectangle is a label nobody can read, and the number that points at it
@@ -743,7 +1109,7 @@ void paintDefaultLayer(QPainter &painter, const QImage &redacted,
   const auto passOver = [&](bool (*belongs)(Annotation::Kind)) {
     for (const Annotation &annotation : annotations) {
       if (belongs(annotation.kind))
-          paintAnnotation(painter, annotation, logicalBounds.width());
+        paintAnnotation(painter, annotation, wrapWidth, arrowDisplayScale);
     }
   };
   passOver([](Annotation::Kind kind) {
@@ -758,6 +1124,11 @@ void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
                             BackgroundStyle backgroundStyle) {
   if (backgroundStyle == BackgroundStyle::None)
     return;
+  if (backgroundStyle == BackgroundStyle::Slate) {
+    // Slate is the opaque mat; the image shadow is painted separately.
+    painter.fillRect(bounds, QColor(QStringLiteral("#242424")));
+    return;
+  }
 
   struct Blob {
     QPointF center;
@@ -822,6 +1193,33 @@ void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
     gradient.setColorAt(1, edge);
     painter.fillRect(bounds, gradient);
   }
+}
+
+void paintCaptureImageShadow(QPainter &painter, const QRectF &imageRect,
+                             qreal scaleX, qreal scaleY) {
+  const qreal scale = std::max(scaleX, scaleY);
+  painter.save();
+  painter.setPen(Qt::NoPen);
+
+  // Approximate a 40 px key shadow with a 14 px offset and a 12 px ambient
+  // halo. Keep the solid contour rings faint so stacking does not darken the
+  // image edge.
+  for (int layer = 14; layer > 0; --layer) {
+    const qreal spread = layer * scale * (40.0 / 14.0);
+    painter.setBrush(QColor(0, 0, 0, 6));
+    painter.drawRoundedRect(
+        imageRect.adjusted(-spread, -spread + 14 * scaleY, spread,
+                           spread + 14 * scaleY),
+        spread, spread);
+  }
+  for (int layer = 8; layer > 0; --layer) {
+    const qreal spread = layer * scale * (12.0 / 8.0);
+    painter.setBrush(QColor(0, 0, 0, 6));
+    painter.drawRoundedRect(imageRect.adjusted(-spread, -spread, spread,
+                                               spread),
+                            spread, spread);
+  }
+  painter.restore();
 }
 
 bool probeFocusedMonitor(MonitorInfo &monitor, QString &error) {
@@ -891,7 +1289,7 @@ bool captureFocusedMonitor(CaptureData &capture, bool includeWindows,
 
 QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                      const QVector<Annotation> &annotations,
-                     BackgroundStyle backgroundStyle) {
+                     BackgroundStyle backgroundStyle, bool imageShadow) {
   const QRect pixels = pixelSelection(capture, selection);
   if (pixels.isEmpty())
     return {};
@@ -926,7 +1324,74 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   applyRedactions(cropped, annotations, resized ? scaleX : sourceScaleX,
                   resized ? scaleY : sourceScaleY,
                   resized ? QPointF{} : sourceOriginOffset);
-  const bool hasBackground = backgroundStyle != BackgroundStyle::None;
+  const QRectF sourceFrame(QPointF(), selection.size());
+  const QRectF canvas = captureCanvasRect(selection.size(), annotations);
+  const bool canvasGrown = canvas.left() < sourceFrame.left() - 0.001 ||
+                           canvas.top() < sourceFrame.top() - 0.001 ||
+                           canvas.right() > sourceFrame.right() + 0.001 ||
+                           canvas.bottom() > sourceFrame.bottom() + 0.001;
+  const BackgroundStyle effectiveBackground =
+      canvasGrown && backgroundStyle == BackgroundStyle::None
+          ? BackgroundStyle::Slate
+          : backgroundStyle;
+
+  if (canvasGrown) {
+    // The source frame and annotation canvas are intentionally separate.
+    // New strips are rendered from the stable source on every frame instead
+    // of copying an already-expanded raster, so repeated growth cannot leave
+    // seams or drift existing pixels. Integer logical canvas edges make the
+    // settle after a drag deterministic at every display scale.
+    const int growLeft = std::max(
+        0, static_cast<int>(std::ceil(-canvas.left() * scaleX)));
+    const int growTop =
+        std::max(0, static_cast<int>(std::ceil(-canvas.top() * scaleY)));
+    const int growRight = std::max(
+        0, static_cast<int>(std::ceil(
+               (canvas.right() - sourceFrame.right()) * scaleX)));
+    const int growBottom = std::max(
+        0, static_cast<int>(std::ceil(
+               (canvas.bottom() - sourceFrame.bottom()) * scaleY)));
+    QImage output(cropped.width() + growLeft + growRight,
+                  cropped.height() + growTop + growBottom,
+                  QImage::Format_ARGB32_Premultiplied);
+    output.fill(Qt::transparent);
+
+    QPainter painter(&output);
+    painter.setRenderHints(QPainter::Antialiasing |
+                           QPainter::SmoothPixmapTransform |
+                           QPainter::TextAntialiasing);
+    paintCaptureBackground(painter, output.rect(), effectiveBackground);
+    // The extension is one continuous mat. Its shadow belongs only to the
+    // original source card; annotations paint over both in the next pass.
+    const QRectF imageRect(growLeft, growTop, cropped.width(), cropped.height());
+    if (imageShadow)
+      paintCaptureImageShadow(painter, imageRect, scaleX, scaleY);
+    painter.drawImage(imageRect.topLeft(), cropped);
+    painter.end();
+
+    const bool hasSpotlight = std::any_of(
+        annotations.cbegin(), annotations.cend(), [](const Annotation &item) {
+          return item.kind == Annotation::Kind::Spotlight;
+        });
+    // A spotlight samples the fully composed mat. Avoid detaching/copying the
+    // full grown image for the common case where annotations only paint over
+    // it, and never copy an image while a painter is active on that device.
+    const QImage layerSource = hasSpotlight ? output.copy() : cropped;
+    const QRectF layerBounds = hasSpotlight ? canvas : sourceFrame;
+    QPainter layerPainter(&output);
+    layerPainter.setRenderHints(QPainter::Antialiasing |
+                                QPainter::SmoothPixmapTransform |
+                                QPainter::TextAntialiasing);
+    layerPainter.translate(growLeft, growTop);
+    layerPainter.scale(scaleX, scaleY);
+    layerPainter.setClipRect(canvas);
+    paintDefaultLayer(layerPainter, layerSource, layerBounds, annotations,
+                      selection.width());
+    layerPainter.end();
+    return output;
+  }
+
+  const bool hasBackground = effectiveBackground != BackgroundStyle::None;
   const int marginX =
       hasBackground ? static_cast<int>(std::round(64.0 * scaleX)) : 0;
   const int marginY =
@@ -940,23 +1405,10 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                          QPainter::SmoothPixmapTransform |
                          QPainter::TextAntialiasing);
   if (hasBackground) {
-    paintCaptureBackground(painter, output.rect(), backgroundStyle);
+    paintCaptureBackground(painter, output.rect(), effectiveBackground);
     const QRectF imageRect(marginX, marginY, cropped.width(), cropped.height());
-    painter.setPen(Qt::NoPen);
-    for (int layer = 24; layer > 0; --layer) {
-      const qreal spread = layer * std::max(scaleX, scaleY) * 0.85;
-      painter.setBrush(QColor(0, 0, 0, 2 + (24 - layer) / 5));
-      painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 14 * scaleY,
-                                                 spread, spread + 14 * scaleY),
-                              16 * scaleX + spread, 16 * scaleY + spread);
-    }
-    for (int layer = 12; layer > 0; --layer) {
-      const qreal spread = layer * std::max(scaleX, scaleY) * 0.45;
-      painter.setBrush(QColor(0, 0, 0, 3 + (12 - layer)));
-      painter.drawRoundedRect(imageRect.adjusted(-spread, -spread + 8 * scaleY,
-                                                 spread, spread + 8 * scaleY),
-                              14 * scaleX + spread, 14 * scaleY + spread);
-    }
+    if (imageShadow)
+      paintCaptureImageShadow(painter, imageRect, scaleX, scaleY);
     QPainterPath clip;
     clip.addRoundedRect(imageRect, 14 * scaleX, 14 * scaleY);
     painter.save();
@@ -972,7 +1424,7 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   painter.scale(scaleX, scaleY);
   painter.setClipRect(QRectF(QPointF(), selection.size()));
   paintDefaultLayer(painter, cropped, QRectF(QPointF(), selection.size()),
-                    annotations);
+                    annotations, selection.width());
   painter.restore();
   painter.end();
   return output;
@@ -1419,10 +1871,36 @@ bool annotationKindFromName(const QString &name, Annotation::Kind &kind) {
   return true;
 }
 
+QString arrowStyleName(ArrowStyle style) {
+  switch (style) {
+  case ArrowStyle::Standard:
+    return QStringLiteral("standard");
+  case ArrowStyle::Pointy:
+    return QStringLiteral("pointy");
+  case ArrowStyle::Curved:
+    return QStringLiteral("curved");
+  case ArrowStyle::Double:
+    return QStringLiteral("double");
+  }
+  return QStringLiteral("standard");
+}
+
+ArrowStyle arrowStyleFromName(const QString &name) {
+  if (name == QStringLiteral("pointy"))
+    return ArrowStyle::Pointy;
+  if (name == QStringLiteral("curved"))
+    return ArrowStyle::Curved;
+  if (name == QStringLiteral("double"))
+    return ArrowStyle::Double;
+  return ArrowStyle::Standard;
+}
+
 QString backgroundStyleName(BackgroundStyle style) {
   switch (style) {
   case BackgroundStyle::None:
     return QStringLiteral("none");
+  case BackgroundStyle::Slate:
+    return QStringLiteral("slate");
   case BackgroundStyle::Aurora:
     return QStringLiteral("aurora");
   case BackgroundStyle::Sunset:
@@ -1438,6 +1916,8 @@ QString backgroundStyleName(BackgroundStyle style) {
 bool backgroundStyleFromName(const QString &name, BackgroundStyle &style) {
   if (name == QStringLiteral("none"))
     style = BackgroundStyle::None;
+  else if (name == QStringLiteral("slate"))
+    style = BackgroundStyle::Slate;
   else if (name == QStringLiteral("aurora"))
     style = BackgroundStyle::Aurora;
   else if (name == QStringLiteral("sunset"))
@@ -1451,6 +1931,26 @@ bool backgroundStyleFromName(const QString &name, BackgroundStyle &style) {
   return true;
 }
 
+QString textFontStyleName(TextFont textFont) {
+  switch (textFont) {
+  case TextFont::Neucha:
+    return QStringLiteral("neucha");
+  case TextFont::JetBrainsMono:
+    return QStringLiteral("jetbrains-mono");
+  case TextFont::InterDisplay:
+    return QStringLiteral("inter-display");
+  }
+  return QStringLiteral("neucha");
+}
+
+TextFont textFontFromStyleName(const QString &name) {
+  if (name == QStringLiteral("jetbrains-mono"))
+    return TextFont::JetBrainsMono;
+  if (name == QStringLiteral("inter-display"))
+    return TextFont::InterDisplay;
+  return TextFont::Neucha;
+}
+
 QJsonObject annotationToJson(const Annotation &annotation) {
   QJsonObject object;
   object.insert(QStringLiteral("id"), QString::number(annotation.id));
@@ -1460,8 +1960,20 @@ QJsonObject annotationToJson(const Annotation &annotation) {
   object.insert(QStringLiteral("color"),
                 annotation.color.name(QColor::HexArgb));
   object.insert(QStringLiteral("size"), annotation.size);
+  if (annotation.kind == Annotation::Kind::Arrow) {
+    object.insert(QStringLiteral("arrowStyle"),
+                  arrowStyleName(annotation.arrowStyle));
+    if (annotation.curveControl)
+      object.insert(QStringLiteral("curveControl"),
+                    pointArray(*annotation.curveControl));
+  }
   if (!annotation.text.isEmpty())
     object.insert(QStringLiteral("text"), annotation.text);
+  if (annotation.textWidth > 0.0)
+    object.insert(QStringLiteral("textWidth"), annotation.textWidth);
+  if (annotation.kind == Annotation::Kind::Text)
+    object.insert(QStringLiteral("textFont"),
+                  textFontStyleName(annotation.textFont));
   if (annotation.number > 0)
     object.insert(QStringLiteral("number"), annotation.number);
   if (!annotation.points.isEmpty()) {
@@ -1520,7 +2032,18 @@ bool annotationFromJson(const QJsonObject &object, Annotation &annotation,
   annotation.end = pointFromArray(object.value(QStringLiteral("end")));
   annotation.color = QColor(object.value(QStringLiteral("color")).toString());
   annotation.size = object.value(QStringLiteral("size")).toDouble(4.0);
+  annotation.arrowStyle =
+      arrowStyleFromName(object.value(QStringLiteral("arrowStyle")).toString());
+  annotation.curveControl.reset();
+  if (annotation.kind == Annotation::Kind::Arrow &&
+      object.value(QStringLiteral("curveControl")).isArray())
+    annotation.curveControl =
+        pointFromArray(object.value(QStringLiteral("curveControl")));
   annotation.text = object.value(QStringLiteral("text")).toString();
+  annotation.textWidth =
+      object.value(QStringLiteral("textWidth")).toDouble(0.0);
+  annotation.textFont = textFontFromStyleName(
+      object.value(QStringLiteral("textFont")).toString());
   annotation.number = object.value(QStringLiteral("number")).toInt();
   annotation.points.clear();
   for (const QJsonValue point : object.value(QStringLiteral("points")).toArray())
@@ -1571,6 +2094,7 @@ QJsonObject operationToJson(const Operation &operation) {
     object.insert(QStringLiteral("type"), QStringLiteral("background"));
     object.insert(QStringLiteral("style"),
                   backgroundStyleName(operation.background));
+    object.insert(QStringLiteral("shadow"), operation.imageShadow);
     break;
   case Operation::Type::Annotate:
     object.insert(QStringLiteral("type"), QStringLiteral("annotate"));
@@ -1624,6 +2148,7 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
       error = QStringLiteral("Operation log has an unknown background style");
       return false;
     }
+    operation.imageShadow = object.value(QStringLiteral("shadow")).toBool(true);
     return true;
   }
   if (type == QStringLiteral("annotate")) {
