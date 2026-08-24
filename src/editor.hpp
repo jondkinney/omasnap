@@ -145,6 +145,8 @@ public:
     /// that have only one (a text's wrap width).
     ResizeStart,
     ResizeEnd,
+    /// The on-curve midpoint handle that bends a Curved/Double arrow.
+    ResizeControl,
     /// A box's eight handles, in the same clockwise order as the crop ones.
     ResizeTopLeft,
     ResizeTop,
@@ -492,6 +494,7 @@ private:
   void setStatus(QString status);
   void toggleShapeFill();
   void toggleTextBackground();
+  void cycleArrowStyle();
   void nudgeSelectedAnnotation(const QPointF &delta);
   void endNudgeRun();
   /// Wheel over a selected layer: weight, not size. Thickness for anything
@@ -590,6 +593,7 @@ private:
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
+  ArrowStyle arrowStyle_ = ArrowStyle::Standard;
   bool fillShapes_ = false;
   qreal cornerRadius_ = 0.0;
   /// True while a wheel adjustment is in flight; the selection chrome draws

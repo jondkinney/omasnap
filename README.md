@@ -16,7 +16,8 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Window capture is a crop of the focused-monitor frame. Overlapping windows stay
   visible; there is no second clean-window recapture.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
-- Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
+- Standard, pointy, curved, and double-headed arrows; straight lines; smoothed
+  freehand strokes; translucent highlighter strokes;
   hollow or filled rectangles (optionally rounded) and ellipses, numbered markers,
   editable Neucha text (on a readability pill), and secure redaction with opaque or
   randomized non-spatial mosaic output.
@@ -327,7 +328,7 @@ without reaching for the pointer.
 | Input | Action |
 |---|---|
 | `V` | Select/move/resize layers; drag empty canvas for a marquee; wheel scales the selected layer |
-| `A` | Arrow |
+| `A` | Arrow; press again to cycle Standard, Pointy, Curved, and Double styles |
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |
 | `F` | Freehand stroke |
@@ -345,7 +346,7 @@ without reaching for the pointer.
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
 | `Ctrl`+wheel · middle-drag | Zoom about the cursor · pan by dragging |
 | `+` / `-` / `0` (also with `Ctrl`) | Zoom in / out / fit |
-| Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap lines and arrows to 45°; while dragging a selected layer's handle, keep a rectangle, redaction or spotlight's aspect ratio (lines and arrows: 45°) |
+| Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap line and arrow endpoints to 45°; keep curved-arrow bends centered; while dragging a selected layer's handle, keep a rectangle, redaction or spotlight's aspect ratio |
 | Hold `Alt` while dragging | Center rectangles, ellipses, and spotlights on the press point; add `Shift` for a centered square/circle |
 | `←` `↑` `→` `↓` | Nudge the selected layer 1 px; hold `Shift` for 10 px (a held key is one undo step). With nothing selected, pan a zoomed capture |
 | Double-click text · `Enter` on a selected text | Reopen text editing |
@@ -391,9 +392,10 @@ available after the pin is closed. No font-based symbol set or compositor-specif
 rule is required; the controls use the same vector icon renderer as the annotation toolbar.
 
 Creation tools return to Select after one placement without selecting the new layer. In
-Select mode, arrows and lines show only their two endpoint handles; other layers show a
-selection boundary. The eight blue/white handles outside the image recrop its corners or
-edges.
+Select mode, lines and straight arrows show two endpoint handles; curved and double arrows
+add an on-curve handle for bending the arc (hold `Shift` to keep that bend centered). Other
+layers show a selection boundary. The eight
+blue/white handles outside the image recrop its corners or edges.
 
 ## Development and verification
 
