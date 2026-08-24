@@ -60,6 +60,8 @@ add_library(omasnap-core STATIC
   src/surface-capture.cpp
   src/stitch.cpp
   src/stitch.hpp
+  src/text-band.cpp
+  src/text-band.hpp
   src/auto-capture.cpp
   src/auto-capture.hpp
   src/scroll-capture.cpp
