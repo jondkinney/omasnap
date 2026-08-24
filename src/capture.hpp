@@ -93,7 +93,7 @@ struct Annotation {
   /// Typeface is a layer property so reopened and duplicated labels keep it.
   TextFont textFont = TextFont::Neucha;
   quint64 id = 0;
-  /// Live-filtered pen geometry retained so smoothing changes never compound.
+  /// Raw pointer geometry retained so smoothing changes never compound.
   QVector<QPointF> rawPoints{};
   /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
   int smoothingLevel = 0;
