@@ -2193,6 +2193,12 @@ QPointF CaptureEditor::markerPlacementPoint(const QPointF &position) const {
   return toAnnotationPoint(position) - QPointF(lead, lead);
 }
 
+QPointF CaptureEditor::markerPlacementPoint(const QPointF &position) const {
+  constexpr qreal kPointerLead = 9.0;
+  const qreal lead = kPointerLead / std::max<qreal>(editScale(), 0.001);
+  return toAnnotationPoint(position) - QPointF(lead, lead);
+}
+
 bool CaptureEditor::selectedLayerAcceptsPoint(const QPointF &point) const {
   if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
     return false;
