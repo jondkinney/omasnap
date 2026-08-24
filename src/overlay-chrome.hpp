@@ -39,13 +39,21 @@ QRectF drawModeBadge(QPainter &painter, const QRect &bounds,
                      const QString &label, const QColor &accent,
                      QRectF *closeRect = nullptr);
 
-/// The two-column key guide, pinned to the top-right corner, and moved to the
-/// left when the pointer is over it, so it never hides what is underneath.
-/// `keepVisible` are points (selected handles) the card must not cover.
+/// The key guide. Pinned to the top-right corner as two columns, moved to
+/// the left when the pointer is over it so it never hides what is
+/// underneath; `keepVisible` are points (selected handles) the card must
+/// not cover. With `anchorAbove` set (a windowed editor's toolbar), the
+/// card spreads wide instead, a few rows tall, centered over that anchor.
+/// The size the key guide takes in its wide anchored form when it may be
+/// at most `maxWidth` wide: rows are added until the card fits.
+[[nodiscard]] QSize hotkeyLegendAnchoredSize(
+    const QVector<QPair<QString, QString>> &entries, qreal maxWidth);
+
 void drawHotkeyLegend(QPainter &painter, const QRect &bounds,
                       const QPointF &cursor,
                       const QVector<QPair<QString, QString>> &entries,
-                      const QVector<QPointF> &keepVisible = {});
+                      const QVector<QPointF> &keepVisible = {},
+                      const QRectF &anchorAbove = QRectF());
 
 /// The instruction line along the bottom.
 void drawStatusPill(QPainter &painter, const QRect &bounds,

@@ -1943,6 +1943,28 @@ int CaptureEditor::windowInDirection(int current, int key) const {
   return best;
 }
 
+QVector<QPair<QString, QString>> editorHotkeyEntries() {
+  return {{QStringLiteral("V"), QStringLiteral("Select / move layer")},
+       {QStringLiteral("A"), QStringLiteral("Arrow")},
+       {QStringLiteral("L"), QStringLiteral("Line")},
+       {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
+       {QStringLiteral("C"), QStringLiteral("Marker")},
+       {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
+       {QStringLiteral("X"), QStringLiteral("Cut out a band")},
+       {QStringLiteral("T"), QStringLiteral("Text")},
+       {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
+       {QStringLiteral("1–8"), QStringLiteral("Color")},
+       {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
+       {QStringLiteral("D / O"), QStringLiteral("Redact / OCR text")},
+       {QStringLiteral("B / P"), QStringLiteral("Backdrop / Pin on screen")},
+       {QStringLiteral("Ctrl+Z"), QStringLiteral("Undo")},
+       {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
+       {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
+       {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
+       {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
+       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}};
+}
+
 QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   QVector<ToolbarButton> buttons;
   const qreal scale = toolbarScale(width());
@@ -5625,28 +5647,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     keepVisible = {image.topLeft() + selected.start * scale,
                    image.topLeft() + selected.end * scale};
   }
-  drawHotkeyLegend(
-      painter, rect(), cursor_,
-      {{QStringLiteral("V"), QStringLiteral("Select / move layer")},
-       {QStringLiteral("A"), QStringLiteral("Arrow")},
-       {QStringLiteral("L"), QStringLiteral("Line")},
-       {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
-       {QStringLiteral("C"), QStringLiteral("Marker")},
-       {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
-       {QStringLiteral("X"), QStringLiteral("Cut out a band")},
-       {QStringLiteral("T"), QStringLiteral("Text")},
-       {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
-       {QStringLiteral("1–8"), QStringLiteral("Color")},
-       {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
-       {QStringLiteral("D / O"), QStringLiteral("Redact / OCR text")},
-       {QStringLiteral("B / P"), QStringLiteral("Backdrop / Pin on screen")},
-       {QStringLiteral("Ctrl+Z"), QStringLiteral("Undo")},
-       {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
-       {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
-       {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
-       {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
-       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}},
-      keepVisible);
+  drawHotkeyLegend(painter, rect(), cursor_, editorHotkeyEntries(),
+                   keepVisible);
   if (hoveredButton) {
     drawInstantTooltip(painter, rect(), hoveredButton->rect,
                        hoveredButton->tooltip);
