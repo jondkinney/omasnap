@@ -2038,6 +2038,108 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   return true;
 }
 
+/** Ctrl+wheel down zooms out below fit, to a 10% floor, and Ctrl+0 comes
+ *  back to fit. */
+bool runZoomOutCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(255, 220, 40));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.setSuppressSnapshots(true);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+
+  const auto ctrlWheel = [&](int deltaY) {
+    QWheelEvent wheel(QPointF(400, 300), QPointF(400, 300), {}, {0, deltaY},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase,
+                      false);
+    QApplication::sendEvent(&editor, &wheel);
+    application.processEvents();
+  };
+  // A point just inside the fitted image's corner is bright yellow at fit
+  // and stops being image once the view zooms out.
+  const auto cornerIsImage = [&] {
+    const QColor color = editor.grab().toImage().pixelColor(135, 130);
+    return color.red() > 200 && color.green() > 150 && color.blue() < 120;
+  };
+  if (!cornerIsImage()) {
+    error = QStringLiteral("Zoom fixture corner was not image at fit");
+    return false;
+  }
+  ctrlWheel(-120);
+  if (cornerIsImage()) {
+    error = QStringLiteral("Ctrl+wheel down did not zoom out below fit");
+    return false;
+  }
+  for (int step = 0; step < 30; ++step)
+    ctrlWheel(-120);
+  if (cornerIsImage()) {
+    error = QStringLiteral("Deep zoom out lost the floor");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_0, Qt::ControlModifier);
+  application.processEvents();
+  if (!cornerIsImage()) {
+    error = QStringLiteral("Ctrl+0 did not return to fit from a zoom out");
+    return false;
+  }
+  return true;
+}
+
+/** Zoomed far in, the toolbar stops under the capture-kind tab strip
+ *  instead of sliding beneath it. */
+bool runZoomToolbarFloorCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(255, 220, 40));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.setSuppressSnapshots(true);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+
+  const auto ctrlWheel = [&](int deltaY) {
+    QWheelEvent wheel(QPointF(400, 300), QPointF(400, 300), {}, {0, deltaY},
+                      Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase,
+                      false);
+    QApplication::sendEvent(&editor, &wheel);
+    application.processEvents();
+  };
+  // With the floor the toolbar spans down past y=60, so hovering there
+  // still says button; without it the toolbar sits at the strip and this
+  // spot is canvas.
+  for (int step = 0; step < 12; ++step)
+    ctrlWheel(120);
+  QTest::mouseMove(&editor, QPoint(60, 70), 20);
+  application.processEvents();
+  if (editor.cursor().shape() != Qt::PointingHandCursor) {
+    error = QStringLiteral("Deep zoom slid the toolbar under the tab strip");
+    return false;
+  }
+  return true;
+}
+
 /** Checks that clicking away commits in-progress text instead of losing it. */
 bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -6770,6 +6872,14 @@ int main(int argc, char **argv) {
   if (!runWindowedZoomFramingCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 200;
+  }
+  if (!runZoomOutCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 10;
+  }
+  if (!runZoomToolbarFloorCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 201;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

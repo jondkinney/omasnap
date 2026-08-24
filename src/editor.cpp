@@ -1627,7 +1627,13 @@ qreal CaptureEditor::toolbarTop(qreal buttonHeight) const {
                .height() +
            42;
   }
-  return std::max<qreal>(10,
+  // The capture-kind tabs hang off the top edge and stay up in the edit
+  // phase; zoomed far in, the toolbar stops beneath them instead of
+  // sliding underneath. At fit the toolbar never reaches them, so the
+  // floor only matters past fit.
+  const qreal toolbarFloor =
+      viewZoom_ > 1.0 && !selectTabItems().isEmpty() ? 44 : 10;
+  return std::max<qreal>(toolbarFloor,
                          chromeAnchorTop() - buttonHeight - kToolbarImageGap);
 }
 
@@ -1758,7 +1764,7 @@ qreal CaptureEditor::chromeAnchorTop() const {
 
 QRectF CaptureEditor::editImageRect() const {
   const QRectF base = baseImageRect();
-  if (base.isEmpty() || viewZoom_ <= 1.0)
+  if (base.isEmpty() || qFuzzyCompare(viewZoom_, 1.0))
     return base.translated(viewOffset_);
   const QSizeF shown = base.size() * viewZoom_;
   const QPointF center = base.center();
@@ -1812,7 +1818,9 @@ void CaptureEditor::clampViewOffset() {
 }
 
 void CaptureEditor::setViewZoom(qreal zoom, const QPointF &focus) {
-  const qreal clamped = std::clamp(zoom, 1.0, maxViewZoom());
+  // Down to a tenth: an overview of a tall stitch or a large capture is
+  // as legitimate as a closeup.
+  const qreal clamped = std::clamp(zoom, 0.10, maxViewZoom());
   if (qFuzzyCompare(clamped, viewZoom_))
     return;
   const QRectF before = editImageRect();
