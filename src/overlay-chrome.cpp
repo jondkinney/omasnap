@@ -131,43 +131,138 @@ QRectF drawModeBadge(QPainter &painter, const QRect &bounds,
   return badgeRect;
 }
 
+namespace {
+struct LegendLayout {
+  int columns = 2;
+  int rows = 0;
+  QVector<qreal> keyWidth;
+  QVector<qreal> textWidth;
+  QVector<qreal> columnWidth;
+  qreal width = 0;
+};
+
+constexpr qreal kLegendKeyGapAnchored = 8;
+constexpr qreal kLegendColumnGapAnchored = 14;
+constexpr qreal kLegendPadding = 12;
+
+LegendLayout measureLegend(const QFontMetricsF &metrics,
+                           const QVector<QPair<QString, QString>> &entries,
+                           int columns, qreal keyGap, qreal columnGap) {
+  LegendLayout layout;
+  layout.columns = columns;
+  layout.rows = (entries.size() + columns - 1) / columns;
+  layout.keyWidth = QVector<qreal>(columns, 0.0);
+  layout.textWidth = QVector<qreal>(columns, 0.0);
+  for (int index = 0; index < entries.size(); ++index) {
+    const int column = std::min(index / layout.rows, columns - 1);
+    layout.keyWidth[column] = std::max(
+        layout.keyWidth[column],
+        metrics.horizontalAdvance(entries.at(index).first));
+    layout.textWidth[column] = std::max(
+        layout.textWidth[column],
+        metrics.horizontalAdvance(entries.at(index).second));
+  }
+  layout.columnWidth = QVector<qreal>(columns, 0.0);
+  layout.width = 2 * kLegendPadding;
+  for (int column = 0; column < columns; ++column) {
+    if (layout.keyWidth[column] <= 0 && layout.textWidth[column] <= 0)
+      continue;
+    layout.columnWidth[column] =
+        layout.keyWidth[column] + keyGap + layout.textWidth[column];
+    layout.width += layout.columnWidth[column];
+    if (column > 0)
+      layout.width += columnGap;
+  }
+  return layout;
+}
+
+QFont legendFont() {
+  QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+  font.setPixelSize(11);
+  return font;
+}
+
+LegendLayout fitAnchoredLegend(const QVector<QPair<QString, QString>> &entries,
+                               qreal maxWidth) {
+  const QFontMetricsF metrics{legendFont()};
+  LegendLayout layout;
+  for (int tryRows = 4;; ++tryRows) {
+    layout = measureLegend(
+        metrics, entries,
+        std::max(1, static_cast<int>((entries.size() + tryRows - 1) / tryRows)),
+        kLegendKeyGapAnchored, kLegendColumnGapAnchored);
+    if (layout.width <= maxWidth || layout.columns == 1)
+      return layout;
+  }
+}
+} // namespace
+
+QSize hotkeyLegendAnchoredSize(const QVector<QPair<QString, QString>> &entries,
+                               qreal maxWidth) {
+  if (entries.isEmpty())
+    return {};
+  const LegendLayout layout = fitAnchoredLegend(entries, maxWidth);
+  return {qRound(std::min(layout.width, maxWidth)),
+          layout.rows * 19 + 24};
+}
+
 void drawHotkeyLegend(QPainter &painter, const QRect &bounds,
                       const QPointF &cursor,
                       const QVector<QPair<QString, QString>> &entries,
-                      const QVector<QPointF> &keepVisible) {
+                      const QVector<QPointF> &keepVisible,
+                      const QRectF &anchorAbove) {
   if (entries.isEmpty())
     return;
-  constexpr int columns = 2;
-  const int rows = (entries.size() + columns - 1) / columns;
-  QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-  font.setPixelSize(11);
   // Measured, not guessed: a fixed-width card clipped the longer lines, and a
   // guide that trails off mid-word is worse than no guide.
+  const QFont font = legendFont();
   const QFontMetricsF metrics(font);
-  constexpr qreal keyGap = 12;    // between a key and what it does
-  constexpr qreal columnGap = 24; // between the two columns
-  constexpr qreal padding = 12;   // card edge to text
-  qreal keyWidth[columns] = {};
-  qreal textWidth[columns] = {};
-  for (int index = 0; index < entries.size(); ++index) {
-    const int column = std::min(index / rows, columns - 1);
-    keyWidth[column] = std::max(
-        keyWidth[column], metrics.horizontalAdvance(entries.at(index).first));
-    textWidth[column] = std::max(
-        textWidth[column], metrics.horizontalAdvance(entries.at(index).second));
-  }
-  qreal columnWidth[columns] = {};
-  qreal width = 2 * padding;
-  for (int column = 0; column < columns; ++column) {
-    if (keyWidth[column] <= 0 && textWidth[column] <= 0)
-      continue;
-    columnWidth[column] = keyWidth[column] + keyGap + textWidth[column];
-    width += columnWidth[column];
-    if (column > 0)
-      width += columnGap;
-  }
+  LegendLayout layout =
+      anchorAbove.isValid()
+          ? fitAnchoredLegend(entries, bounds.width() - 28.0)
+          : measureLegend(metrics, entries, 2, 12, 24);
+  const int columns = layout.columns;
+  const int rows = layout.rows;
+  const QVector<qreal> &keyWidth = layout.keyWidth;
+  const QVector<qreal> &textWidth = layout.textWidth;
+  const QVector<qreal> &columnWidth = layout.columnWidth;
+  const qreal keyGap = anchorAbove.isValid() ? kLegendKeyGapAnchored : 12;
+  const qreal columnGap =
+      anchorAbove.isValid() ? kLegendColumnGapAnchored : 24;
+  const qreal padding = kLegendPadding;
+  qreal width = layout.width;
   width = std::min(width, bounds.width() - 28.0);
   const qreal height = rows * 19 + 24;
+  if (anchorAbove.isValid()) {
+    // Pinned to the window's top, centered over the anchor: the windowed
+    // layout reserves the room, so the guide never covers the toolbar or
+    // the canvas.
+    const qreal x =
+        std::clamp(anchorAbove.center().x() - width / 2.0, 14.0,
+                   std::max(14.0, bounds.width() - width - 14.0));
+    const QRectF panel(x, 14.0, width, height);
+    painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
+    painter.setBrush(QColor(13, 15, 20, 224));
+    painter.drawRoundedRect(panel, 11, 11);
+    painter.setFont(font);
+    for (int index = 0; index < entries.size(); ++index) {
+      const int column = std::min(index / rows, columns - 1);
+      const int row = index % rows;
+      qreal cell = panel.left() + padding;
+      for (int before = 0; before < column; ++before)
+        cell += columnWidth[before] + columnGap;
+      const qreal top = panel.top() + 12 + row * 19;
+      painter.setPen(QColor(QStringLiteral("#a9b6cb")));
+      painter.drawText(QRectF(cell, top, keyWidth[column], 18),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       entries.at(index).first);
+      painter.setPen(QColor(QStringLiteral("#f5f5f7")));
+      painter.drawText(
+          QRectF(cell + keyWidth[column] + keyGap, top, textWidth[column], 18),
+          Qt::AlignLeft | Qt::AlignVCenter, entries.at(index).second);
+    }
+    return;
+  }
   const QRectF right(bounds.width() - width - 14, 14, width, height);
   const QRectF left(14, 14, width, height);
   auto hiddenCount = [&](const QRectF &candidate) {
