@@ -47,7 +47,7 @@
 #include <numbers>
 
 /// The inline text editor: a multiline editor whose native caret is hidden (the
-/// editor paints a shorter one over Neucha's tall line box) and whose caret
+/// editor paints a shorter one over the active font's line box) and whose caret
 /// rectangle is exposed for that.
 class InlineTextEdit final : public QPlainTextEdit {
 public:
@@ -381,6 +381,18 @@ QString cornerName(qreal radius) {
 QString textBackgroundName(TextBackground background) {
   return background == TextBackground::Pill ? QStringLiteral("Pill")
                                             : QStringLiteral("Plain");
+}
+
+TextFont nextTextFont(TextFont textFont) {
+  switch (textFont) {
+  case TextFont::Neucha:
+    return TextFont::JetBrainsMono;
+  case TextFont::JetBrainsMono:
+    return TextFont::InterDisplay;
+  case TextFont::InterDisplay:
+    return TextFont::Neucha;
+  }
+  return TextFont::Neucha;
 }
 
 QString redactionStyleName(RedactionStyle style) {
@@ -1168,7 +1180,9 @@ QString CaptureEditor::toolStatus() const {
     return QStringLiteral("Redact · %1 · D toggles style")
         .arg(redactionStyleName(redactionStyle_).toLower());
   case Tool::Text:
-    return QStringLiteral("Text · size %1 · click to type")
+    return QStringLiteral("Text · %1 · size %2 · Shift+T cycles font · click "
+                          "to type")
+        .arg(annotationTextFontName(textFont_))
         .arg(QString::fromLatin1(
             kTextSizeNames.at(static_cast<std::size_t>(textSizeIndex_))));
   case Tool::Marker:
@@ -1536,6 +1550,23 @@ void CaptureEditor::toggleTextBackground() {
   selectedAnnotation_ = -1;
   setStatus(QStringLiteral("Text: %1 · T again toggles")
                 .arg(textBackgroundName(textBackground_).toLower()));
+}
+
+void CaptureEditor::cycleTextFont() {
+  if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
+      annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text) {
+    Annotation &text = annotations_[selectedAnnotation_];
+    text.textFont = nextTextFont(text.textFont);
+    setStatus(QStringLiteral("Selected text: %1 · Shift+T cycles font")
+                  .arg(annotationTextFontName(text.textFont)));
+    commitPatch({selectedAnnotation_});
+    return;
+  }
+  textFont_ = nextTextFont(textFont_);
+  selectedAnnotation_ = -1;
+  tool_ = Tool::Text;
+  setStatus(QStringLiteral("Text: %1 · Shift+T cycles font")
+                .arg(annotationTextFontName(textFont_)));
 }
 
 QPointF CaptureEditor::constrainedResizeEndpoint(
@@ -1997,7 +2028,9 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   add(36, QStringLiteral("tool-cut"), {},
       QStringLiteral("Cut out a band · X · drag across"));
   add(36, QStringLiteral("tool-text"), {},
-      QStringLiteral("Neucha text · T · %1 · %2 · T again toggles pill · Wheel")
+      QStringLiteral("%1 text · T · %2 · %3 · T again toggles pill · "
+                     "Shift+T cycles font · Wheel")
+          .arg(annotationTextFontName(textFont_))
           .arg(QString::fromLatin1(
               kTextSizeNames.at(static_cast<std::size_t>(textSizeIndex_))))
           .arg(textBackgroundName(textBackground_)));
@@ -2573,9 +2606,11 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex,
     const Annotation &annotation = annotations_.at(annotationIndex);
     textColor_ = annotation.color;
     textSize_ = annotation.size;
+    textEditFont_ = annotation.textFont;
     textPoint_ =
         annotation.start -
-        QPointF(0, QFontMetricsF(annotationTextFont(textSize_)).ascent());
+        QPointF(0, QFontMetricsF(annotationTextFont(textSize_, textEditFont_))
+                       .ascent());
     existingText = annotation.text;
     // An existing label has room for the lines it already has: Enter on its
     // last line commits, Shift+Enter adds one.
@@ -2585,12 +2620,13 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex,
     textPoint_ = point;
     textColor_ = annotationColor();
     textSize_ = kTextSizes.at(static_cast<std::size_t>(textSizeIndex_));
+    textEditFont_ = textFont_;
   }
 
   const QRectF image = editImageRect();
   const qreal scale = editScale();
   const QPointF position = image.topLeft() + textPoint_ * scale;
-  QFont displayFont = annotationTextFont(textSize_);
+  QFont displayFont = annotationTextFont(textSize_, textEditFont_);
   displayFont.setPixelSize(
       std::max(12, qRound(displayFont.pixelSize() * scale)));
   const QFontMetrics metrics(displayFont);
@@ -2630,10 +2666,12 @@ void CaptureEditor::acceptText(bool keepSelected) {
     annotation.kind = Annotation::Kind::Text;
     annotation.start =
         textPoint_ +
-        QPointF(0, QFontMetricsF(annotationTextFont(textSize_)).ascent());
+        QPointF(0, QFontMetricsF(annotationTextFont(textSize_, textEditFont_))
+                       .ascent());
     annotation.text = text;
     annotation.color = textColor_;
     annotation.size = textSize_;
+    annotation.textFont = textEditFont_;
     annotation.textBackground =
         editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()
             ? annotations_.at(editingAnnotation_).textBackground
@@ -3353,6 +3391,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() == Qt::Key_X) {
     tool_ = Tool::Cut;
     setStatus(QStringLiteral("Cut: drag across a band to remove it"));
+  } else if (event->key() == Qt::Key_T &&
+             event->modifiers() == Qt::ShiftModifier) {
+    cycleTextFont();
   } else if (event->key() == Qt::Key_T) {
     const bool textSelected =
         selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
@@ -3576,7 +3617,9 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
               std::clamp(originalAnnotation_.size * ratio, 1.0, 24.0);
           annotation.start.setY(
               originalBounds.top() +
-              QFontMetricsF(annotationTextFont(annotation.size)).ascent());
+              QFontMetricsF(
+                  annotationTextFont(annotation.size, annotation.textFont))
+                  .ascent());
         }
       }
       }
@@ -3798,7 +3841,9 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     tool_ = Tool::Text;
     const qreal localX = cursor_.x() - textSizePanelRect().left();
     textSizeIndex_ = std::clamp(static_cast<int>(localX / 34.0), 0, 2);
-    setStatus(QStringLiteral("Neucha · size %1 · wheel changes size")
+    setStatus(QStringLiteral("%1 · size %2 · wheel changes size · Shift+T "
+                             "cycles font")
+                  .arg(annotationTextFontName(textFont_))
                   .arg(QString::fromLatin1(kTextSizeNames.at(
                       static_cast<std::size_t>(textSizeIndex_)))));
     update();
@@ -4237,7 +4282,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     } else {
       const qreal size = kTextSizes.at(static_cast<std::size_t>(textSizeIndex_));
       const qreal lineHeight =
-          QFontMetricsF(annotationTextFont(size)).lineSpacing();
+          QFontMetricsF(annotationTextFont(size, textFont_)).lineSpacing();
       const int lines = std::max(
           1, static_cast<int>(std::floor(box.height() / lineHeight + 0.25)));
       beginText(box.topLeft(), -1, lines);
@@ -4396,7 +4441,9 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     adjustSelectedAnnotation(step);
   } else if (tool_ == Tool::Text) {
     textSizeIndex_ = std::clamp(textSizeIndex_ + step, 0, 2);
-    setStatus(QStringLiteral("Neucha · size %1 · wheel changes size")
+    setStatus(QStringLiteral("%1 · size %2 · wheel changes size · Shift+T "
+                             "cycles font")
+                  .arg(annotationTextFontName(textFont_))
                   .arg(QString::fromLatin1(kTextSizeNames.at(
                       static_cast<std::size_t>(textSizeIndex_)))));
   } else if (tool_ == Tool::Spotlight &&
@@ -5505,7 +5552,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
 
   if (textEditor_->isVisible()) {
     // Cream pill under the transparent inline editor, and
-    // a caret spanning the glyph box rather than Neucha's whole line height.
+    // a caret spanning the glyph box rather than the face's whole line height.
     const QRectF box = textEditor_->geometry();
     if (textEditPill_) {
       const qreal radius = std::min(box.height() / 4.0, 6.0);
@@ -5661,8 +5708,9 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         QString tooltip;
         if (tool_ == Tool::Text) {
           tooltip = QStringLiteral(
-                        "Neucha · S  M  L · current %1 · Scroll wheel · %2 · T "
-                        "again toggles pill")
+                        "%1 · S  M  L · current %2 · Scroll wheel · %3 · T "
+                        "again toggles pill · Shift+T cycles font")
+                        .arg(annotationTextFontName(textFont_))
                         .arg(QString::fromLatin1(kTextSizeNames.at(
                             static_cast<std::size_t>(textSizeIndex_))))
                         .arg(textBackgroundName(textBackground_));

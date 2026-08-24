@@ -73,7 +73,10 @@ add_library(omasnap-core STATIC
 qt_add_resources(omasnap-core "capture-fonts"
   PREFIX "/fonts"
   BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-  FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/Neucha.ttf"
+  FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/Neucha.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/JetBrainsMono-Regular.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/InterDisplay-SemiBold.ttf"
 )
 
 target_include_directories(omasnap-core PUBLIC
@@ -157,6 +160,9 @@ install(TARGETS omasnap
 install(FILES assets/OFL.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
   RENAME Neucha-OFL.txt
+)
+install(FILES assets/JetBrainsMono-OFL.txt assets/Inter-OFL.txt
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
 )
 install(FILES omasnap.desktop
   DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
