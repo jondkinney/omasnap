@@ -5,6 +5,7 @@
 #include "overlay-chrome.hpp"
 #include "palette-config.hpp"
 #include "recent-snaps.hpp"
+#include "stroke-smoothing.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -444,8 +445,8 @@ private:
   /// with a stroke, the counter or text's own size, magnification for a
   /// spotlight, extent for the one kind that is all fill.
   void adjustSelectedAnnotation(int step);
-  /// Alt+wheel on the selected layer: a spotlight's ring. False when the layer
-  /// has no second setting to move.
+  /// Alt+wheel on the selected layer: a spotlight's ring or a pen stroke's
+  /// smoothing. False when the layer has no second setting to move.
   bool adjustSelectedAnnotationRing(int step);
   /// Starts (or extends) the window in which the selection chrome steps back
   /// so a wheel adjustment can be seen. The handles sit exactly where a
@@ -506,6 +507,7 @@ private:
   bool resizeConstraintActive_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
+  stroke::InputSmoother freehandInputSmoother_;
   // Cut tool live-drag state. cutDragStart_/cutBandLo_/cutBandHi_ and
   // liveCut_.orientation are in annotation space (selection-relative logical
   // px); the source stays untouched while a shaded removal band previews the
@@ -536,6 +538,7 @@ private:
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
+  int freehandSmoothingLevel_ = stroke::defaultSmoothingLevel;
   bool fillShapes_ = false;
   qreal cornerRadius_ = 0.0;
   /// True while a wheel adjustment is in flight; the selection chrome draws

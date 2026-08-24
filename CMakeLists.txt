@@ -66,6 +66,8 @@ add_library(omasnap-core STATIC
   src/scroll-capture.hpp
   src/scroll-inject.cpp
   src/scroll-inject.hpp
+  src/stroke-smoothing.cpp
+  src/stroke-smoothing.hpp
   ${PROTOCOL_SOURCES}
   src/editor.cpp
   src/editor.hpp
@@ -109,6 +111,8 @@ qt_add_executable(omasnap-smoke
   tests/cut-smoke.hpp
   tests/palette-config-smoke.cpp
   tests/palette-config-smoke.hpp
+  tests/stroke-smoothing-smoke.cpp
+  tests/stroke-smoothing-smoke.hpp
   src/cli-path.cpp
   src/recent-snaps.cpp
   src/recent-snaps.hpp
