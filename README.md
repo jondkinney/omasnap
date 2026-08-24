@@ -257,6 +257,19 @@ change where screenshots land or what they are called, create
 `~/.config/omasnap/omasnap.conf` (INI format); every key is optional:
 
 ```ini
+[editor]
+# overlay (default): the editor fills the screen as a fullscreen overlay.
+# window: the editor opens as a normal compositor window, tiled or floated
+# by the compositor, so a capture can be annotated next to another window.
+# --editor window|overlay overrides this per invocation.
+mode = overlay
+# floating (default): a windowed editor asks the compositor to float it at
+# the capture's natural size. tiled: it joins the tiling layout instead.
+window = floating
+# opaque (default): a windowed editor paints a solid backdrop.
+# translucent: it keeps the overlay's see-through dim.
+backdrop = opaque
+
 [output]
 # Where saved screenshots go. Default: ~/Pictures/Screenshots
 directory = ~/Pictures/Captures

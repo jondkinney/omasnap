@@ -1160,6 +1160,23 @@ void prunePinnedSnapshots() {
   }
 }
 
+QSize editorWindowSize(const QSize &preview, const QSize &available,
+                       int legendHeight) {
+  // The capture at its natural size plus the editor's chrome: the key
+  // guide band as measured, the toolbar and handle clearance, the status
+  // band below, and the mat margins, so the image reads at 100% in a
+  // window that hugs it and the guide never covers anything. Clamped to
+  // the screen for captures too large to hug.
+  QSize size(preview.width() + 128, preview.height() + legendHeight + 210);
+  const QSize room = available.isEmpty()
+                         ? QSize(1728, 1080)
+                         : QSize(qRound(available.width() * 0.9),
+                                 qRound(available.height() * 0.9));
+  if (size.width() > room.width() || size.height() > room.height())
+    size.scale(room, Qt::KeepAspectRatio);
+  return {std::max(size.width(), 640), std::max(size.height(), 420)};
+}
+
 bool saveTemporarySnapshot(const QImage &image, QString path, QString &error,
                            int quality) {
   if (image.isNull()) {

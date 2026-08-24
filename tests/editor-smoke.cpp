@@ -2,6 +2,7 @@
  */
 #include "capture.hpp"
 #include "output-config.hpp"
+#include "overlay-chrome.hpp"
 #include "cli-path.hpp"
 #include "clipboard-smoke.hpp"
 #include "cut-smoke.hpp"
@@ -1276,6 +1277,86 @@ bool runSpotlightAndSampleChecks(QString &error) {
   return true;
 }
 
+/** The editor window mode config key and the windowed editor's sizing. */
+bool runEditorWindowConfigCheck(QString &error) {
+  const QString path =
+      QDir(QDir::tempPath()).filePath(QStringLiteral("omasnap-editor-mode.conf"));
+  const QString floatRule = editorFloatRuleScript(true);
+  const QString tiledRule = editorFloatRuleScript(false);
+  if (!floatRule.contains(QStringLiteral("float = true")) ||
+      !floatRule.contains(QStringLiteral("center = true")) ||
+      tiledRule.contains(QStringLiteral("float = true")) ||
+      !tiledRule.contains(QStringLiteral("enabled = false")) ||
+      !floatRule.contains(QStringLiteral("omasnap-editor-float")) ||
+      !tiledRule.contains(QStringLiteral("omasnap-editor-float"))) {
+    error = QStringLiteral("Editor float rule script is wrong");
+    return false;
+  }
+  const auto writeConf = [&path](const QString &body) {
+    QFile file(path);
+    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    file.write(body.toUtf8());
+    file.close();
+  };
+  writeConf(QStringLiteral("[editor]\nmode = window\n"));
+  const bool window = loadEditorWindowMode(path);
+  writeConf(QStringLiteral("[editor]\nmode = overlay\n"));
+  const bool overlay = loadEditorWindowMode(path);
+  writeConf(QStringLiteral("[output]\ndirectory = /tmp\n"));
+  const bool absent = loadEditorWindowMode(path);
+  QFile::remove(path);
+  const bool missing =
+      loadEditorWindowMode(QStringLiteral("/nonexistent/omasnap.conf"));
+  if (!window || overlay || absent || missing) {
+    error = QStringLiteral("[editor] mode was not read as window-or-default");
+    return false;
+  }
+
+  writeConf(QStringLiteral("[editor]\nwindow = tiled\n"));
+  const bool tiled = loadEditorWindowFloating(path);
+  writeConf(QStringLiteral("[editor]\nwindow = floating\n"));
+  const bool floating = loadEditorWindowFloating(path);
+  QFile::remove(path);
+  const bool floatDefault =
+      loadEditorWindowFloating(QStringLiteral("/nonexistent/omasnap.conf"));
+  if (tiled || !floating || !floatDefault) {
+    error = QStringLiteral("[editor] window was not read as floating-or-tiled");
+    return false;
+  }
+
+  writeConf(QStringLiteral("[editor]\nbackdrop = translucent\n"));
+  const bool translucent = loadEditorWindowBackdropOpaque(path);
+  QFile::remove(path);
+  const bool opaqueDefault =
+      loadEditorWindowBackdropOpaque(QStringLiteral("/nonexistent/omasnap.conf"));
+  if (translucent || !opaqueDefault) {
+    error = QStringLiteral("[editor] backdrop was not read as opaque-or-not");
+    return false;
+  }
+
+  // The window hugs the capture at 100% plus the measured chrome; only a
+  // capture too large for the screen scales down, and the guide band is
+  // whatever the entries need at the window's width.
+  if (editorWindowSize(QSize(800, 600), QSize(2560, 1600), 100) !=
+          QSize(928, 910) ||
+      editorWindowSize(QSize(4000, 2000), QSize(2000, 1000), 100) !=
+          QSize(1608, 900) ||
+      editorWindowSize(QSize(100, 50), QSize(2000, 1000), 214) !=
+          QSize(640, 474) ||
+      editorWindowSize(QSize(5000, 5000), QSize(), 100) != QSize(1042, 1080)) {
+    error = QStringLiteral("The windowed editor sized itself wrong");
+    return false;
+  }
+  const QSize wide = hotkeyLegendAnchoredSize(editorHotkeyEntries(), 1300);
+  const QSize narrow = hotkeyLegendAnchoredSize(editorHotkeyEntries(), 500);
+  if (wide.height() != 100 || wide.width() > 1300 ||
+      narrow.height() <= wide.height() || narrow.width() > 500) {
+    error = QStringLiteral("The windowed editor sized itself wrong");
+    return false;
+  }
+  return true;
+}
+
 /** Checks that clicking away commits in-progress text instead of losing it. */
 bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -1810,8 +1891,11 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
   application.processEvents();
   const QImage activeMarquee = editor.grab().toImage();
   bool foundBlueMarqueeEdge = false;
+  // Sampled on the left half of the marquee's top edge: the key guide sizes
+  // itself to its rows and reaches this far down on the right since it
+  // gained a row.
   for (int y = 117; y <= 123 && !foundBlueMarqueeEdge; ++y) {
-    for (int x = 336; x <= 344; ++x) {
+    for (int x = 150; x <= 170; ++x) {
       const QColor pixel = activeMarquee.pixelColor(x, y);
       if (pixel.blue() > 180 && pixel.green() > 80 && pixel.red() < 80) {
         foundBlueMarqueeEdge = true;
@@ -1820,8 +1904,8 @@ bool runContinuousAnnotationToolsSmoke(QApplication &application,
     }
   }
   if (!foundBlueMarqueeEdge ||
-      activeMarquee.pixelColor(340, 130) ==
-          beforeMarquee.pixelColor(340, 130)) {
+      activeMarquee.pixelColor(160, 130) ==
+          beforeMarquee.pixelColor(160, 130)) {
     error = QStringLiteral("Select drag did not paint a visible marquee box");
     return false;
   }
@@ -3149,6 +3233,81 @@ bool runEyedropperSmoke(QApplication &application, QString &error) {
   }
   editor.close();
   QFile::remove(snapshotPath);
+  return true;
+}
+
+/** Windowed, the color palette hangs off the pinned toolbar, not the canvas. */
+bool runWindowedPaletteAnchorCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 1000, 800};
+  capture.monitor.pixelSize = {1000, 800};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(1000, 800, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.setWindowedPresentation(true);
+  editor.resize(1000, 800);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 250));
+  QTest::mouseMove(&editor, QPoint(900, 780), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(900, 780));
+  application.processEvents();
+
+  const qreal toolbarY =
+      14 +
+      hotkeyLegendAnchoredSize(editorHotkeyEntries(), editor.width() - 28.0)
+          .height() +
+      42;
+  const QRectF palette = editor.colorPaletteRectForTest();
+  if (!qFuzzyCompare(palette.top(), toolbarY + 36 + 4)) {
+    error = QStringLiteral("Windowed palette sits at %1, not under the "
+                           "toolbar at %2")
+                .arg(palette.top())
+                .arg(toolbarY + 36 + 4);
+    return false;
+  }
+
+  QTest::mouseMove(&editor, QPoint(538, qRound(toolbarY + 18)), 10);
+  application.processEvents();
+  if (!editor.colorPaletteOpenForTest()) {
+    error = QStringLiteral("Hovering the windowed color button did not open "
+                           "the palette");
+    return false;
+  }
+  const QImage frame = editor.grab().toImage();
+  // The band-filling capture's crop outline must stay clear below the open
+  // palette; without the reserved row the dropdown covers it.
+  const int imageTop = qRound(toolbarY) + 36 + 54;
+  int outlinePixels = 0;
+  for (int x = 140; x < 860; ++x) {
+    for (int y = imageTop - 2; y <= imageTop; ++y) {
+      const QColor color = frame.pixelColor(x, y);
+      if (color.blue() > 110 && color.blue() > color.red() + color.green())
+        ++outlinePixels;
+    }
+  }
+  if (outlinePixels < 5) {
+    error = QStringLiteral("Open palette covers the crop outline (%1 dash "
+                           "pixels)")
+                .arg(outlinePixels);
+    return false;
+  }
+  const QColor swatch =
+      frame.pixelColor(qRound(palette.left()) + 16, qRound(palette.top()) + 18);
+  const int chroma =
+      std::max({swatch.red(), swatch.green(), swatch.blue()}) -
+      std::min({swatch.red(), swatch.green(), swatch.blue()});
+  if (chroma < 60) {
+    error = QStringLiteral("No colored swatch rendered under the windowed "
+                           "toolbar (probe %1)")
+                .arg(swatch.name());
+    return false;
+  }
+  editor.close();
   return true;
 }
 
@@ -5682,6 +5841,14 @@ int main(int argc, char **argv) {
   if (!runSpotlightAndSampleChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 79;
+  }
+  if (!runEditorWindowConfigCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 4;
+  }
+  if (!runWindowedPaletteAnchorCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 125;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;

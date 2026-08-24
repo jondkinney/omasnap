@@ -1578,13 +1578,27 @@ void CaptureEditor::endNudgeRun() {
     commitPatch({selectedAnnotation_});
 }
 
+qreal CaptureEditor::toolbarTop(qreal buttonHeight) const {
+  if (windowedPresentation_) {
+    // Pinned under the key guide, leaving a band tall enough for the tool
+    // hint pill that hangs above the toolbar; a 10 px gap put the pill on
+    // the guide's bottom rows. On a resized window the free space belongs
+    // to the canvas below, not to a drifting toolbar.
+    return 14 +
+           hotkeyLegendAnchoredSize(editorHotkeyEntries(), width() - 28.0)
+               .height() +
+           42;
+  }
+  return std::max<qreal>(10,
+                         chromeAnchorTop() - buttonHeight - kToolbarImageGap);
+}
+
 QRectF CaptureEditor::colorPaletteRect() const {
   const qreal scale = toolbarScale(width());
   const qreal toolbarWidth = kToolbarWidth * scale;
   const qreal buttonHeight = 36 * scale;
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
-  const qreal toolbarY =
-      std::max<qreal>(10, chromeAnchorTop() - buttonHeight - kToolbarImageGap);
+  const qreal toolbarY = toolbarTop(buttonHeight);
   const QRectF anchor(toolbarX + 440 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   const qreal paletteWidth =
@@ -1608,8 +1622,7 @@ QRectF CaptureEditor::shapeMenuRect() const {
   const qreal scale = toolbarScale(width());
   const qreal toolbarX = (width() - kToolbarWidth * scale) / 2.0;
   const qreal buttonHeight = 36 * scale;
-  const qreal toolbarY =
-      std::max<qreal>(10, chromeAnchorTop() - buttonHeight - kToolbarImageGap);
+  const qreal toolbarY = toolbarTop(buttonHeight);
   const QRectF anchor(toolbarX + 240 * scale, toolbarY, buttonHeight,
                       buttonHeight);
   return {anchor.center().x() - 58, anchor.bottom() + 4, 116, 36};
@@ -1620,8 +1633,7 @@ QRectF CaptureEditor::textSizePanelRect() const {
   const qreal toolbarWidth = kToolbarWidth * scale;
   const qreal buttonHeight = 36 * scale;
   const qreal toolbarX = (width() - toolbarWidth) / 2.0;
-  const qreal toolbarY =
-      std::max<qreal>(10, chromeAnchorTop() - buttonHeight - kToolbarImageGap);
+  const qreal toolbarY = toolbarTop(buttonHeight);
   const QRectF anchor(toolbarX + 400 * scale, toolbarY, 36 * scale,
                       buttonHeight);
   return {anchor.center().x() - 51, anchor.bottom() + 6, 102, 34};
@@ -1666,15 +1678,34 @@ QRectF CaptureEditor::normalizedSelection(const QPointF &first,
   return QRectF(a, b).normalized();
 }
 
+qreal CaptureEditor::contentBandTop() const {
+  if (!windowedPresentation_)
+    return 60;
+  return 14 +
+         hotkeyLegendAnchoredSize(editorHotkeyEntries(), width() - 28.0)
+             .height() +
+         42 + 36;
+}
+
 QRectF CaptureEditor::baseImageRect() const {
   if (selection_.isEmpty())
     return {};
-  const QRectF available(30, 68, std::max(1, width() - 60),
-                         std::max(1, height() - 126));
+  // A windowed editor stacks the key guide above the toolbar, so its top
+  // band is as tall as the guide actually is at this width, plus the
+  // toolbar, the row the color dropdown and its popover peers hang into,
+  // and clearance for the selection's top handles; the capture keeps a
+  // generous mat margin on the other three sides.
+  const qreal top = windowedPresentation_ ? contentBandTop() + 54 : 68;
+  const qreal side = windowedPresentation_ ? 64 : 30;
+  const qreal bottom = windowedPresentation_ ? 64 : 58;
+  const QRectF available(side, top, std::max<qreal>(1, width() - 2 * side),
+                         std::max<qreal>(1, height() - top - bottom));
   const qreal scale =
       std::min<qreal>({1.0, available.width() / selection_.width(),
                        available.height() / selection_.height()});
   const QSizeF shown = selection_.size() * scale;
+  // The canvas centers in its band, so a resized window keeps the image in
+  // the middle while the chrome above stays pinned.
   return {available.center().x() - shown.width() / 2.0,
           available.center().y() - shown.height() / 2.0, shown.width(),
           shown.height()};
@@ -1972,8 +2003,7 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   const qreal gap = 4 * scale;
   const qreal total = kToolbarWidth * scale;
   qreal x = (width() - total) / 2.0;
-  const qreal y =
-      std::max<qreal>(10, chromeAnchorTop() - height - kToolbarImageGap);
+  const qreal y = toolbarTop(height);
   auto add = [&](qreal buttonWidth, QString action, QString label,
                  QString tooltip, QColor color = {}) {
     const qreal scaledWidth = buttonWidth * scale;
@@ -5193,17 +5223,46 @@ qreal selectionBoundsRadius(const Annotation &annotation, qreal inset) {
 
 void CaptureEditor::paintEdit(QPainter &painter) {
   painter.setCompositionMode(QPainter::CompositionMode_Source);
-  painter.fillRect(rect(), QColor(0, 0, 0, 160));
+  // The overlay dims the screen it covers; a windowed editor has its own
+  // backdrop, a solid gray mat by default so the desktop does not bleed
+  // through and the capture reads as a picture on a table.
+  const bool opaqueBackdrop = windowedPresentation_ && windowedBackdropOpaque_;
+  painter.fillRect(rect(), opaqueBackdrop ? QColor(36, 36, 36)
+                                          : QColor(0, 0, 0, 160));
   painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
   // When zoomed past fit the image is larger than the viewport; clip content
   // to the band between the toolbar and the status so it cannot overdraw them.
   const bool clipViewport = viewZoom_ > 1.0;
   if (clipViewport) {
     painter.save();
-    painter.setClipRect(QRectF(0, 60, width(), std::max(1, height() - 116)));
+    // The band between the pinned chrome above and the status below; zoomed
+    // content must not overdraw either.
+    const qreal bandTop = contentBandTop();
+    const qreal bandBottom = windowedPresentation_ ? 64 : 56;
+    painter.setClipRect(QRectF(
+        0, bandTop, width(), std::max<qreal>(1, height() - bandTop - bandBottom)));
   }
   const QRectF image = editImageRect();
   const bool hasBackground = backgroundStyle_ != BackgroundStyle::None;
+  if (opaqueBackdrop && !hasBackground) {
+    // Two shadows, the macOS model: a tight even ambient halo that sits
+    // the image on the mat, and a wider key shadow offset downward that
+    // floats it above. Layered rounded rects approximate the blurs.
+    painter.setPen(Qt::NoPen);
+    for (int layer = 14; layer > 0; --layer) {
+      const qreal spread = layer * (40.0 / 14.0);
+      painter.setBrush(QColor(0, 0, 0, 8));
+      painter.drawRoundedRect(
+          image.adjusted(-spread, -spread + 14, spread, spread + 14), spread,
+          spread);
+    }
+    for (int layer = 8; layer > 0; --layer) {
+      const qreal spread = layer * (12.0 / 8.0);
+      painter.setBrush(QColor(0, 0, 0, 8));
+      painter.drawRoundedRect(
+          image.adjusted(-spread, -spread, spread, spread), spread, spread);
+    }
+  }
   if (hasBackground) {
     const QRectF backing = image.adjusted(-28, -28, 28, 28);
     painter.setPen(Qt::NoPen);
@@ -5647,8 +5706,16 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     keepVisible = {image.topLeft() + selected.start * scale,
                    image.topLeft() + selected.end * scale};
   }
+  // A windowed editor has no spare corner for the tall card; the guide
+  // spreads over the toolbar instead.
+  QRectF legendAnchor;
+  if (windowedPresentation_) {
+    for (const ToolbarButton &button : buttons)
+      legendAnchor = legendAnchor.isNull() ? button.rect
+                                           : legendAnchor.united(button.rect);
+  }
   drawHotkeyLegend(painter, rect(), cursor_, editorHotkeyEntries(),
-                   keepVisible);
+                   keepVisible, legendAnchor);
   if (hoveredButton) {
     drawInstantTooltip(painter, rect(), hoveredButton->rect,
                        hoveredButton->tooltip);
