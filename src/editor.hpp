@@ -337,6 +337,10 @@ private:
   [[nodiscard]] int cropHandleAt(const QPointF &point) const;
   /// Fit-to-window rect for the selection (unaffected by the view zoom/pan).
   [[nodiscard]] QRectF baseImageRect() const;
+  /// editImageRect clipped to the viewport band. Zoomed past fit the image
+  /// runs beyond the band; the chrome that frames it (crop outline, handles,
+  /// shadow) frames what is visible, not the off-screen edges.
+  [[nodiscard]] QRectF visibleEditImageRect() const;
   /// Top edge the chrome (toolbar, popovers) anchors above: the fit rect at
   /// zoom 1, the viewport band once zoomed (the content fills it then).
   [[nodiscard]] qreal chromeAnchorTop() const;

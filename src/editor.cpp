@@ -1730,6 +1730,16 @@ QRectF CaptureEditor::editImageRect() const {
       .translated(viewOffset_);
 }
 
+QRectF CaptureEditor::visibleEditImageRect() const {
+  const QRectF image = editImageRect();
+  if (viewZoom_ <= 1.0)
+    return image;
+  const qreal bandTop = contentBandTop();
+  const qreal bandBottom = windowedPresentation_ ? 64 : 56;
+  return image.intersected(QRectF(
+      0, bandTop, width(), std::max<qreal>(1, height() - bandTop - bandBottom)));
+}
+
 qreal CaptureEditor::maxViewZoom() const {
   const QRectF base = baseImageRect();
   if (base.isEmpty() || selection_.width() <= 0)
@@ -1743,8 +1753,12 @@ void CaptureEditor::clampViewOffset() {
   if (base.isEmpty())
     return;
   const QSizeF shown = base.size() * viewZoom_;
-  const QRectF available(30, 68, std::max(1, width() - 60),
-                         std::max(1, height() - 126));
+  const qreal bandTop = windowedPresentation_ ? contentBandTop() : 68;
+  const qreal bandBottom = windowedPresentation_ ? 64 : 58;
+  const QRectF available(
+      windowedPresentation_ ? 0 : 30, bandTop,
+      std::max<qreal>(1, width() - (windowedPresentation_ ? 0 : 60)),
+      std::max<qreal>(1, height() - bandTop - bandBottom));
   // Keep the image covering the viewport where it is larger, and centered
   // (no free pan) on any axis where it is smaller.
   const auto clampAxis = [](qreal shownLen, qreal availLen, qreal &offset) {
@@ -1797,7 +1811,7 @@ void CaptureEditor::resetView() {
 }
 
 QVector<QRectF> CaptureEditor::cropHandleRects() const {
-  const QRectF image = editImageRect();
+  const QRectF image = visibleEditImageRect();
   if (image.isEmpty())
     return {};
   constexpr qreal outside = 7;
@@ -2809,7 +2823,7 @@ void CaptureEditor::paintOcrOverlay(QPainter &painter, const QRectF &image,
                     qreal(kOcrSweepMs);
     const qreal bandHeight = std::clamp(region.height() * 0.35, 18.0, 64.0);
     const qreal y = region.top() - bandHeight + t * (region.height() + bandHeight);
-    painter.setClipRect(region);
+    painter.setClipRect(region, Qt::IntersectClip);
     painter.fillRect(region, QColor(accent.red(), accent.green(), accent.blue(), 36));
     QLinearGradient gradient(0, y, 0, y + bandHeight);
     gradient.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 0));
@@ -5230,6 +5244,31 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   painter.fillRect(rect(), opaqueBackdrop ? QColor(36, 36, 36)
                                           : QColor(0, 0, 0, 160));
   painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  const QRectF image = editImageRect();
+  const QRectF visibleImage = visibleEditImageRect();
+  const bool hasBackground = backgroundStyle_ != BackgroundStyle::None;
+  if (opaqueBackdrop && !hasBackground) {
+    // Two shadows, the macOS model: a tight even ambient halo that sits
+    // the image on the mat, and a wider key shadow offset downward that
+    // floats it above. Layered rounded rects approximate the blurs. Drawn
+    // around the visible rect and before the viewport clip: zoomed past fit
+    // the shadow frames the band the image shows through.
+    painter.setPen(Qt::NoPen);
+    for (int layer = 14; layer > 0; --layer) {
+      const qreal spread = layer * (40.0 / 14.0);
+      painter.setBrush(QColor(0, 0, 0, 8));
+      painter.drawRoundedRect(
+          visibleImage.adjusted(-spread, -spread + 14, spread, spread + 14),
+          spread, spread);
+    }
+    for (int layer = 8; layer > 0; --layer) {
+      const qreal spread = layer * (12.0 / 8.0);
+      painter.setBrush(QColor(0, 0, 0, 8));
+      painter.drawRoundedRect(
+          visibleImage.adjusted(-spread, -spread, spread, spread), spread,
+          spread);
+    }
+  }
   // When zoomed past fit the image is larger than the viewport; clip content
   // to the band between the toolbar and the status so it cannot overdraw them.
   const bool clipViewport = viewZoom_ > 1.0;
@@ -5241,27 +5280,6 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     const qreal bandBottom = windowedPresentation_ ? 64 : 56;
     painter.setClipRect(QRectF(
         0, bandTop, width(), std::max<qreal>(1, height() - bandTop - bandBottom)));
-  }
-  const QRectF image = editImageRect();
-  const bool hasBackground = backgroundStyle_ != BackgroundStyle::None;
-  if (opaqueBackdrop && !hasBackground) {
-    // Two shadows, the macOS model: a tight even ambient halo that sits
-    // the image on the mat, and a wider key shadow offset downward that
-    // floats it above. Layered rounded rects approximate the blurs.
-    painter.setPen(Qt::NoPen);
-    for (int layer = 14; layer > 0; --layer) {
-      const qreal spread = layer * (40.0 / 14.0);
-      painter.setBrush(QColor(0, 0, 0, 8));
-      painter.drawRoundedRect(
-          image.adjusted(-spread, -spread + 14, spread, spread + 14), spread,
-          spread);
-    }
-    for (int layer = 8; layer > 0; --layer) {
-      const qreal spread = layer * (12.0 / 8.0);
-      painter.setBrush(QColor(0, 0, 0, 8));
-      painter.drawRoundedRect(
-          image.adjusted(-spread, -spread, spread, spread), spread, spread);
-    }
   }
   if (hasBackground) {
     const QRectF backing = image.adjusted(-28, -28, 28, 28);
@@ -5328,7 +5346,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   }
 
   painter.save();
-  painter.setClipPath(clip);
+  painter.setClipPath(clip, Qt::IntersectClip);
   if (!redactionLayer.isNull())
     painter.drawImage(image, redactionLayer);
   else
@@ -5340,7 +5358,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   painter.translate(image.topLeft());
   painter.scale(editScale(), editScale());
   painter.save();
-  painter.setClipRect(QRectF(QPointF(), selection_.size()));
+  painter.setClipRect(QRectF(QPointF(), selection_.size()), Qt::IntersectClip);
   QVector<Annotation> defaultAnnotations;
   defaultAnnotations.reserve(annotations_.size() + 1);
   for (int index = 0; index < annotations_.size(); ++index) {
@@ -5519,16 +5537,6 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   painter.restore();
   paintOcrOverlay(painter, image, editScale());
 
-  if (tool_ == Tool::Select) {
-    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 1, Qt::DashLine));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(image.adjusted(-1, -1, 1, 1));
-    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 2));
-    painter.setBrush(QColor(QStringLiteral("#f5f5f7")));
-    for (const QRectF &handle : cropHandleRects())
-      painter.drawRoundedRect(handle, 3, 3);
-  }
-
   if (shapeMenuOpen_) {
     painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
     painter.setBrush(QColor(22, 22, 28, 248));
@@ -5609,6 +5617,16 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   }
   if (clipViewport)
     painter.restore();
+
+  if (tool_ == Tool::Select) {
+    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 1, Qt::DashLine));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(visibleImage.adjusted(-1, -1, 1, 1));
+    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 2));
+    painter.setBrush(QColor(QStringLiteral("#f5f5f7")));
+    for (const QRectF &handle : cropHandleRects())
+      painter.drawRoundedRect(handle, 3, 3);
+  }
 
   const QString currentTool = toolAction(tool_);
   QFont buttonFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);

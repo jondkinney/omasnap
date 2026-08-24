@@ -3311,6 +3311,85 @@ bool runWindowedPaletteAnchorCheck(QApplication &application, QString &error) {
   return true;
 }
 
+/** Zoomed past fit in a window, the content stays inside the band and the
+ *  crop outline and shadow frame what is visible, not the off-screen rect. */
+bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 1000, 800};
+  capture.monitor.pixelSize = {1000, 800};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(1000, 800, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(30, 200, 60));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.setWindowedPresentation(true);
+  editor.setWindowedBackdropOpaque(true);
+  editor.resize(1000, 800);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 300));
+  QTest::mouseMove(&editor, QPoint(900, 700), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(900, 700));
+  application.processEvents();
+
+  const auto wheelAt = [&](int deltaY, int times) {
+    for (int i = 0; i < times; ++i) {
+      QWheelEvent event(QPointF(500, 450), QPointF(500, 450), {}, {0, deltaY},
+                        Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase,
+                        false);
+      QApplication::sendEvent(&editor, &event);
+    }
+    application.processEvents();
+  };
+  wheelAt(120, 8);
+
+  const int bandTop =
+      14 +
+      hotkeyLegendAnchoredSize(editorHotkeyEntries(), editor.width() - 28.0)
+          .height() +
+      42 + 36;
+  const int bandBottom = editor.height() - 64;
+  const QImage frame = editor.grab().toImage();
+  const auto isContent = [](const QColor &color) {
+    return color.green() > 120 && color.green() > color.red() * 2;
+  };
+  if (isContent(frame.pixelColor(60, bandTop - 18)) ||
+      isContent(frame.pixelColor(60, bandBottom + 6))) {
+    error = QStringLiteral("Zoomed content escaped the viewport band");
+    return false;
+  }
+  if (!isContent(frame.pixelColor(500, (bandTop + bandBottom) / 2))) {
+    error = QStringLiteral("Zoomed content missing inside the viewport band");
+    return false;
+  }
+  int outlinePixels = 0;
+  for (int x = 0; x < 80; ++x) {
+    // The 1 px dash stroke antialiases across the two rows above the band.
+    for (int y = bandTop - 2; y < bandTop; ++y) {
+      const QColor color = frame.pixelColor(x, y);
+      if (color.blue() > 110 && color.blue() > color.red() + color.green())
+        ++outlinePixels;
+    }
+  }
+  if (outlinePixels < 5) {
+    error = QStringLiteral("Crop outline does not frame the visible image "
+                           "when zoomed (%1 dash pixels)")
+                .arg(outlinePixels);
+    return false;
+  }
+  const QColor belowShadow = frame.pixelColor(60, bandBottom + 6);
+  if (belowShadow.red() >= 33) {
+    error = QStringLiteral("Shadow left the visible image edge when zoomed "
+                           "(probe %1)")
+                .arg(belowShadow.name());
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 /** Diagonal submenu approaches must not dismiss an already-open popover. */
 bool runSubmenuSelectionTriangleSmoke(QApplication &application, QString &error) {
   CaptureData capture;
@@ -5849,6 +5928,10 @@ int main(int argc, char **argv) {
   if (!runWindowedPaletteAnchorCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 125;
+  }
+  if (!runWindowedZoomFramingCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 200;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
