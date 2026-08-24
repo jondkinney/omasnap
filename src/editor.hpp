@@ -278,6 +278,20 @@ public:
   }
   /// The layer surface this editor lives on. The scroll state toggles its
   /// keyboard interactivity and input mask while the page underneath is live.
+  /** The editor runs as a normal compositor window, not the overlay. */
+  void setWindowedPresentation(bool windowed) {
+    windowedPresentation_ = windowed;
+  }
+  /** A windowed editor's backdrop: solid, or the overlay's see-through
+   *  dim. Solid also drops the translucent surface: an alpha window shows
+   *  the desktop through any repaint gap while resizing or zooming. */
+  void setWindowedBackdropOpaque(bool opaque) {
+    windowedBackdropOpaque_ = opaque;
+    if (windowedPresentation_ && opaque)
+      setAttribute(Qt::WA_TranslucentBackground, false);
+  }
+  /** Top of the content band (below the pinned chrome in a window). */
+  [[nodiscard]] qreal contentBandTop() const;
   void setLayerWindow(LayerShellQt::Window *layer) { layer_ = layer; }
   /// Whether the select phase is in scroll mode. Test accessor.
   [[nodiscard]] bool scrollModeForTest() const { return scrollMode_; }
@@ -403,6 +417,8 @@ private:
   [[nodiscard]] int hoveredSpotlightAt(const QPointF &position) const;
   [[nodiscard]] QRectF normalizedSelection(const QPointF &first,
                                            const QPointF &second) const;
+  /// Top edge of the toolbar row: pinned under the key guide when
+  /// windowed, hugging the canvas on the overlay. Popovers anchor to it.
   [[nodiscard]] QRectF colorPaletteRect() const;
   [[nodiscard]] QRectF customColorPanelRect() const;
   [[nodiscard]] QRectF shapeMenuRect() const;
@@ -593,6 +609,8 @@ private:
   QImage pristineSource_;
   QSize pristineLogicalSize_;
   QVector<CutOp> cuts_;
+  bool windowedPresentation_ = false;
+  bool windowedBackdropOpaque_ = true;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
   /// Set by the first key event, which carries a fresh modifier snapshot.
