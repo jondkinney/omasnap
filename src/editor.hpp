@@ -5,6 +5,7 @@
 #include "overlay-chrome.hpp"
 #include "palette-config.hpp"
 #include "recent-snaps.hpp"
+#include "stroke-smoothing.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -91,6 +92,19 @@ public:
   /** Current monitor data (background capture may be in flight). */
   const CaptureData &captureData() const { return capture_; }
   [[nodiscard]] QRectF currentSelection() const { return selection_; }
+  /** Annotation-space canvas, including any strips grown past the source. */
+  [[nodiscard]] QRectF currentCanvasForTest() const { return canvasRect_; }
+  /** Fitted canvas and source-frame geometry used by headless interactions. */
+  [[nodiscard]] QRectF sourceFrameWidgetRectForTest() const {
+    return sourceFrameWidgetRect();
+  }
+  [[nodiscard]] QPointF annotationPointToWidgetForTest(
+      const QPointF &point) const {
+    return sourceFrameWidgetRect().topLeft() + point * editScale();
+  }
+  [[nodiscard]] const QVector<Annotation> &currentAnnotationsForTest() const {
+    return annotations_;
+  }
   [[nodiscard]] const QVector<Operation> &operationLog() const { return ops_; }
   [[nodiscard]] int operationIndex() const { return opIndex_; }
   [[nodiscard]] QString workingSourcePath() const { return snapshotPath_; }
@@ -146,6 +160,8 @@ public:
     /// that have only one (a text's wrap width).
     ResizeStart,
     ResizeEnd,
+    /// The on-curve midpoint handle that bends a Curved/Double arrow.
+    ResizeControl,
     /// A box's eight handles, in the same clockwise order as the crop ones.
     ResizeTopLeft,
     ResizeTop,
@@ -193,6 +209,7 @@ private:
   struct EditState {
     QVector<Annotation> annotations;
     BackgroundStyle backgroundStyle = BackgroundStyle::None;
+    bool imageShadow = true;
     QRectF selection;
     int selectedAnnotation = -1;
     QVector<int> selectedAnnotations;
@@ -201,7 +218,6 @@ private:
   };
 
   [[nodiscard]] QRectF annotationBounds(const Annotation &annotation) const;
-  [[nodiscard]] QRectF selectedAnnotationsBounds() const;
   void selectAllAnnotations();
   [[nodiscard]] bool annotationSelected(int index) const;
   /// What a pointer event reports, or nothing until a key event has confirmed
@@ -374,6 +390,8 @@ private:
   /// baseImageRect transformed by the current view zoom and pan (content and
   /// annotations map through this). Equals baseImageRect at zoom 1.
   [[nodiscard]] QRectF editImageRect() const;
+  /// The unmodified screenshot's frame inside the possibly-grown canvas.
+  [[nodiscard]] QRectF sourceFrameWidgetRect() const;
   [[nodiscard]] qreal editScale() const;
   /// Multiplier from the fit scale to the largest useful zoom (1 source px ->
   /// a few screen px); 1.0 when the image already fits comfortably.
@@ -386,6 +404,10 @@ private:
   void clampViewOffset();
   [[nodiscard]] QPointF toAnnotationPoint(const QPointF &position) const;
   [[nodiscard]] QPointF toUnclampedAnnotationPoint(const QPointF &position) const;
+  /// Counters sit just ahead of the pointing-hand hotspot, as though its tip
+  /// is placing them. The lead is screen-space so zooming never moves the
+  /// counter closer to or farther from the cursor.
+  [[nodiscard]] QPointF markerPlacementPoint(const QPointF &position) const;
   [[nodiscard]] bool selectedLayerAcceptsPoint(const QPointF &point) const;
   [[nodiscard]] QRectF sourceRect(const QRectF &logicalRect) const;
   [[nodiscard]] QPointF sourcePoint(const QPointF &logicalPoint) const;
@@ -462,6 +484,9 @@ private:
   void reopenRecent(int index);
   void duplicateSelectedAnnotation();
   [[nodiscard]] EditState editState() const;
+  void refreshCanvasRect();
+  [[nodiscard]] bool canvasGrown() const;
+  [[nodiscard]] BackgroundStyle effectiveBackgroundStyle() const;
   void enterEdit(QString status);
 public:
 
@@ -475,7 +500,8 @@ private:
   void commitDelete(const QVector<int> &indices);
   void commitCrop(const QRectF &crop);
   void commitCut(CutOp cut);
-  void commitBackground(BackgroundStyle style);
+  void commitBackground(BackgroundStyle style, bool imageShadow);
+  void cycleBackground();
   void replayLog();
   void redoEdit();
   void selectWindowInDirection(int key);
@@ -493,14 +519,16 @@ private:
   void setStatus(QString status);
   void toggleShapeFill();
   void toggleTextBackground();
+  void cycleArrowStyle();
+  void cycleTextFont();
   void nudgeSelectedAnnotation(const QPointF &delta);
   void endNudgeRun();
   /// Wheel over a selected layer: weight, not size. Thickness for anything
   /// with a stroke, the counter or text's own size, magnification for a
   /// spotlight, extent for the one kind that is all fill.
   void adjustSelectedAnnotation(int step);
-  /// Alt+wheel on the selected layer: a spotlight's ring. False when the layer
-  /// has no second setting to move.
+  /// Alt+wheel on the selected layer: a spotlight's ring or a pen stroke's
+  /// smoothing. False when the layer has no second setting to move.
   bool adjustSelectedAnnotationRing(int step);
   /// Starts (or extends) the window in which the selection chrome steps back
   /// so a wheel adjustment can be seen. The handles sit exactly where a
@@ -551,6 +579,10 @@ private:
   QElapsedTimer recentsAnimClock_;
   QTimer recentsAnimTimer_;
   QRectF selection_;
+  // Annotation coordinates stay anchored to the source frame at 0,0. This
+  // derived rect expands around them without translating either the source or
+  // existing layers; replaying the op log reconstructs it exactly.
+  QRectF canvasRect_;
   QPointF dragStart_;
   QRectF originalSelection_;
   QRectF cropDragImageRect_;
@@ -574,6 +606,7 @@ private:
   /// Coordinates and size are selection-relative logical pixels, so the lock
   /// survives view zoom and native/fractional monitor scaling.
   std::optional<HighlighterLock> highlighterLock_;
+  stroke::InputSmoother freehandInputSmoother_;
   /// Detected row supplying the Snap cursor's height. Before mouse-down its
   /// center follows the pointer; during a locked drag it follows the row.
   std::optional<HighlighterLock> highlighterPreview_;
@@ -591,6 +624,7 @@ private:
   qreal cutDragOriginOffset_ = 0.0;
   bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
+  bool imageShadow_ = true;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
   bool customColorPickerOpen_ = false;
@@ -608,6 +642,8 @@ private:
   qreal customHue_ = 0.98;
   int nextMarker_ = 1;
   qreal annotationSize_ = 4.0;
+  ArrowStyle arrowStyle_ = ArrowStyle::Standard;
+  int freehandSmoothingLevel_ = stroke::defaultSmoothingLevel;
   bool fillShapes_ = false;
   qreal cornerRadius_ = 0.0;
   /// True while a wheel adjustment is in flight; the selection chrome draws
@@ -616,6 +652,9 @@ private:
   QTimer adjustSettleTimer_;
   int textSizeIndex_ = 1;
   TextBackground textBackground_ = TextBackground::Pill;
+  /// Typeface for the next label; Shift+T cycles it without changing Neucha's
+  /// role as the session default.
+  TextFont textFont_ = TextFont::Neucha;
   qreal spotlightMagnification_ = 2.0;
   /// Ring drawn around a spotlight's opening; 0 draws none.
   qreal spotlightBorder_ = 4.0;
@@ -682,10 +721,13 @@ private:
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;
   qreal textSize_ = 4.0;
+  /// Typeface held by the active inline draft (existing layer or next-label
+  /// default), kept alongside textSize_ so its baseline does not jump.
+  TextFont textEditFont_ = TextFont::Neucha;
   QElapsedTimer escapeTimer_;
   /// The inline editor's pill and caret are painted by the editor itself
   /// (the multiline editor stays transparent with its own caret hidden) so the
-  /// caret can be shorter than Neucha's tall line box.
+  /// caret follows the selected face's glyph box instead of its whole line box.
   bool textEditPill_ = false;
   /// How many lines the current text entry has room for (see beginText).
   int textLineCapacity_ = 1;

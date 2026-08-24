@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include <QPainterPath>
 #include <QColor>
@@ -43,12 +44,14 @@ struct CaptureData {
   QVector<WindowTarget> windows;
 };
 
-enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
+enum class BackgroundStyle { None, Slate, Aurora, Sunset, Lagoon, Violet };
 enum class QuickOutputMode { None, Copy, Save, Both };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
 enum class RedactionStyle { Solid, Pixelate };
 enum class TextBackground { Plain, Pill, Outline };
+enum class ArrowStyle { Standard, Pointy, Curved, Double };
+enum class TextFont { Neucha, JetBrainsMono, InterDisplay };
 
 struct Annotation {
   enum class Kind {
@@ -79,9 +82,19 @@ struct Annotation {
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;
   quint32 redactionSeed = 0;
   TextBackground textBackground = TextBackground::Pill;
+  ArrowStyle arrowStyle = ArrowStyle::Standard;
+  /// Typeface is a layer property so reopened and duplicated labels keep it.
+  TextFont textFont = TextFont::Neucha;
   quint64 id = 0;
   /// Wrap width for text layers in image px; 0 wraps at the canvas edge.
   qreal textWidth = 0.0;
+  /** Explicit quadratic Bezier control for Curved/Double arrows. Empty uses
+   *  the calibrated perpendicular-offset curve. */
+  std::optional<QPointF> curveControl = std::nullopt;
+  /// Live-filtered pen geometry retained so smoothing changes never compound.
+  QVector<QPointF> rawPoints{};
+  /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
+  int smoothingLevel = 0;
 
   bool operator==(const Annotation &) const = default;
 };
@@ -92,6 +105,7 @@ struct Operation {
   Type type = Type::Annotate;
   QRectF crop;
   BackgroundStyle background = BackgroundStyle::None;
+  bool imageShadow = true;
   QVector<Annotation> annotations;
   QVector<quint64> ids;
   CutOp cut;
@@ -120,7 +134,11 @@ enum class AnnotationLayer { Redaction, Default };
 }
 
 [[nodiscard]] bool loadCaptureFonts();
-[[nodiscard]] QFont annotationTextFont(qreal size);
+/** User-facing name for a bundled annotation typeface. */
+[[nodiscard]] QString annotationTextFontName(TextFont textFont);
+/** Bundled annotation font at Omasnap's logical text size. */
+[[nodiscard]] QFont annotationTextFont(qreal size,
+                                       TextFont textFont = TextFont::Neucha);
 /**
  * Discovers the focused monitor (name, geometry, scale). Fast: only one
  * `hyprctl monitors` call. Safe to call on the main thread to position the
@@ -155,6 +173,16 @@ inline constexpr qreal kMinimumTextWrapWidth = 48.0;
                                               qreal canvasWidth = 0.0);
 [[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation,
                                           qreal canvasWidth = 0.0);
+/**
+ * Tight, pixel-aligned annotation space containing both the source frame and
+ * every annotation's painted extent. The source frame always starts at 0,0;
+ * a negative top/left means background was added before it. Keeping this as a
+ * derived value avoids translating layers or repeatedly copying the source as
+ * the canvas grows and shrinks.
+ */
+[[nodiscard]] QRectF
+captureCanvasRect(const QSizeF &sourceFrameSize,
+                  const QVector<Annotation> &annotations);
 /** Captures the named output through ext-image-copy-capture. */
 /** A live native capture session for one output (`MonitorInfo::name`, e.g.
  *  "DP-3") over its own Wayland connection: open once, then grab frames
@@ -206,7 +234,8 @@ void describeFileCapture(CaptureData &capture, QImage image,
 [[nodiscard]] QImage renderCapture(const CaptureData &capture,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,
-                                   BackgroundStyle backgroundStyle);
+                                   BackgroundStyle backgroundStyle,
+                                   bool imageShadow = true);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
@@ -214,8 +243,22 @@ void describeFileCapture(CaptureData &capture, QImage image,
 [[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,
                                QString &error);
 [[nodiscard]] bool copyTextToClipboard(const QString &text, QString &error);
+/** Paints one annotation. `arrowDisplayScale` affects only the on-screen tail
+ *  legibility floor for Standard/Pointy arrows; exports use the default 1.0. */
 void paintAnnotation(QPainter &painter, const Annotation &annotation,
-                     qreal canvasWidth = 0.0);
+                     qreal canvasWidth = 0.0,
+                     qreal arrowDisplayScale = 1.0);
+/** Visual extent of an arrow, including its head and stroke. The optional
+ *  display scale matches the preview-only Standard/Pointy tail floor; canvas
+ *  growth and exports use the natural 1.0 default. */
+[[nodiscard]] QRectF arrowVisualBounds(const Annotation &annotation,
+                                       qreal displayScale = 1.0);
+/** The on-curve midpoint handle used to reshape Curved/Double arrows. */
+[[nodiscard]] QPointF arrowCurveHandlePoint(const Annotation &annotation);
+/** Shape-aware arrow hit test in annotation-space pixels. */
+[[nodiscard]] bool arrowContainsPoint(const Annotation &annotation,
+                                      const QPointF &point,
+                                      qreal tolerance = 0.0);
 [[nodiscard]] QPainterPath spotlightPath(const Annotation &annotation);
 void paintSpotlights(QPainter &painter, const QImage &source,
                      const QRectF &targetBounds, const QRectF &sourceRect,
@@ -227,9 +270,14 @@ void paintSpotlights(QPainter &painter, const QImage &source,
  */
 void paintDefaultLayer(QPainter &painter, const QImage &redacted,
                        const QRectF &logicalBounds,
-                       const QVector<Annotation> &annotations);
+                       const QVector<Annotation> &annotations,
+                       qreal textCanvasWidth = 0.0,
+                       qreal arrowDisplayScale = 1.0);
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
                             BackgroundStyle backgroundStyle);
+/** Paints the app's soft ambient-plus-key shadow around `imageRect`. */
+void paintCaptureImageShadow(QPainter &painter, const QRectF &imageRect,
+                             qreal scaleX = 1.0, qreal scaleY = 1.0);
 /**
  * Renders the selection region at `targetSize` for the redaction layer. The
  * result carries no annotations; callers overlay redactions with

@@ -16,15 +16,23 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Window capture is a crop of the focused-monitor frame. Overlapping windows stay
   visible; there is no second clean-window recapture.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
-- Arrows, straight lines, smoothed freehand strokes, and translucent highlighter
-  strokes that automatically match and stay straight across screenshot text (with
-  freehand fallback), plus hollow or filled rectangles (optionally rounded) and
-  ellipses, numbered markers, editable Neucha text (on a readability pill), and
-  secure redaction with opaque or randomized non-spatial mosaic output.
+- Draw, type, resize, or carry a layer past the screenshot edge to grow the canvas.
+  New strips start in the window gray with the original screenshot's card shadow.
+  `B` goes straight through the colorful backdrops with shadows. Fullscreen then
+  shows shadowed and flat window gray, including after the canvas grows. A normal
+  opaque window launches on shadowed gray and therefore finishes with flat and
+  then shadowed gray before returning to color. `Shift+B` toggles the current
+  shadow directly, and undo/delete can contract grown strips again.
+- Standard, pointy, curved, and double-headed arrows; straight lines; smoothed
+  freehand strokes; and translucent highlighter strokes with a fluid I-beam height
+  preview and optional text-line snapping, plus hollow or filled rectangles
+  (optionally rounded) and ellipses, numbered markers, editable text in Neucha,
+  JetBrains Mono, or Inter Display with pill, outline, or plain styling, and secure
+  opaque or randomized non-spatial mosaic redaction.
 - Per-layer preset or custom colors (including highlighter ink), undo/redo history,
   one-click whole-image or drag-region OCR (the recognized text is shown beside
   the image and copied to the clipboard),
-  mesh-gradient backdrops, and rendered drop shadows.
+  mesh-gradient backdrops, and rendered drop shadows on standard backdrop cards.
 - Cut tool: drag across a band of the image to remove it and collapse the gap, with a
   live preview and dashed seam marker while dragging; annotations shift to follow.
 - Pin a finished capture as a bottom-right always-on-top layer surface, launched
@@ -138,6 +146,8 @@ The install step places:
 - `~/.local/bin/omasnap`
 - `~/.local/share/applications/omasnap.desktop`
 - `~/.local/share/licenses/omasnap/Neucha-OFL.txt`
+- `~/.local/share/licenses/omasnap/JetBrainsMono-OFL.txt`
+- `~/.local/share/licenses/omasnap/Inter-OFL.txt`
 
 Ensure `~/.local/bin` is on `PATH`, then verify the installed CLI:
 
@@ -341,11 +351,11 @@ without reaching for the pointer.
 
 | Input | Action |
 |---|---|
-| `V` | Select/move/resize layers; drag empty canvas for a marquee; wheel scales the selected layer |
-| `A` | Arrow |
+| `V` | Select/move/resize layers; carrying one past the source grows the canvas; drag empty canvas for a marquee; multi-select outlines each layer without treating the canvas as one layer; wheel scales the selected layer |
+| `A` | Arrow; press again to cycle Standard, Pointy, Curved, and Double styles |
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |
-| `F` | Freehand stroke |
+| `F` | Freehand pen; medium smoothing by default |
 | `H` | Highlighter; Snap mode uses a mouse-following I-beam at the nearby text height, then locks the drag straight to that row. Press `H` again (or click the active toolbar button) for Normal freehand mode, where wheel or `Alt`+wheel changes thickness; Snap keeps detected-row height automatic and wheel sets only its off-text fallback |
 | `I` | Eyedropper in the color popover · sample the image as the custom color |
 | `C` | Numbered marker |
@@ -353,16 +363,18 @@ without reaching for the pointer.
 | `E` | Ellipse; shares the shape submenu and filled/hollow toggle |
 | `D` | Redact; press again to toggle randomized pixelation or solid redaction |
 | `X` | Cut out a band; drag to preview the crossed-out strip, then release to remove and collapse it |
-| `T` | Neucha text on a cream readability pill. Click for a one-line label, or drag a box to give it room for several lines: Enter moves to the next line while there is room and commits on the last one; `Shift+Enter` always adds a line; `Esc` commits too but keeps the label selected, so `Backspace` removes it; long text wraps at the canvas edge or at a width you drag from its handle; clicking away keeps the text; press T again to toggle the pill |
+| `T` | Text with Neucha as the default. Click for a one-line label, or drag a box to give it room for several lines: Enter moves to the next line while there is room and commits on the last one; `Shift+Enter` always adds a line; `Esc` commits too but keeps the label selected, so `Backspace` removes it; long text wraps at the canvas edge or at a width you drag from its handle; clicking away keeps the text; press T again to cycle pill, outline, and plain styles |
+| `Shift+T` | Cycle the next or selected text through Neucha, JetBrains Mono, and Inter Display |
 | `O` | Recognize and copy all text in the current image |
-| `B` | Cycle backdrop |
+| `B` | Cycle shadowed colors, then window gray; fullscreen shows shadowed then flat gray, while a normal window shows flat then shadowed gray |
+| `Shift+B` | Toggle the screenshot card's drop shadow; on by default |
 | `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
-| Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius or spotlight border); while just viewing a zoomed capture, scroll it like a document |
+| Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: selected pen smoothing from 0–6, the next pen's smoothing when none is selected, rectangle corner radius, or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
 | `Ctrl`+wheel · middle-drag | Zoom about the cursor · pan by dragging |
 | `+` / `-` / `0` (also with `Ctrl`) | Zoom in / out / fit |
-| Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap lines and arrows to 45°; while dragging a selected layer's handle, keep a rectangle, redaction or spotlight's aspect ratio (lines and arrows: 45°) |
+| Hold `Shift` while dragging | Make rectangles, ellipses, and spotlights 1:1; snap line and arrow endpoints to 45°; keep curved-arrow bends centered; while dragging a selected layer's handle, keep a rectangle, redaction or spotlight's aspect ratio |
 | Hold `Alt` while dragging | Center rectangles, ellipses, and spotlights on the press point; add `Shift` for a centered square/circle |
 | `←` `↑` `→` `↓` | Nudge the selected layer 1 px; hold `Shift` for 10 px (a held key is one undo step). With nothing selected, pan a zoomed capture |
 | Double-click text · `Enter` on a selected text | Reopen text editing |
@@ -408,9 +420,11 @@ available after the pin is closed. No font-based symbol set or compositor-specif
 rule is required; the controls use the same vector icon renderer as the annotation toolbar.
 
 Creation tools return to Select after one placement without selecting the new layer. In
-Select mode, arrows and lines show only their two endpoint handles; other layers show a
-selection boundary. The eight blue/white handles outside the image recrop its corners or
-edges.
+Select mode, lines and straight arrows show two endpoint handles; curved and double arrows
+add an on-curve handle for bending the arc (hold `Shift` to keep that bend centered). Other
+layers show a selection boundary. The eight blue/white handles outside the image recrop its
+corners or edges. After the canvas grows, those crop handles remain on the original source
+frame.
 
 ## Development and verification
 
@@ -421,7 +435,8 @@ make check
 The smoke executable exercises region/window/fullscreen startup modes, capture selection,
 working-document persistence (source plus op-log JSON), annotation tools, undo/redo
 replay, vector movement and scaling, text editing, OCR, native-DPI output,
-endpoint-only line selection, external crop handles, and the native-pixel
+endpoint-only line selection, annotation-driven canvas growth, external crop handles,
+and the native-pixel
 measurement readout on a scaled monitor.
 
 `.github/workflows/build-linux.yml` runs the same `make check` build, interaction smoke,
@@ -447,5 +462,6 @@ This standalone repository was extracted with `git filter-repo` from the origina
 system-customization repository. The former `omasnap/` directory was promoted to
 the repository root while retaining its relevant commit history.
 
-The bundled Neucha font is distributed under the SIL Open Font License; its license is in
-`assets/OFL.txt` and is installed with the application.
+The bundled Neucha, JetBrains Mono, and Inter Display fonts are distributed
+under the SIL Open Font License. Their provenance and hashes are recorded in
+`assets/FONTS.md`; their licenses are installed with the application.
