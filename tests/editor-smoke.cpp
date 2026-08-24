@@ -4501,6 +4501,28 @@ bool runShapeFillToolSmoke(QApplication &application, QString &error) {
     return false;
   }
 
+  // Alt+wheel on a selected rectangle rounds that rectangle, undoably,
+  // instead of retuning the armed tool's default.
+  QTest::keyClick(&editor, Qt::Key_V);
+  application.processEvents();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(550, 250));
+  wheel(1, Qt::AltModifier);
+  Annotation roundedMore = rounded;
+  roundedMore.cornerRadius = 14;
+  if (!snapshotMatches(expected({hollow, filled, roundedMore, squareAgain}))) {
+    error = QStringLiteral("Alt+wheel did not round the selected rectangle");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(expected({hollow, filled, rounded, squareAgain}))) {
+    error = QStringLiteral("Rounding the selected rectangle was not undoable");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(680, 480));
+  QTest::keyClick(&editor, Qt::Key_R);
+  application.processEvents();
+
   // Ellipses share the fill flag; E again toggles it back to hollow.
   QTest::keyClick(&editor, Qt::Key_E);
   QTest::keyClick(&editor, Qt::Key_E);
