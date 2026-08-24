@@ -1457,6 +1457,8 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
   if (size.width() > room.width() || size.height() > room.height())
     size.scale(room, Qt::KeepAspectRatio);
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
+}
+
 bool savePinnedSnapshot(const QImage &image, const QString &path,
                         const QSize &logicalSize, QString &error) {
   if (!saveTemporarySnapshot(image, path, error))
