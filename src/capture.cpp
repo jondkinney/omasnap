@@ -1218,7 +1218,9 @@ void prunePinnedSnapshots() {
     return;
   const QDateTime cutoff = QDateTime::currentDateTime().addDays(-1);
   const QFileInfoList stale =
-      QDir(runtime).entryInfoList({QStringLiteral("pin-*.png")}, QDir::Files);
+      QDir(runtime).entryInfoList({QStringLiteral("pin-*.png"),
+                                   QStringLiteral("pin-*.json")},
+                                  QDir::Files);
   for (const QFileInfo &entry : stale) {
     if (entry.lastModified() >= cutoff)
       continue;
@@ -1269,6 +1271,24 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
   if (size.width() > room.width() || size.height() > room.height())
     size.scale(room, Qt::KeepAspectRatio);
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
+}
+
+bool savePinnedSnapshot(const QImage &image, const QString &path,
+                        const QSize &logicalSize, QString &error) {
+  if (!saveTemporarySnapshot(image, path, error))
+    return false;
+  // The snapshot holds device pixels; the sidecar records the logical size
+  // the capture was presented at, the same way a shelf entry's log does, so
+  // a later edit of the pin reconstructs the scale instead of opening the
+  // image blown up.
+  OperationLog sidecar;
+  sidecar.previewSize = logicalSize;
+  if (!logicalSize.isEmpty() &&
+      !saveOperationLog(operationLogPath(path), sidecar, error)) {
+    QFile::remove(path);
+    return false;
+  }
+  return true;
 }
 
 bool saveTemporarySnapshot(const QImage &image, QString path, QString &error,

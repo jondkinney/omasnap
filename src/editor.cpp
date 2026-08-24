@@ -748,7 +748,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     const QString path = pendingPinPath_;
     const QImage image = pinWatcher_.result();
     QString error;
-    if (image.isNull() || !saveTemporarySnapshot(image, path, error)) {
+    if (image.isNull() ||
+        !savePinnedSnapshot(image, path, pendingPinLogicalSize_, error)) {
       --pinCount_;
       setStatus(error.isEmpty()
                     ? QStringLiteral("Could not render pinned capture")
@@ -758,6 +759,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                  {QStringLiteral("--pin"), path})) {
       QFile::remove(path);
+      QFile::remove(operationLogPath(path));
       --pinCount_;
       setStatus(QStringLiteral("Could not start pinned capture"));
       return;
@@ -2600,6 +2602,7 @@ void CaptureEditor::pinSnapshot() {
     return;
   }
   pendingPinPath_ = path;
+  pendingPinLogicalSize_ = selection_.size().toSize();
   pinPending_ = true;
   setStatus(QStringLiteral("Preparing pinned capture…"));
   const CaptureData captureCopy = capture_;
