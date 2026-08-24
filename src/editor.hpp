@@ -252,8 +252,20 @@ public:
     if (windowedPresentation_ && opaque)
       setAttribute(Qt::WA_TranslucentBackground, false);
   }
+  /** Hand a fresh capture straight to a windowed editor when it enters the
+   *  edit phase (the [editor] mode = window flow). */
+  void setWindowedHandoffOnEdit(bool handoff) {
+    windowedHandoffOnEdit_ = handoff;
+  }
+  /** Flushes the working document and copies it to a private handoff path
+   *  with the selection recorded as a leading crop. Public for the smoke:
+   *  the round trip back through file mode is what proves the handoff. */
   /** Top of the content band (below the pinned chrome in a window). */
   [[nodiscard]] qreal contentBandTop() const;
+  [[nodiscard]] bool prepareHandoff(QString &path, QString &error);
+  /** Re-presents this edit in the other editor (window or overlay) by
+   *  spawning it on the handoff document and closing this one. */
+  void handOffEditor(bool toWindow);
   void setLayerWindow(LayerShellQt::Window *layer) { layer_ = layer; }
   /// Whether the select phase is in scroll mode. Test accessor.
   [[nodiscard]] bool scrollModeForTest() const { return scrollMode_; }
@@ -490,6 +502,7 @@ private:
   QSize pristineLogicalSize_;
   QVector<CutOp> cuts_;
   bool windowedPresentation_ = false;
+  bool windowedHandoffOnEdit_ = false;
   bool windowedBackdropOpaque_ = true;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;

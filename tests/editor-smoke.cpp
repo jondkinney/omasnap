@@ -1357,6 +1357,86 @@ bool runEditorWindowConfigCheck(QString &error) {
   return true;
 }
 
+/** Handing a live edit to the other presentation keeps everything: the
+ *  selection, the layers, and the undo history survive the round trip
+ *  through the handoff document and file mode. */
+bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {1600, 1200};
+  capture.monitor.scale = 2.0;
+  capture.source = QImage(1600, 1200, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::white);
+  capture.previewSize = QSize(800, 600);
+
+  CaptureEditor editor(capture);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_R);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(300, 260), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 260));
+  application.processEvents();
+  if (editor.annotationCountForTest() != 1) {
+    error = QStringLiteral("Handoff fixture did not draw its rectangle");
+    return false;
+  }
+
+  QString path;
+  if (!editor.prepareHandoff(path, error))
+    return false;
+  const QString logPath = operationLogPath(path);
+  const auto cleanup = [&] {
+    QFile::remove(path);
+    QFile::remove(logPath);
+  };
+  if (!path.contains(QStringLiteral("edit-"))) {
+    cleanup();
+    error = QStringLiteral("Handoff document has no private edit- name");
+    return false;
+  }
+
+  QImage image(path);
+  OperationLog log;
+  if (image.isNull() || !loadOperationLog(logPath, log, error)) {
+    cleanup();
+    return false;
+  }
+  CaptureData reopened;
+  describeFileCapture(reopened, std::move(image), log);
+  CaptureEditor window(reopened, CaptureEditor::CaptureMode::File,
+                       QuickOutputMode::None, log);
+  window.setSuppressSnapshots(true);
+  window.resize(800, 600);
+  window.show();
+  application.processEvents();
+  if (window.currentSelection() != QRectF(100, 100, 550, 370)) {
+    cleanup();
+    error = QStringLiteral("The selection did not survive the handoff");
+    return false;
+  }
+  if (window.annotationCountForTest() != 1) {
+    cleanup();
+    error = QStringLiteral("The annotation did not survive the handoff");
+    return false;
+  }
+  QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (window.annotationCountForTest() != 0) {
+    cleanup();
+    error = QStringLiteral("The undo history did not survive the handoff");
+    return false;
+  }
+  cleanup();
+  return true;
+}
+
 /** Checks that clicking away commits in-progress text instead of losing it. */
 bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -5924,6 +6004,10 @@ int main(int argc, char **argv) {
   if (!runEditorWindowConfigCheck(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 4;
+  }
+  if (!runEditorHandoffRoundTrip(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 6;
   }
   if (!runWindowedPaletteAnchorCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
