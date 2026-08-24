@@ -2481,6 +2481,53 @@ void CaptureEditor::waitForExport() {
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
+bool CaptureEditor::prepareHandoff(QString &path, QString &error) {
+  scheduleSnapshot();
+  if (!waitForSnapshot()) {
+    error = QStringLiteral("Could not flush the working document");
+    return false;
+  }
+  pruneEditorHandoffs();
+  path = editorHandoffPath();
+  if (path.isEmpty()) {
+    error = QStringLiteral("Could not create private runtime directory");
+    return false;
+  }
+  if (!QFile::copy(snapshotPath_, path) ||
+      !QFile::copy(workingLogPath(), operationLogPath(path))) {
+    QFile::remove(path);
+    QFile::remove(operationLogPath(path));
+    error = QStringLiteral("Could not copy the working document");
+    return false;
+  }
+  return true;
+}
+
+void CaptureEditor::handOffEditor(bool toWindow) {
+  if (busy_)
+    return;
+  QString path;
+  QString error;
+  if (!prepareHandoff(path, error)) {
+    setStatus(error);
+    return;
+  }
+  // The presentation is a property of the process (the shell integration is
+  // chosen before Qt connects), so switching means handing the working
+  // document to a fresh process and closing this one. The op log carries the
+  // selection, the layers, and the undo history across.
+  if (!QProcess::startDetached(
+          QCoreApplication::applicationFilePath(),
+          {path, QStringLiteral("--editor"),
+           toWindow ? QStringLiteral("window") : QStringLiteral("overlay")})) {
+    QFile::remove(path);
+    QFile::remove(operationLogPath(path));
+    setStatus(QStringLiteral("Could not start omasnap"));
+    return;
+  }
+  close();
+}
+
 void CaptureEditor::waitForReopen() {
   while (reopenWatcher_.isRunning()) {
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
@@ -2552,6 +2599,10 @@ void CaptureEditor::enterEdit(QString status) {
     commitCrop(selection_);
   else
     scheduleSnapshot();
+  if (windowedHandoffOnEdit_ && captureMode_ != CaptureMode::Scroll) {
+    windowedHandoffOnEdit_ = false;
+    handOffEditor(true);
+  }
 }
 
 void CaptureEditor::enterSelectedCapture(QString editStatus) {
@@ -3519,6 +3570,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   } else if (event->key() == Qt::Key_P) {
     pinSnapshot();
+    return;
+  } else if (event->key() == Qt::Key_W) {
+    handOffEditor(!windowedPresentation_);
     return;
   } else if (event->key() == Qt::Key_B) {
     const auto next = static_cast<BackgroundStyle>(
@@ -5391,6 +5445,7 @@ QVector<QPair<QString, QString>> editorHotkeyEntries() {
           {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
           {QStringLiteral("D / O"), QStringLiteral("Redact / OCR text")},
           {QStringLiteral("B / P"), QStringLiteral("Backdrop / Pin on screen")},
+          {QStringLiteral("W"), QStringLiteral("Editor to window / overlay")},
           {QStringLiteral("Ctrl+Z"), QStringLiteral("Undo")},
           {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
           {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
