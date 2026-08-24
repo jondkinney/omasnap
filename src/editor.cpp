@@ -1950,8 +1950,14 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   const qreal gap = 4 * scale;
   const qreal total = kToolbarWidth * scale;
   qreal x = (width() - total) / 2.0;
-  const qreal y =
-      std::max<qreal>(10, chromeAnchorTop() - height - kToolbarImageGap);
+  // The capture-kind tabs hang off the top edge and stay up in the edit
+  // phase; zoomed far in, the toolbar stops beneath them instead of
+  // sliding underneath. At fit the toolbar never reaches them, so the
+  // floor only matters past fit.
+  const qreal toolbarFloor =
+      viewZoom_ > 1.0 && !selectTabItems().isEmpty() ? 44 : 10;
+  const qreal y = std::max<qreal>(toolbarFloor,
+                                  chromeAnchorTop() - height - kToolbarImageGap);
   auto add = [&](qreal buttonWidth, QString action, QString label,
                  QString tooltip, QColor color = {}) {
     const qreal scaledWidth = buttonWidth * scale;
