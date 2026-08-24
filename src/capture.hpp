@@ -80,7 +80,7 @@ struct Annotation {
   quint32 redactionSeed = 0;
   TextBackground textBackground = TextBackground::Pill;
   quint64 id = 0;
-  /// Live-filtered pen geometry retained so smoothing changes never compound.
+  /// Raw pointer geometry retained so smoothing changes never compound.
   QVector<QPointF> rawPoints{};
   /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
   int smoothingLevel = 0;
