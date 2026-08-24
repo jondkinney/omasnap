@@ -204,7 +204,7 @@ private:
     QVector<Annotation> annotations;
     BackgroundStyle backgroundStyle = BackgroundStyle::None;
     bool imageShadow = true;
-    CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Grow;
+    CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Framed;
     QRectF selection;
     int selectedAnnotation = -1;
     QVector<int> selectedAnnotations;
@@ -549,7 +549,7 @@ private:
   bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool imageShadow_ = true;
-  CanvasBoundaryMode canvasBoundaryMode_ = CanvasBoundaryMode::Grow;
+  CanvasBoundaryMode canvasBoundaryMode_ = CanvasBoundaryMode::Framed;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
   bool customColorPickerOpen_ = false;

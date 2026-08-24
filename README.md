@@ -17,13 +17,14 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   visible; there is no second clean-window recapture.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
 - Draw, type, resize, or carry a layer past the screenshot edge to grow the canvas.
-  Growth is the default; `G` cycles to clipping at the normal frame or at the
-  original image, and `Shift+G` cycles backward without changing layer geometry.
-  New strips start in the window gray with the original screenshot's card shadow.
-  `B` then cycles through the colorful backdrops with shadows. Fullscreen finishes
-  with shadowed and then flat window gray, including after the canvas grows.
-  `Shift+B` toggles the current shadow directly, and undo/delete can contract grown
-  strips again.
+  Framed growth is the default; `G` cycles to tight Overflow growth (only the
+  sides needed by annotations, with no frame), then Image (the original canvas
+  size, clipping every outside annotation). `Shift+G` cycles backward without
+  changing layer geometry. New framed strips start in window gray with the
+  original screenshot's card shadow. `B` cycles through the colorful backdrops,
+  shadowed and flat window gray, and Off so a background can always be removed.
+  Overflow with no backdrop leaves its added pixels transparent. `Shift+B`
+  toggles the current shadow directly, and undo/delete can contract grown strips.
 - Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
   hollow or filled rectangles (optionally rounded) and ellipses, numbered markers,
   editable Neucha text (on a readability pill), and secure redaction with opaque or
@@ -347,9 +348,9 @@ without reaching for the pointer.
 | `X` | Cut out a band; drag to preview the crossed-out strip, then release to remove and collapse it |
 | `T` | Neucha text on a cream readability pill. Click for a one-line label, or drag a box to give it room for several lines: Enter moves to the next line while there is room and commits on the last one; `Shift+Enter` always adds a line; `Esc` commits too but keeps the label selected, so `Backspace` removes it; clicking away keeps the text; press T again to toggle the pill |
 | `O` | Recognize and copy all text in the current image |
-| `B` | Cycle shadowed colors, then shadowed and flat window gray before returning to blue |
+| `B` | Cycle shadowed colors, window gray (shadowed and flat), and Off |
 | `Shift+B` | Toggle the screenshot card's drop shadow; on by default |
-| `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Grow, Frame, Image. Frame clips at the normal background frame; Image clips at the original screenshot edge |
+| `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Framed, Overflow, Image. Framed auto-grows with the normal frame; Overflow grows only the sides needed by annotations with no frame; Image clips at the original screenshot edge |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
