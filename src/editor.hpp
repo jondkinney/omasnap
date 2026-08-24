@@ -606,7 +606,6 @@ private:
   /// Coordinates and size are selection-relative logical pixels, so the lock
   /// survives view zoom and native/fractional monitor scaling.
   std::optional<HighlighterLock> highlighterLock_;
-  stroke::InputSmoother freehandInputSmoother_;
   /// Detected row supplying the Snap cursor's height. Before mouse-down its
   /// center follows the pointer; during a locked drag it follows the row.
   std::optional<HighlighterLock> highlighterPreview_;

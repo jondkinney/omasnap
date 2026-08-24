@@ -91,7 +91,7 @@ struct Annotation {
   /** Explicit quadratic Bezier control for Curved/Double arrows. Empty uses
    *  the calibrated perpendicular-offset curve. */
   std::optional<QPointF> curveControl = std::nullopt;
-  /// Live-filtered pen geometry retained so smoothing changes never compound.
+  /// Raw pointer geometry retained so smoothing changes never compound.
   QVector<QPointF> rawPoints{};
   /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
   int smoothingLevel = 0;
