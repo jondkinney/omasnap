@@ -45,6 +45,7 @@ struct CaptureData {
 };
 
 enum class BackgroundStyle { None, Slate, Aurora, Sunset, Lagoon, Violet };
+enum class CanvasBoundaryMode { Grow, Frame, Image };
 enum class QuickOutputMode { None, Copy, Save, Both };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
@@ -100,12 +101,21 @@ struct Annotation {
 };
 
 struct Operation {
-  enum class Type { Crop, Background, Annotate, Patch, Delete, Cut };
+  enum class Type {
+    Crop,
+    Background,
+    CanvasBoundary,
+    Annotate,
+    Patch,
+    Delete,
+    Cut
+  };
 
   Type type = Type::Annotate;
   QRectF crop;
   BackgroundStyle background = BackgroundStyle::None;
   bool imageShadow = true;
+  CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Grow;
   QVector<Annotation> annotations;
   QVector<quint64> ids;
   CutOp cut;
@@ -174,15 +184,16 @@ inline constexpr qreal kMinimumTextWrapWidth = 48.0;
 [[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation,
                                           qreal canvasWidth = 0.0);
 /**
- * Tight, pixel-aligned annotation space containing both the source frame and
- * every annotation's painted extent. The source frame always starts at 0,0;
- * a negative top/left means background was added before it. Keeping this as a
- * derived value avoids translating layers or repeatedly copying the source as
- * the canvas grows and shrinks.
+ * Pixel-aligned annotation space selected by `boundaryMode`. Grow contains
+ * every painted extent, Frame stops at the normal backdrop frame, and Image
+ * stops at the source frame. The source always starts at 0,0; a negative
+ * top/left means background was added before it. Keeping this as a derived
+ * value avoids translating layers or repeatedly copying the source.
  */
 [[nodiscard]] QRectF
 captureCanvasRect(const QSizeF &sourceFrameSize,
-                  const QVector<Annotation> &annotations);
+                  const QVector<Annotation> &annotations,
+                  CanvasBoundaryMode boundaryMode = CanvasBoundaryMode::Grow);
 /** Captures the named output through ext-image-copy-capture. */
 /** A live native capture session for one output (`MonitorInfo::name`, e.g.
  *  "DP-3") over its own Wayland connection: open once, then grab frames
@@ -235,7 +246,9 @@ void describeFileCapture(CaptureData &capture, QImage image,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,
                                    BackgroundStyle backgroundStyle,
-                                   bool imageShadow = true);
+                                   bool imageShadow = true,
+                                   CanvasBoundaryMode boundaryMode =
+                                       CanvasBoundaryMode::Grow);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
