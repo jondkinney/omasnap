@@ -318,6 +318,8 @@ QImage applyRedactionsScaled(QImage image, const QVector<Annotation> &redactions
 void prunePinnedSnapshots();
 /** Private runtime path for handing a live edit to the other editor
  *  presentation (overlay to window or back). */
+[[nodiscard]] QString editorHandoffPath();
+void pruneEditorHandoffs();
 /** Window size for a windowed editor: the capture at its logical size
  *  plus the chrome, where `legendHeight` is the measured key guide band,
  *  scaled down to fit inside `available` with a little margin, never
