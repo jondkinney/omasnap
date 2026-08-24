@@ -589,6 +589,7 @@ private:
   QFutureWatcher<QImage> pinWatcher_;
   bool pinPending_ = false;
   QString pendingPinPath_;
+  QSize pendingPinLogicalSize_;
   QVector<Annotation> annotations_;
   QVector<Operation> ops_;
   int opIndex_ = 0;
