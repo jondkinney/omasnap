@@ -1175,8 +1175,8 @@ QString CaptureEditor::toolStatus() const {
   const int size = qRound(annotationSize_);
   switch (tool_) {
   case Tool::Select:
-    return QStringLiteral("Select · drag moves layers · wheel zooms · outer "
-                          "handles crop");
+    return QStringLiteral("Select · drag moves layers · Ctrl+wheel zooms · "
+                          "outer handles crop");
   case Tool::Spotlight: {
     const QString shape =
         spotlightShape_ == SpotlightShape::Ellipse ? QStringLiteral("ellipse")
@@ -2066,7 +2066,7 @@ QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   };
 
   add(36, QStringLiteral("tool-select"), {},
-      QStringLiteral("Select/move · V · Wheel zoom · outer handles crop"));
+      QStringLiteral("Select/move · V · Ctrl+wheel zoom · outer handles crop"));
   add(36, QStringLiteral("tool-arrow"), {},
       QStringLiteral("Arrow · A · Shift snaps 45° · Size %1 · Wheel")
           .arg(qRound(annotationSize_)));
@@ -2717,7 +2717,7 @@ void CaptureEditor::chooseWindow(int index) {
   windowMode_ = false;
   editedKind_ = SelectTab::Window;
   enterEdit(QStringLiteral(
-      "Window selected · Select moves layers · wheel zooms · outer handles "
+      "Window selected · Select moves layers · Ctrl+wheel zooms · outer handles "
       "crop"));
 }
 
@@ -3310,7 +3310,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
           if (!region.isEmpty()) {
             commitRegion(QRectF(region),
                          QStringLiteral("Last area restored · Select moves "
-                                        "layers · wheel zooms · outer handles "
+                                        "layers · Ctrl+wheel zooms · outer handles "
                                         "crop"));
             update();
           }
@@ -4895,7 +4895,8 @@ void CaptureEditor::adoptStitched(const QImage &image) {
                        .arg(image.width())
                        .arg(image.height())
                  : QStringLiteral("Scroll capture stitched · Select moves "
-                                  "layers · wheel zooms · outer handles crop"));
+                                  "layers · Ctrl+wheel zooms · outer handles "
+                                  "crop"));
 }
 
 void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
