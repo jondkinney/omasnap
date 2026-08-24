@@ -1395,6 +1395,17 @@ bool CaptureEditor::adjustSelectedAnnotationRing(int step) {
   if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations_.size())
     return false;
   Annotation &annotation = annotations_[selectedAnnotation_];
+  if (annotation.kind == Annotation::Kind::Rectangle) {
+    // The selected rectangle's own corners, undoably; the armed tool's
+    // default radius stays what it was.
+    annotation.cornerRadius =
+        std::clamp(annotation.cornerRadius + step * kCornerRadiusStep, 0.0,
+                   kMaximumCornerRadius);
+    setStatus(QStringLiteral("Rectangle · %1 · Alt+wheel adjusts")
+                  .arg(cornerName(annotation.cornerRadius)));
+    commitPatch({selectedAnnotation_});
+    return true;
+  }
   if (annotation.kind != Annotation::Kind::Spotlight)
     return false;
   annotation.size = std::clamp(annotation.size + step * 2.0, 0.0, 12.0);
