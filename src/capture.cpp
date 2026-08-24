@@ -70,10 +70,15 @@ QRectF annotationTextBounds(const Annotation &annotation) {
 }
 
 QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
-                         const QVector<Annotation> &annotations) {
-  QRectF canvas(QPointF(), sourceFrameSize);
-  if (canvas.isEmpty())
+                         const QVector<Annotation> &annotations,
+                         CanvasBoundaryMode boundaryMode) {
+  const QRectF sourceFrame(QPointF(), sourceFrameSize);
+  if (sourceFrame.isEmpty())
     return {};
+  if (boundaryMode == CanvasBoundaryMode::Image)
+    return sourceFrame;
+
+  QRectF canvas = sourceFrame;
 
   const auto pointBounds = [](const QVector<QPointF> &points) {
     if (points.isEmpty())
@@ -154,7 +159,6 @@ QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
       canvas = canvas.united(bounds);
   }
 
-  const QRectF sourceFrame(QPointF(), sourceFrameSize);
   const bool growsLeft = canvas.left() < sourceFrame.left();
   const bool growsTop = canvas.top() < sourceFrame.top();
   const bool growsRight = canvas.right() > sourceFrame.right();
@@ -166,6 +170,8 @@ QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
   // whose annotation exceeds it. Source and layer coordinates stay fixed.
   const QRectF backdropFrame = sourceFrame.adjusted(
       -kBackdropMargin, -kBackdropMargin, kBackdropMargin, kBackdropMargin);
+  if (boundaryMode == CanvasBoundaryMode::Frame)
+    return backdropFrame;
   const qreal left = std::floor(std::min(canvas.left(), backdropFrame.left()));
   const qreal top = std::floor(std::min(canvas.top(), backdropFrame.top()));
   const qreal right =
@@ -955,7 +961,8 @@ bool captureFocusedMonitor(CaptureData &capture, bool includeWindows,
 
 QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                      const QVector<Annotation> &annotations,
-                     BackgroundStyle backgroundStyle, bool imageShadow) {
+                     BackgroundStyle backgroundStyle, bool imageShadow,
+                     CanvasBoundaryMode boundaryMode) {
   const QRect pixels = pixelSelection(capture, selection);
   if (pixels.isEmpty())
     return {};
@@ -991,7 +998,8 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                   resized ? scaleY : sourceScaleY,
                   resized ? QPointF{} : sourceOriginOffset);
   const QRectF sourceFrame(QPointF(), selection.size());
-  const QRectF canvas = captureCanvasRect(selection.size(), annotations);
+  const QRectF canvas =
+      captureCanvasRect(selection.size(), annotations, boundaryMode);
   const bool canvasGrown = canvas.left() < sourceFrame.left() - 0.001 ||
                            canvas.top() < sourceFrame.top() - 0.001 ||
                            canvas.right() > sourceFrame.right() + 0.001 ||
@@ -1537,6 +1545,30 @@ bool backgroundStyleFromName(const QString &name, BackgroundStyle &style) {
   return true;
 }
 
+QString canvasBoundaryModeName(CanvasBoundaryMode mode) {
+  switch (mode) {
+  case CanvasBoundaryMode::Grow:
+    return QStringLiteral("grow");
+  case CanvasBoundaryMode::Frame:
+    return QStringLiteral("frame");
+  case CanvasBoundaryMode::Image:
+    return QStringLiteral("image");
+  }
+  return QStringLiteral("grow");
+}
+
+bool canvasBoundaryModeFromName(const QString &name,
+                                CanvasBoundaryMode &mode) {
+  if (name == QStringLiteral("grow"))
+    mode = CanvasBoundaryMode::Grow;
+  else if (name == QStringLiteral("frame"))
+    mode = CanvasBoundaryMode::Frame;
+  else if (name == QStringLiteral("image"))
+    mode = CanvasBoundaryMode::Image;
+  else
+    return false;
+  return true;
+}
 QJsonObject annotationToJson(const Annotation &annotation) {
   QJsonObject object;
   object.insert(QStringLiteral("id"), QString::number(annotation.id));
@@ -1642,6 +1674,11 @@ QJsonObject operationToJson(const Operation &operation) {
                   backgroundStyleName(operation.background));
     object.insert(QStringLiteral("shadow"), operation.imageShadow);
     break;
+  case Operation::Type::CanvasBoundary:
+    object.insert(QStringLiteral("type"), QStringLiteral("canvas-boundary"));
+    object.insert(QStringLiteral("mode"),
+                  canvasBoundaryModeName(operation.canvasBoundary));
+    break;
   case Operation::Type::Annotate:
     object.insert(QStringLiteral("type"), QStringLiteral("annotate"));
     if (!operation.annotations.isEmpty())
@@ -1695,6 +1732,16 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
       return false;
     }
     operation.imageShadow = object.value(QStringLiteral("shadow")).toBool(true);
+    return true;
+  }
+  if (type == QStringLiteral("canvas-boundary")) {
+    operation.type = Operation::Type::CanvasBoundary;
+    if (!canvasBoundaryModeFromName(
+            object.value(QStringLiteral("mode")).toString(),
+            operation.canvasBoundary)) {
+      error = QStringLiteral("Operation log has an unknown canvas boundary");
+      return false;
+    }
     return true;
   }
   if (type == QStringLiteral("annotate")) {

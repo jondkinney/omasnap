@@ -94,6 +94,9 @@ public:
   [[nodiscard]] QRectF currentSelection() const { return selection_; }
   /** Annotation-space canvas, including any strips grown past the source. */
   [[nodiscard]] QRectF currentCanvasForTest() const { return canvasRect_; }
+  [[nodiscard]] CanvasBoundaryMode currentCanvasBoundaryForTest() const {
+    return canvasBoundaryMode_;
+  }
   /** Fitted canvas and source-frame geometry used by headless interactions. */
   [[nodiscard]] QRectF sourceFrameWidgetRectForTest() const {
     return sourceFrameWidgetRect();
@@ -215,6 +218,7 @@ private:
     QVector<Annotation> annotations;
     BackgroundStyle backgroundStyle = BackgroundStyle::None;
     bool imageShadow = true;
+    CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Grow;
     QRectF selection;
     int selectedAnnotation = -1;
     QVector<int> selectedAnnotations;
@@ -493,6 +497,8 @@ private:
   void commitCrop(const QRectF &crop);
   void commitCut(CutOp cut);
   void commitBackground(BackgroundStyle style, bool imageShadow);
+  void commitCanvasBoundary(CanvasBoundaryMode mode);
+  void cycleCanvasBoundary(bool reverse);
   void cycleBackground();
   void replayLog();
   void redoEdit();
@@ -597,6 +603,7 @@ private:
   bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool imageShadow_ = true;
+  CanvasBoundaryMode canvasBoundaryMode_ = CanvasBoundaryMode::Grow;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
   bool customColorPickerOpen_ = false;

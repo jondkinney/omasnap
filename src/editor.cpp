@@ -491,6 +491,18 @@ QString backgroundName(BackgroundStyle style) {
   }
   return {};
 }
+
+QString canvasBoundaryName(CanvasBoundaryMode mode) {
+  switch (mode) {
+  case CanvasBoundaryMode::Grow:
+    return QStringLiteral("Grow");
+  case CanvasBoundaryMode::Frame:
+    return QStringLiteral("Frame");
+  case CanvasBoundaryMode::Image:
+    return QStringLiteral("Image");
+  }
+  return {};
+}
 } // namespace
 
 QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
@@ -2049,15 +2061,16 @@ void CaptureEditor::setStatus(QString status) {
 }
 
 CaptureEditor::EditState CaptureEditor::editState() const {
-  return {annotations_,        backgroundStyle_,     imageShadow_,
-          selection_,          selectedAnnotation_,  selectedAnnotations_,
-          nextMarker_,         cuts_};
+  return {annotations_,       backgroundStyle_,     imageShadow_,
+          canvasBoundaryMode_, selection_,           selectedAnnotation_,
+          selectedAnnotations_, nextMarker_,         cuts_};
 }
 
 void CaptureEditor::refreshCanvasRect() {
   const QRectF next = selection_.isEmpty()
                           ? QRectF()
-                          : captureCanvasRect(selection_.size(), annotations_);
+                          : captureCanvasRect(selection_.size(), annotations_,
+                                              canvasBoundaryMode_);
   if (next == canvasRect_)
     return;
   canvasRect_ = next;
@@ -2086,6 +2099,7 @@ void CaptureEditor::applyEditState(const EditState &state) {
   annotations_ = state.annotations;
   backgroundStyle_ = state.backgroundStyle;
   imageShadow_ = state.imageShadow;
+  canvasBoundaryMode_ = state.canvasBoundary;
   selection_ = state.selection;
   selectedAnnotation_ = std::clamp(state.selectedAnnotation, -1,
                                    static_cast<int>(annotations_.size()) - 1);
@@ -2232,6 +2246,45 @@ void CaptureEditor::commitBackground(BackgroundStyle style, bool imageShadow) {
   commitOp(std::move(op));
 }
 
+void CaptureEditor::commitCanvasBoundary(CanvasBoundaryMode mode) {
+  Operation op;
+  op.type = Operation::Type::CanvasBoundary;
+  op.canvasBoundary = mode;
+  commitOp(std::move(op));
+}
+
+void CaptureEditor::cycleCanvasBoundary(bool reverse) {
+  CanvasBoundaryMode next = CanvasBoundaryMode::Grow;
+  if (reverse) {
+    switch (canvasBoundaryMode_) {
+    case CanvasBoundaryMode::Grow:
+      next = CanvasBoundaryMode::Image;
+      break;
+    case CanvasBoundaryMode::Frame:
+      next = CanvasBoundaryMode::Grow;
+      break;
+    case CanvasBoundaryMode::Image:
+      next = CanvasBoundaryMode::Frame;
+      break;
+    }
+  } else {
+    switch (canvasBoundaryMode_) {
+    case CanvasBoundaryMode::Grow:
+      next = CanvasBoundaryMode::Frame;
+      break;
+    case CanvasBoundaryMode::Frame:
+      next = CanvasBoundaryMode::Image;
+      break;
+    case CanvasBoundaryMode::Image:
+      next = CanvasBoundaryMode::Grow;
+      break;
+    }
+  }
+  setStatus(QStringLiteral("Canvas: %1 · G cycles · Shift+G reverses")
+                .arg(canvasBoundaryName(next)));
+  commitCanvasBoundary(next);
+}
+
 void CaptureEditor::cycleBackground() {
   BackgroundStyle next = BackgroundStyle::None;
   bool nextShadow = true;
@@ -2284,6 +2337,7 @@ void CaptureEditor::replayLog() {
   QRectF selection{QPointF(), QSizeF(startSize)};
   BackgroundStyle background = BackgroundStyle::None;
   bool imageShadow = true;
+  CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Grow;
   QVector<Annotation> annotations;
   QVector<CutOp> cuts;
   int nextMarker = 1;
@@ -2306,6 +2360,9 @@ void CaptureEditor::replayLog() {
     case Operation::Type::Background:
       background = op.background;
       imageShadow = op.imageShadow;
+      break;
+    case Operation::Type::CanvasBoundary:
+      canvasBoundary = op.canvasBoundary;
       break;
     case Operation::Type::Annotate:
       for (const Annotation &annotation : op.annotations)
@@ -2365,6 +2422,7 @@ void CaptureEditor::replayLog() {
   annotations_ = std::move(annotations);
   backgroundStyle_ = background;
   imageShadow_ = imageShadow;
+  canvasBoundaryMode_ = canvasBoundary;
   if (cuts != cuts_) {
     cuts_ = std::move(cuts);
     refreshComposedCapture();
@@ -2457,7 +2515,7 @@ void CaptureEditor::scheduleSnapshot() {
 
 QImage CaptureEditor::renderCurrentOutput() const {
   return renderCapture(capture_, selection_, annotations_, backgroundStyle_,
-                       imageShadow_);
+                       imageShadow_, canvasBoundaryMode_);
 }
 
 void CaptureEditor::startSnapshotRender() {
@@ -2527,12 +2585,14 @@ void CaptureEditor::pinSnapshot() {
   const QRectF selection = selection_;
   const BackgroundStyle background = backgroundStyle_;
   const bool imageShadow = imageShadow_;
+  const CanvasBoundaryMode canvasBoundary = canvasBoundaryMode_;
   pinWatcher_.setFuture(QtConcurrent::run(
-      [captureCopy, annotations, selection, background, imageShadow, path] {
+      [captureCopy, annotations, selection, background, imageShadow,
+       canvasBoundary, path] {
         PinResult result;
-        const QImage image = renderCapture(captureCopy, selection,
-                                           annotations, background,
-                                           imageShadow);
+        const QImage image =
+            renderCapture(captureCopy, selection, annotations, background,
+                          imageShadow, canvasBoundary);
         if (image.isNull() ||
             !savePinnedSnapshot(image, path, selection.size().toSize(),
                                 result.error)) {
@@ -3020,15 +3080,18 @@ void CaptureEditor::finish(OutputMode mode) {
   const QVector<Annotation> annotations = annotations_;
   const BackgroundStyle background = backgroundStyle_;
   const bool imageShadow = imageShadow_;
+  const CanvasBoundaryMode canvasBoundary = canvasBoundaryMode_;
   const QString appSlug =
       appFilenameSlug(dominantAppClass(capture_.windows, selection_));
   finishWatcher_.setFuture(QtConcurrent::run([captureCopy, selection,
                                               annotations, background,
-                                              imageShadow, appSlug, mode]() {
+                                              imageShadow, canvasBoundary,
+                                              appSlug, mode]() {
     FinishResult result;
     result.mode = mode;
     const QImage image = renderCapture(captureCopy, selection, annotations,
-                                       background, imageShadow);
+                                       background, imageShadow,
+                                       canvasBoundary);
     if (!image.isNull())
       result.thumbnail = image.scaled(kRecentThumbEdge, kRecentThumbEdge,
                                       Qt::KeepAspectRatio,
@@ -3539,6 +3602,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() == Qt::Key_P) {
     pinSnapshot();
     return;
+  } else if (event->key() == Qt::Key_G) {
+    cycleCanvasBoundary(
+        event->modifiers().testFlag(Qt::ShiftModifier));
   } else if (event->key() == Qt::Key_B) {
     if (event->modifiers().testFlag(Qt::ShiftModifier)) {
       const bool next = !imageShadow_;
@@ -5587,6 +5653,32 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     preview.size = annotationSize_;
     defaultAnnotations.push_back(std::move(preview));
   }
+  QRectF previewClip = canvasRect_;
+  if (dragging_ && canvasBoundaryMode_ != CanvasBoundaryMode::Grow) {
+    previewClip = captureCanvasRect(selection_.size(), defaultAnnotations,
+                                    canvasBoundaryMode_);
+  }
+  if (previewClip != canvasRect_) {
+    QPainterPath overscan;
+    overscan.addRect(previewClip);
+    QPainterPath settledCanvas;
+    settledCanvas.addRect(canvasRect_);
+    overscan = overscan.subtracted(settledCanvas);
+    const bool previewGrown =
+        previewClip != QRectF(QPointF(), selection_.size());
+    const BackgroundStyle previewBackground =
+        previewGrown && backgroundStyle_ == BackgroundStyle::None
+            ? BackgroundStyle::Slate
+            : background;
+    painter.save();
+    painter.setClipPath(overscan, Qt::IntersectClip);
+    paintCaptureBackground(painter, previewClip, previewBackground);
+    painter.restore();
+  }
+  // Grow shows the complete layer while it is being carried and settles the
+  // background on release. The two clipping modes preview their cutoff live.
+  if (!dragging_ || canvasBoundaryMode_ != CanvasBoundaryMode::Grow)
+    painter.setClipRect(previewClip, Qt::IntersectClip);
   const bool hasSpotlight = std::any_of(
       defaultAnnotations.cbegin(), defaultAnnotations.cend(),
       [](const Annotation &item) {
@@ -5597,7 +5689,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     // when one is present; a dragged preview may temporarily make it larger
     // than the settled canvas, so its opening stays live beyond the old edge.
     const QRectF spotlightCanvas =
-        captureCanvasRect(selection_.size(), defaultAnnotations);
+        captureCanvasRect(selection_.size(), defaultAnnotations,
+                          canvasBoundaryMode_);
     const bool spotlightGrown = spotlightCanvas !=
                                 QRectF(QPointF(), selection_.size());
     if (grown || spotlightGrown) {
