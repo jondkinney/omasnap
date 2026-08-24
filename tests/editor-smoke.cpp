@@ -3267,18 +3267,18 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   log.previewSize = capture.previewSize;
 
   const QRectF sourceFrame(QPointF(), QSizeF(capture.previewSize));
-  const QRectF growCanvas = captureCanvasRect(
-      sourceFrame.size(), {outside}, CanvasBoundaryMode::Grow);
-  const QRectF frameCanvas = captureCanvasRect(
-      sourceFrame.size(), {outside}, CanvasBoundaryMode::Frame);
+  const QRectF framedCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Framed);
+  const QRectF overflowCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Overflow);
   const QRectF imageCanvas = captureCanvasRect(
       sourceFrame.size(), {outside}, CanvasBoundaryMode::Image);
-  if (captureCanvasRect(sourceFrame.size(), {outside}) != growCanvas ||
-      growCanvas != QRectF(-64, -64, 327, 228) ||
-      frameCanvas != QRectF(-64, -64, 228, 228) ||
+  if (captureCanvasRect(sourceFrame.size(), {outside}) != framedCanvas ||
+      framedCanvas != QRectF(-64, -64, 327, 228) ||
+      overflowCanvas != QRectF(0, 0, 263, 100) ||
       imageCanvas != sourceFrame ||
-      captureCanvasRect(sourceFrame.size(), {}, CanvasBoundaryMode::Frame) !=
-          sourceFrame) {
+      captureCanvasRect(sourceFrame.size(), {},
+                        CanvasBoundaryMode::Overflow) != sourceFrame) {
     error = QStringLiteral("Canvas boundary geometry reached the wrong bounds");
     return false;
   }
@@ -3287,14 +3287,30 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
     return renderCapture(capture, sourceFrame, {outside},
                          BackgroundStyle::None, true, mode);
   };
-  const QImage growOutput = expectedOutput(CanvasBoundaryMode::Grow);
-  const QImage frameOutput = expectedOutput(CanvasBoundaryMode::Frame);
+  const QImage framedOutput = expectedOutput(CanvasBoundaryMode::Framed);
+  const QImage overflowOutput = expectedOutput(CanvasBoundaryMode::Overflow);
   const QImage imageOutput = expectedOutput(CanvasBoundaryMode::Image);
-  if (growOutput.size() != growCanvas.size().toSize() ||
-      frameOutput.size() != frameCanvas.size().toSize() ||
+  const QImage framedOff =
+      renderCapture(capture, sourceFrame, {outside}, BackgroundStyle::Off, true,
+                    CanvasBoundaryMode::Framed);
+  const QImage overflowColor = renderCapture(
+      capture, sourceFrame, {outside}, BackgroundStyle::Aurora, true,
+      CanvasBoundaryMode::Overflow);
+  const QImage imageColor = renderCapture(capture, sourceFrame, {outside},
+                                          BackgroundStyle::Aurora, true,
+                                          CanvasBoundaryMode::Image);
+  if (framedOutput.size() != framedCanvas.size().toSize() ||
+      overflowOutput.size() != overflowCanvas.size().toSize() ||
       imageOutput.size() != imageCanvas.size().toSize() ||
-      !(growOutput.width() > frameOutput.width() &&
-        frameOutput.width() > imageOutput.width())) {
+      !(framedOutput.width() > overflowOutput.width() &&
+        overflowOutput.width() > imageOutput.width()) ||
+      framedOutput.pixelColor(0, 0).alpha() != 255 ||
+      framedOff.size() != framedOutput.size() ||
+      framedOff.pixelColor(0, 0).alpha() != 0 ||
+      overflowOutput.pixelColor(200, 10).alpha() != 0 ||
+      overflowColor.size() != overflowOutput.size() ||
+      overflowColor.pixelColor(200, 10).alpha() != 255 ||
+      imageColor != imageOutput) {
     error = QStringLiteral("Canvas boundary exports were not clipped in order");
     return false;
   }
@@ -3304,41 +3320,43 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   editor.resize(640, 480);
   editor.show();
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.currentCanvasForTest() != growCanvas ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Canvas did not default to Grow");
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Canvas did not default to Framed");
     return false;
   }
 
   QTest::keyClick(&editor, Qt::Key_G);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      editor.currentCanvasForTest() != frameCanvas ||
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Overflow ||
+      editor.currentCanvasForTest() != overflowCanvas ||
       editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      editor.renderCurrentOutput() != frameOutput ||
-      !editor.statusForTest().contains(QStringLiteral("Canvas: Frame")) ||
+      editor.renderCurrentOutput() != overflowOutput ||
+      !editor.statusForTest().contains(QStringLiteral("Canvas: Overflow")) ||
       editor.operationLog().constLast().type !=
           Operation::Type::CanvasBoundary ||
       editor.operationLog().constLast().canvasBoundary !=
-          CanvasBoundaryMode::Frame) {
-    error = QStringLiteral("G did not switch non-destructively to Frame");
+          CanvasBoundaryMode::Overflow) {
+    error = QStringLiteral("G did not switch non-destructively to Overflow");
     return false;
   }
 
   if (!editor.waitForSnapshot() || editor.workingLogPath().isEmpty()) {
-    error = QStringLiteral("Frame boundary was not persisted");
+    error = QStringLiteral("Overflow boundary was not persisted");
     return false;
   }
   CaptureEditor restored(capture, CaptureEditor::CaptureMode::File);
   QString restoreError;
   if (!restored.restoreOperationLog(editor.workingLogPath(), restoreError) ||
-      restored.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      restored.currentCanvasForTest() != frameCanvas ||
+      restored.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      restored.currentCanvasForTest() != overflowCanvas ||
       restored.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      restored.renderCurrentOutput() != frameOutput) {
-    error = QStringLiteral("Restoring Frame changed its layers or clipping: %1")
-                .arg(restoreError);
+      restored.renderCurrentOutput() != overflowOutput) {
+    error =
+        QStringLiteral("Restoring Overflow changed its layers or clipping: %1")
+            .arg(restoreError);
     return false;
   }
   restored.close();
@@ -3357,25 +3375,26 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.currentCanvasForTest() != growCanvas ||
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
       editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Shift+G did not cycle backward to Grow");
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Shift+G did not cycle backward to Framed");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      editor.renderCurrentOutput() != frameOutput) {
+  if (editor.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      editor.renderCurrentOutput() != overflowOutput) {
     error = QStringLiteral("Undo did not restore the prior canvas boundary");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Redo did not restore the Grow boundary");
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Redo did not restore the Framed boundary");
     return false;
   }
 
@@ -3443,17 +3462,6 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
       editor.currentAnnotationsForTest().constFirst().kind !=
           Annotation::Kind::Rectangle ||
       editor.currentCanvasForTest() != sourceCanvas || !canvasIsDerived()) {
-  // A rectangle at annotation (400,195)-(550,345); the widget offset is
-  // (100,117). Drag it 100 px right so its right side leaves the canvas.
-  QTest::keyClick(&editor, Qt::Key_R);
-  drag(QPoint(500, 312), QPoint(650, 462));
-  Annotation rectangle;
-  rectangle.kind = Annotation::Kind::Rectangle;
-  rectangle.start = {400, 195};
-  rectangle.end = {550, 345};
-  rectangle.color = QColor(QStringLiteral("#ff375f"));
-  rectangle.size = 4;
-  if (!snapshotMatches(expected({rectangle}))) {
     error = QStringLiteral("Outside-canvas smoke: rectangle did not render");
     return false;
   }
@@ -3475,13 +3483,6 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
   drag(moveStart, moveStart + QPoint(220, 0));
   if (editor.currentAnnotationsForTest().size() != 1 || !canvasIsDerived() ||
       editor.currentCanvasForTest().right() <= sourceCanvas.right()) {
-  // Press the top edge, clear of the corner and mid-side handles (eight on
-  // a box), so this is a move.
-  drag(QPoint(540, 312), QPoint(640, 312));
-  Annotation shifted = rectangle;
-  shifted.start.rx() += 100;
-  shifted.end.rx() += 100;
-  if (!snapshotMatches(expected({shifted}))) {
     error = QStringLiteral("Outside-canvas smoke: rectangle did not move");
     return false;
   }
@@ -3514,12 +3515,6 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
   if (!canvasIsDerived() || resizedCanvas.right() <= shiftedCanvas.right() ||
       resizedCanvas.bottom() <= sourceCanvas.bottom() ||
       resizedOutput != expectedCurrent(BackgroundStyle::None)) {
-  // Its bottom-right handle now sits outside the canvas (widget (750,462));
-  // dragging it back in resizes the layer.
-  drag(QPoint(750, 462), QPoint(650, 412));
-  Annotation resized = shifted;
-  resized.end = {550, 295};
-  if (!snapshotMatches(expected({resized}))) {
     error = QStringLiteral(
         "Dragging an exposed handle did not grow the canvas again");
     return false;
@@ -3569,10 +3564,6 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
       slateOutput.pixelColor(sourceOrigin + QPoint(0, 300)) !=
           QColor(QStringLiteral("#182030")) ||
       slateOutput != currentOutput()) {
-  // Its right edge is outside the canvas too (widget x 750); grab off the
-  // mid-side handle so this is a move, not a one-axis resize.
-  drag(QPoint(750, 352), QPoint(650, 352));
-  if (!snapshotMatches(expected({rectangle}))) {
     error = QStringLiteral(
         "Grown output shifted the source or misplaced its shadow");
     return false;
@@ -3582,10 +3573,6 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
   // the source card's shadow, can be undone/redone, and survives sidecar
   // persistence with the implicit Slate backdrop still implicit.
   QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
-  // Outside the canvas, anything but the selected layer stays inert: a
-  // click on the surround neither deselects nor changes anything, so
-  // Delete still removes the layer.
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(760, 162));
   application.processEvents();
   const QImage noShadowOutput = currentOutput();
   if (noShadowOutput == slateOutput ||
@@ -3633,7 +3620,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
 
   // Automatic growth starts on an implicit shadowed-gray mat but remains in
   // fullscreen mode: B runs through every shadowed color, then shadowed gray,
-  // flat gray, and back to blue.
+  // flat gray, and explicit Off before wrapping back to blue.
   struct BackdropStep {
     BackgroundStyle style;
     bool shadow;
@@ -3645,7 +3632,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
       {BackgroundStyle::Violet, true},
       {BackgroundStyle::Slate, true},
       {BackgroundStyle::Slate, false},
-      {BackgroundStyle::Aurora, true},
+      {BackgroundStyle::Off, true},
   }};
   for (const BackdropStep step : grownCycle) {
     QTest::keyClick(&editor, Qt::Key_B);
@@ -3825,7 +3812,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
 }
 
 /** Fullscreen B starts with blue, runs through every shadowed color, then
- *  demonstrates shadowed gray before its flat-gray hint. */
+ *  demonstrates shadowed gray, flat gray, Off, and its blue wrap. */
 bool runFullscreenBackdropCycleSmoke(QApplication &application,
                                      QString &error) {
   CaptureData capture;
@@ -3841,13 +3828,14 @@ bool runFullscreenBackdropCycleSmoke(QApplication &application,
     BackgroundStyle style;
     bool shadow;
   };
-  const std::array<BackdropStep, 7> fullscreenCycle{{
+  const std::array<BackdropStep, 8> fullscreenCycle{{
       {BackgroundStyle::Aurora, true},
       {BackgroundStyle::Sunset, true},
       {BackgroundStyle::Lagoon, true},
       {BackgroundStyle::Violet, true},
       {BackgroundStyle::Slate, true},
       {BackgroundStyle::Slate, false},
+      {BackgroundStyle::Off, true},
       {BackgroundStyle::Aurora, true},
   }};
 
@@ -7712,7 +7700,6 @@ int main(int argc, char **argv) {
   // canvas restores the source crop handles before the crop begins.
   QTest::mouseClick(&cropEditor, Qt::LeftButton, Qt::NoModifier,
                     QPoint(600, 400));
-                    QPoint(390, 250));
   application.processEvents();
   const QImage beforeCrop = cropEditor.grab().toImage();
   const QRectF beforeCropFrame = cropEditor.sourceFrameWidgetRectForTest();
