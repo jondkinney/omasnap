@@ -4288,18 +4288,18 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   log.previewSize = capture.previewSize;
 
   const QRectF sourceFrame(QPointF(), QSizeF(capture.previewSize));
-  const QRectF growCanvas = captureCanvasRect(
-      sourceFrame.size(), {outside}, CanvasBoundaryMode::Grow);
-  const QRectF frameCanvas = captureCanvasRect(
-      sourceFrame.size(), {outside}, CanvasBoundaryMode::Frame);
+  const QRectF framedCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Framed);
+  const QRectF overflowCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Overflow);
   const QRectF imageCanvas = captureCanvasRect(
       sourceFrame.size(), {outside}, CanvasBoundaryMode::Image);
-  if (captureCanvasRect(sourceFrame.size(), {outside}) != growCanvas ||
-      growCanvas != QRectF(-64, -64, 327, 228) ||
-      frameCanvas != QRectF(-64, -64, 228, 228) ||
+  if (captureCanvasRect(sourceFrame.size(), {outside}) != framedCanvas ||
+      framedCanvas != QRectF(-64, -64, 327, 228) ||
+      overflowCanvas != QRectF(0, 0, 263, 100) ||
       imageCanvas != sourceFrame ||
-      captureCanvasRect(sourceFrame.size(), {}, CanvasBoundaryMode::Frame) !=
-          sourceFrame) {
+      captureCanvasRect(sourceFrame.size(), {},
+                        CanvasBoundaryMode::Overflow) != sourceFrame) {
     error = QStringLiteral("Canvas boundary geometry reached the wrong bounds");
     return false;
   }
@@ -4308,14 +4308,30 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
     return renderCapture(capture, sourceFrame, {outside},
                          BackgroundStyle::None, true, mode);
   };
-  const QImage growOutput = expectedOutput(CanvasBoundaryMode::Grow);
-  const QImage frameOutput = expectedOutput(CanvasBoundaryMode::Frame);
+  const QImage framedOutput = expectedOutput(CanvasBoundaryMode::Framed);
+  const QImage overflowOutput = expectedOutput(CanvasBoundaryMode::Overflow);
   const QImage imageOutput = expectedOutput(CanvasBoundaryMode::Image);
-  if (growOutput.size() != growCanvas.size().toSize() ||
-      frameOutput.size() != frameCanvas.size().toSize() ||
+  const QImage framedOff =
+      renderCapture(capture, sourceFrame, {outside}, BackgroundStyle::Off, true,
+                    CanvasBoundaryMode::Framed);
+  const QImage overflowColor = renderCapture(
+      capture, sourceFrame, {outside}, BackgroundStyle::Aurora, true,
+      CanvasBoundaryMode::Overflow);
+  const QImage imageColor = renderCapture(capture, sourceFrame, {outside},
+                                          BackgroundStyle::Aurora, true,
+                                          CanvasBoundaryMode::Image);
+  if (framedOutput.size() != framedCanvas.size().toSize() ||
+      overflowOutput.size() != overflowCanvas.size().toSize() ||
       imageOutput.size() != imageCanvas.size().toSize() ||
-      !(growOutput.width() > frameOutput.width() &&
-        frameOutput.width() > imageOutput.width())) {
+      !(framedOutput.width() > overflowOutput.width() &&
+        overflowOutput.width() > imageOutput.width()) ||
+      framedOutput.pixelColor(0, 0).alpha() != 255 ||
+      framedOff.size() != framedOutput.size() ||
+      framedOff.pixelColor(0, 0).alpha() != 0 ||
+      overflowOutput.pixelColor(200, 10).alpha() != 0 ||
+      overflowColor.size() != overflowOutput.size() ||
+      overflowColor.pixelColor(200, 10).alpha() != 255 ||
+      imageColor != imageOutput) {
     error = QStringLiteral("Canvas boundary exports were not clipped in order");
     return false;
   }
@@ -4325,41 +4341,43 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   editor.resize(640, 480);
   editor.show();
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.currentCanvasForTest() != growCanvas ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Canvas did not default to Grow");
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Canvas did not default to Framed");
     return false;
   }
 
   QTest::keyClick(&editor, Qt::Key_G);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      editor.currentCanvasForTest() != frameCanvas ||
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Overflow ||
+      editor.currentCanvasForTest() != overflowCanvas ||
       editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      editor.renderCurrentOutput() != frameOutput ||
-      !editor.statusForTest().contains(QStringLiteral("Canvas: Frame")) ||
+      editor.renderCurrentOutput() != overflowOutput ||
+      !editor.statusForTest().contains(QStringLiteral("Canvas: Overflow")) ||
       editor.operationLog().constLast().type !=
           Operation::Type::CanvasBoundary ||
       editor.operationLog().constLast().canvasBoundary !=
-          CanvasBoundaryMode::Frame) {
-    error = QStringLiteral("G did not switch non-destructively to Frame");
+          CanvasBoundaryMode::Overflow) {
+    error = QStringLiteral("G did not switch non-destructively to Overflow");
     return false;
   }
 
   if (!editor.waitForSnapshot() || editor.workingLogPath().isEmpty()) {
-    error = QStringLiteral("Frame boundary was not persisted");
+    error = QStringLiteral("Overflow boundary was not persisted");
     return false;
   }
   CaptureEditor restored(capture, CaptureEditor::CaptureMode::File);
   QString restoreError;
   if (!restored.restoreOperationLog(editor.workingLogPath(), restoreError) ||
-      restored.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      restored.currentCanvasForTest() != frameCanvas ||
+      restored.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      restored.currentCanvasForTest() != overflowCanvas ||
       restored.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      restored.renderCurrentOutput() != frameOutput) {
-    error = QStringLiteral("Restoring Frame changed its layers or clipping: %1")
-                .arg(restoreError);
+      restored.renderCurrentOutput() != overflowOutput) {
+    error =
+        QStringLiteral("Restoring Overflow changed its layers or clipping: %1")
+            .arg(restoreError);
     return false;
   }
   restored.close();
@@ -4378,25 +4396,26 @@ bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
   QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.currentCanvasForTest() != growCanvas ||
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
       editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Shift+G did not cycle backward to Grow");
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Shift+G did not cycle backward to Framed");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Frame ||
-      editor.renderCurrentOutput() != frameOutput) {
+  if (editor.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      editor.renderCurrentOutput() != overflowOutput) {
     error = QStringLiteral("Undo did not restore the prior canvas boundary");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
   application.processEvents();
-  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Grow ||
-      editor.renderCurrentOutput() != growOutput) {
-    error = QStringLiteral("Redo did not restore the Grow boundary");
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Redo did not restore the Framed boundary");
     return false;
   }
 
@@ -4622,7 +4641,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
 
   // Automatic growth starts on an implicit shadowed-gray mat but remains in
   // fullscreen mode: B runs through every shadowed color, then shadowed gray,
-  // flat gray, and back to blue.
+  // flat gray, and explicit Off before wrapping back to blue.
   struct BackdropStep {
     BackgroundStyle style;
     bool shadow;
@@ -4634,7 +4653,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
       {BackgroundStyle::Violet, true},
       {BackgroundStyle::Slate, true},
       {BackgroundStyle::Slate, false},
-      {BackgroundStyle::Aurora, true},
+      {BackgroundStyle::Off, true},
   }};
   for (const BackdropStep step : grownCycle) {
     QTest::keyClick(&editor, Qt::Key_B);
@@ -4814,7 +4833,7 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
 }
 
 /** Fullscreen B starts with blue, runs through every shadowed color, then
- *  demonstrates shadowed gray before its flat-gray hint. */
+ *  demonstrates shadowed gray, flat gray, Off, and its blue wrap. */
 bool runFullscreenBackdropCycleSmoke(QApplication &application,
                                      QString &error) {
   CaptureData capture;
@@ -4830,13 +4849,14 @@ bool runFullscreenBackdropCycleSmoke(QApplication &application,
     BackgroundStyle style;
     bool shadow;
   };
-  const std::array<BackdropStep, 7> fullscreenCycle{{
+  const std::array<BackdropStep, 8> fullscreenCycle{{
       {BackgroundStyle::Aurora, true},
       {BackgroundStyle::Sunset, true},
       {BackgroundStyle::Lagoon, true},
       {BackgroundStyle::Violet, true},
       {BackgroundStyle::Slate, true},
       {BackgroundStyle::Slate, false},
+      {BackgroundStyle::Off, true},
       {BackgroundStyle::Aurora, true},
   }};
 
@@ -4907,7 +4927,7 @@ bool runFullscreenBackdropCycleSmoke(QApplication &application,
 }
 
 /** An opaque normal window already presents the shadowed-gray opening state,
- *  so B advances directly through the colors before the flat-gray hint. */
+ *  so B advances through the colors, both gray states, Off, and its wrap. */
 bool runWindowedBackdropCycleSmoke(QApplication &application, QString &error) {
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -4922,13 +4942,15 @@ bool runWindowedBackdropCycleSmoke(QApplication &application, QString &error) {
     BackgroundStyle style;
     bool shadow;
   };
-  const std::array<BackdropStep, 6> windowedCycle{{
+  const std::array<BackdropStep, 8> windowedCycle{{
       {BackgroundStyle::Aurora, true},
       {BackgroundStyle::Sunset, true},
       {BackgroundStyle::Lagoon, true},
       {BackgroundStyle::Violet, true},
       {BackgroundStyle::Slate, false},
       {BackgroundStyle::Slate, true},
+      {BackgroundStyle::Off, true},
+      {BackgroundStyle::Aurora, true},
   }};
 
   CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);

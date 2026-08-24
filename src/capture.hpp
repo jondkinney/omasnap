@@ -44,8 +44,8 @@ struct CaptureData {
   QVector<WindowTarget> windows;
 };
 
-enum class BackgroundStyle { None, Slate, Aurora, Sunset, Lagoon, Violet };
-enum class CanvasBoundaryMode { Grow, Frame, Image };
+enum class BackgroundStyle { None, Off, Slate, Aurora, Sunset, Lagoon, Violet };
+enum class CanvasBoundaryMode { Framed, Overflow, Image };
 enum class QuickOutputMode { None, Copy, Save, Both };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
@@ -115,7 +115,7 @@ struct Operation {
   QRectF crop;
   BackgroundStyle background = BackgroundStyle::None;
   bool imageShadow = true;
-  CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Grow;
+  CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Framed;
   QVector<Annotation> annotations;
   QVector<quint64> ids;
   CutOp cut;
@@ -193,7 +193,7 @@ inline constexpr qreal kMinimumTextWrapWidth = 48.0;
 [[nodiscard]] QRectF
 captureCanvasRect(const QSizeF &sourceFrameSize,
                   const QVector<Annotation> &annotations,
-                  CanvasBoundaryMode boundaryMode = CanvasBoundaryMode::Grow);
+                  CanvasBoundaryMode boundaryMode = CanvasBoundaryMode::Framed);
 /** Captures the named output through ext-image-copy-capture. */
 /** A live native capture session for one output (`MonitorInfo::name`, e.g.
  *  "DP-3") over its own Wayland connection: open once, then grab frames
@@ -248,7 +248,7 @@ void describeFileCapture(CaptureData &capture, QImage image,
                                    BackgroundStyle backgroundStyle,
                                    bool imageShadow = true,
                                    CanvasBoundaryMode boundaryMode =
-                                       CanvasBoundaryMode::Grow);
+                                       CanvasBoundaryMode::Framed);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
