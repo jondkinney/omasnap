@@ -299,6 +299,34 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card puts were not individually undoable");
     return false;
   }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  const QString deletedLines =
+      QStringLiteral("omasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != deletedLines ||
+      cardEditor->textCursor().position() != 0 ||
+      !editor.statusForTest().contains(QStringLiteral("selection deleted"))) {
+    error = QStringLiteral(
+        "Clipboard-card Visual-line d did not delete the selected lines");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_P, Qt::ShiftModifier);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral(
+        "Clipboard-card P did not restore the deleted linewise selection");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral(
+        "Clipboard-card Visual-line deletion was not individually undoable");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
   QApplication::processEvents();
   QString editedRenderError;

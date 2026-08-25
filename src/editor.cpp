@@ -1138,9 +1138,9 @@ void CaptureEditor::startClipboardTextCardVisualMode(bool linewise) {
   updateClipboardTextCardVisualSelection();
   setStatus(linewise
                 ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                 "copies · Esc Normal")
+                                 "copies · d deletes · Esc Normal")
                 : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
-                                 "· Esc Normal"));
+                                 "· d deletes · Esc Normal"));
   updateClipboardTextCardPreview();
 }
 
@@ -1223,18 +1223,37 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     textCardPendingCommand_ = {};
     return true;
   }
-  if (command == QStringLiteral("y")) {
+  if (command == QStringLiteral("y") || command == QStringLiteral("d")) {
     const int first = textCardVisualSelectionStart_;
-    const QString text = textCardEditor_->toPlainText().mid(
-        first, textCardVisualSelectionEnd_ - first);
+    const int last = textCardVisualSelectionEnd_;
+    const QString source = textCardEditor_->toPlainText();
+    const QString text = source.mid(first, last - first);
     textCardYank_ = text;
     textCardYankLinewise_ = textCardVisualLineMode_;
-    QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
-    leaveClipboardTextCardVisualMode(first);
-    setStatus(QStringLiteral("Text card · NORMAL · yanked %1 character%2 to "
-                             "clipboard · cursor returned to selection start")
-                  .arg(text.size())
-                  .arg(text.size() == 1 ? QString() : QStringLiteral("s")));
+    if (command == QStringLiteral("y")) {
+      QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
+      leaveClipboardTextCardVisualMode(first);
+      setStatus(QStringLiteral("Text card · NORMAL · yanked %1 character%2 to "
+                               "clipboard · cursor returned to selection start")
+                    .arg(text.size())
+                    .arg(text.size() == 1 ? QString() : QStringLiteral("s")));
+      return true;
+    }
+
+    QTextCursor deletion(textCardEditor_->document());
+    int deletionStart = first;
+    if (textCardVisualLineMode_ && last == source.size() && first > 0)
+      deletionStart = first - 1;
+    deletion.beginEditBlock();
+    deletion.setPosition(deletionStart);
+    deletion.setPosition(last, QTextCursor::KeepAnchor);
+    deletion.removeSelectedText();
+    deletion.endEditBlock();
+    const int remainingLength =
+        static_cast<int>(textCardEditor_->toPlainText().size());
+    leaveClipboardTextCardVisualMode(std::min(first, remainingLength));
+    setStatus(QStringLiteral("Text card · NORMAL · selection deleted · "
+                             "p puts it back · u undoes"));
     return true;
   }
   if (key->key() == Qt::Key_V) {
@@ -1245,9 +1264,9 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
       updateClipboardTextCardVisualSelection();
       setStatus(shifted
                     ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                     "copies · Esc Normal")
+                                     "copies · d deletes · Esc Normal")
                     : QStringLiteral("Text card · VISUAL · hjkl move · y "
-                                     "copies · Esc Normal"));
+                                     "copies · d deletes · Esc Normal"));
       updateClipboardTextCardPreview();
     }
     return true;
