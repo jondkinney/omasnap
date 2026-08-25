@@ -258,8 +258,9 @@ error instead of opening an empty editor.
 
 Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
 capture screen. Omasnap opens it in a square-cornered, Neovim-inspired
-JetBrains Mono editor using the active Omarchy theme's background, surface, outline, selection,
-foreground, and semantic code colors, with palette and Nord fallbacks for themes
+JetBrains Mono editor using the active Omarchy theme's background, surface,
+outline, selection, foreground, and semantic code colors, with palette and
+Nord fallbacks for themes
 that do not provide them. The filename starts from lightweight content detection,
 and its extension selects a language-specific syntax profile. Press
 `F` or click the title to rename it inline; the status line shows the basename
@@ -281,15 +282,15 @@ massaging a snippet without embedding a full editor:
 
 | Text-card input | Action |
 |---|---|
-| `h` `j` `k` `l` or arrows, `w` `b` `e`, `0` `$` or Home/End, `gg` `G` | Move in Normal or Visual mode; `j`/`k` walk logical lines and remember their column |
+| `h` `j` `k` `l` or arrows/Backspace, `w` `b` `e`, `0` `$` or Home/End, `gg` `G` | Move in Normal or Visual mode; `j`/`k` walk logical lines, remember their column, and stay at line ends after `$` |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
 | `Esc` | Return from Insert or Visual to Normal mode |
 | `F`, `Shift+Tab`, or click the title | Edit the displayed filename; its extension switches live syntax highlighting even before code is entered; Enter or Tab accepts and Esc cancels |
 | `x` or Delete, `dd`, `dw`, `de`, `diw`, `daw`, `D`, `Shift+J` | Delete a character, line, to the next word, through word end, inner/around word, to the line end, or join with the next line |
 | `C`, `cc`, `cw`, `ce`, `ciw`, `caw` | Change to end of line, a whole line, through word end, or the inner/around word |
-| `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them; `o` swaps the selection ends and `p` replaces the selection with the register |
+| `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them; `o` swaps the selection ends and `p` replaces the selection with the register, which then holds the replaced text |
 | `yy`, `yw`, `ye`, `yiw`, `yaw` | Copy the current line, to the next word, through word end, or the inner/around word |
-| `p`, `Shift+P` | Put after/below or before/above the cursor/current line |
+| `p`, `Shift+P` | Put after/below or before/above the cursor/current line; deleted text fills the register `p` puts |
 | `u`, `Ctrl+R` | Undo or redo; the cursor returns to the start of that change |
 | `Tab` | Insert a literal tab in Insert mode |
 | `Ctrl+W` | Re-present the live source editor as a normal window or fullscreen overlay |
@@ -297,8 +298,9 @@ massaging a snippet without embedding a full editor:
 | `q` | Exit Omasnap from the live snippet editor; unsaved edits ask for a second `q` |
 
 Counts, named registers, macros, and `f`/`t` motions are deliberately left
-out. Yanks persist through `wl-copy`, so they outlive the editor, and `p`
-falls back to the system clipboard when nothing has been yanked yet.
+out. Line and Visual-mode yanks persist through `wl-copy`, so they outlive
+the editor; word yanks stay in the editor's own register, and `p` falls back
+to the system clipboard when nothing has been yanked yet.
 
 File URLs are accepted too. A saved capture notification's "Click to edit" action launches
 `omasnap` on the finished screenshot, so it can be reopened and re-annotated.

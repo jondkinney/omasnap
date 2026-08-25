@@ -78,7 +78,6 @@ QString editedCardText() {
   return expectedCardText() + QStringLiteral("\n\techo \"done\"");
 }
 
-
 /** Language and filename detection over the fake clipboard. */
 bool runTextCardDetectionCheck(QString &error) {
   qputenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY", "1");
@@ -354,8 +353,7 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
 }
 
 /** Blank and oversize clipboards are rejected before a card opens. */
-bool runTextCardRejectionCheck(const CaptureData &capture,
-                              QString &error) {
+bool runTextCardRejectionCheck(const CaptureData &capture, QString &error) {
   const QString expected = expectedCardText();
   qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", "   \n  ");
   CaptureEditor rejectionEditor(capture, CaptureEditor::CaptureMode::Region);
@@ -364,25 +362,24 @@ bool runTextCardRejectionCheck(const CaptureData &capture,
   rejectionEditor.show();
   QApplication::processEvents();
   QTest::keyClick(&rejectionEditor, Qt::Key_V,
-          Qt::ControlModifier | Qt::ShiftModifier);
+                  Qt::ControlModifier | Qt::ShiftModifier);
   if (rejectionEditor.clipboardTextCardEditingForTest() ||
-    !rejectionEditor.statusForTest().contains(QStringLiteral("empty"))) {
+      !rejectionEditor.statusForTest().contains(QStringLiteral("empty"))) {
     error = QStringLiteral(
-      "A blank clipboard was not rejected before opening a card");
+        "A blank clipboard was not rejected before opening a card");
     return false;
   }
   QStringList overflowLines;
   for (int line = 0; line < 130; ++line)
     overflowLines.append(QStringLiteral("line %1").arg(line));
   qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
-      overflowLines.join(QLatin1Char('\n')).toUtf8());
+          overflowLines.join(QLatin1Char('\n')).toUtf8());
   QTest::keyClick(&rejectionEditor, Qt::Key_V,
-          Qt::ControlModifier | Qt::ShiftModifier);
+                  Qt::ControlModifier | Qt::ShiftModifier);
   if (rejectionEditor.clipboardTextCardEditingForTest() ||
-    !rejectionEditor.statusForTest().contains(
-      QStringLiteral("too long"))) {
+      !rejectionEditor.statusForTest().contains(QStringLiteral("too long"))) {
     error = QStringLiteral(
-      "An oversize clipboard was not rejected before opening a card");
+        "An oversize clipboard was not rejected before opening a card");
     return false;
   }
   rejectionEditor.close();
@@ -396,6 +393,8 @@ bool runTextCardEntryCheck(CaptureEditor &editor,
                            const QString &outputRoot, QString &error) {
   const QString expected = expectedCardText();
   const TextCardTheme theme = loadTextCardTheme();
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY", "1");
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expected.toUtf8());
   QTest::keyClick(&editor, Qt::Key_V,
                   Qt::ControlModifier | Qt::ShiftModifier);
   QApplication::processEvents();
@@ -488,7 +487,7 @@ bool runTextCardEntryCheck(CaptureEditor &editor,
     return false;
   }
   const OperationLog liveLog = editor.workingLogForTest();
-  if (liveLog.textCardText != editor.clipboardTextCardTextForTest() ||
+  if (liveLog.textCardText != editedCardText() ||
       !liveLog.textCardEditing ||
       liveLog.textCardCursor !=
           cardEditor->textCursor().position()) {
@@ -1480,7 +1479,6 @@ bool runTextCardVisualModeCheck(CaptureEditor &editor,
 /** Render, annotate, Ctrl+E confirm/reopen, and the way back out. */
 bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
                                      QPlainTextEdit *cardEditor,
-                                     const QString &outputRoot,
                                      QString &error) {
   const QString edited = editedCardText();
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
@@ -1744,12 +1742,10 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       !runTextCardNormalModeCheck(editor, cardEditor, error) ||
       !runTextCardVisualModeCheck(editor, cardEditor, outputRoot,
                                   error) ||
-      !runTextCardRenderRoundTripCheck(editor, cardEditor, outputRoot,
-                                       error))
+      !runTextCardRenderRoundTripCheck(editor, cardEditor, error))
     return false;
   return runTextCardHandoffCheck(capture, outputRoot, error);
 }
-
 
 /** Checks that illegible theme pairings are corrected on load. */
 bool runTextCardThemeGuardCheck(QString &error) {
@@ -1877,6 +1873,8 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
       "  cat -- \"$OMASNAP_TEST_CLIPBOARD_IMAGE\"\n"
       "  exit 0\n"
       "fi\n"
+      // Once a yank writes the sink, text reads serve it (the wl-copy
+      // verify path needs the copied bytes back), shadowing the TEXT env.
       "if [[ \"${1:-}\" == \"--no-newline\" && \"${2:-}\" == \"--type\" "
       "&& \"${3:-}\" == text/plain* ]]; then\n"
       "  if [[ -n \"${OMASNAP_TEST_CLIPBOARD_SINK:-}\" && -f "

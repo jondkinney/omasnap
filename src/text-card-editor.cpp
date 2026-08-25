@@ -82,6 +82,7 @@ QString visualModeStatus(bool linewise) {
              : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
                               "· x/d delete · c changes · Esc Normal");
 }
+
 /// Editing keys a non-Vim user expects still work in the modal layer.
 QString modalCommand(const QKeyEvent *key) {
   switch (key->key()) {
@@ -137,8 +138,8 @@ void TextCardEditor::exitToNormal() {
 }
 
 // An insert session is grouped by undo-step marks, not one held edit block:
-// Qt defers textChanged and re-highlighting while a block is open, which
-// froze the live card for the whole session.
+// Qt defers textChanged and re-highlighting while a block is open, so a held
+// block would freeze the live card for the whole session.
 void TextCardEditor::beginInsertEdit(int cursorPosition) {
   if (insertEditActive_)
     return;

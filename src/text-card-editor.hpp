@@ -80,14 +80,6 @@ private:
   int visualPosition_ = -1;
   int visualSelectionStart_ = -1;
   int visualSelectionEnd_ = -1;
-  /** One edit for `u`: [stepsBefore, stepsAfter) on the document's undo
-   * stack, with the cursor position both undo and redo restore. */
-  struct UndoMark {
-    int position = 0;
-    int stepsBefore = 0;
-    int stepsAfter = 0;
-  };
-
   QString yank_;
   bool yankLinewise_ = false;
   int goalColumn_ = -1;
@@ -97,6 +89,15 @@ private:
   bool insertSessionFresh_ = false;
   int insertEditStart_ = -1;
   int insertEditUndoSteps_ = 0;
+
+  /** One edit for `u`: [stepsBefore, stepsAfter) on the document's undo
+   * stack, with the cursor position both undo and redo restore. */
+  struct UndoMark {
+    int position = 0;
+    int stepsBefore = 0;
+    int stepsAfter = 0;
+  };
+
   QVector<UndoMark> undoMarks_;
   QVector<UndoMark> redoMarks_;
 };

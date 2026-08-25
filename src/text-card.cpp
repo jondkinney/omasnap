@@ -610,8 +610,8 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
       R"((?:^|\n)\s*(?:def\s+\w+[^\n]*:|from\s+\w+\s+import\b|import\s+\w+))"));
   if (pythonMarks.match(text).hasMatch())
     return QStringLiteral("Python");
-  // Two anchored probes instead of one [\s\S]* bridge: the single pattern
-  // backtracked quadratically on def-heavy text with no closing "end".
+  // Two anchored probes, not one bridging pattern: a [\s\S]* bridge
+  // backtracks quadratically on def-heavy text with no closing "end".
   static const QRegularExpression rubyRequire(
       QStringLiteral(R"((?:^|\n)\s*require(?:_relative)?\s+['"])"));
   static const QRegularExpression rubyDefinition(
