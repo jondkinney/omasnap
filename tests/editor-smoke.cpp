@@ -1752,8 +1752,13 @@ bool runAnnotationLayerChecks(QApplication &application, QString &error) {
   const QImage overlayExport =
       renderCapture(capture, QRectF(0, 0, 80, 40), {redaction, arrow, label},
                     BackgroundStyle::None);
-  const QColor overlayFill = overlayExport.pixelColor(22, 12);
-  const QColor overlayStroke = overlayExport.pixelColor(26, 20);
+  const QRectF overlayCanvas =
+      captureCanvasRect(QSizeF(80, 40), {redaction, arrow, label});
+  const QPoint overlayOrigin = (-overlayCanvas.topLeft()).toPoint();
+  const QColor overlayFill =
+      overlayExport.pixelColor(overlayOrigin + QPoint(22, 12));
+  const QColor overlayStroke =
+      overlayExport.pixelColor(overlayOrigin + QPoint(26, 20));
   if (overlayExport.isNull() || redactionOnly.isNull() ||
       redactionOnly.pixelColor(22, 12) != solid || showsSecretRed(overlayFill) ||
       overlayStroke.blue() <= overlayStroke.red() + 20) {
@@ -3131,6 +3136,170 @@ bool runSpotlightHandleSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Canvas boundary policies clip the presentation, never the stored layer. */
+bool runCanvasBoundaryModeSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 100, 100};
+  capture.monitor.pixelSize = {100, 100};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(100, 100, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  Annotation outside;
+  outside.kind = Annotation::Kind::Rectangle;
+  outside.start = {50, 40};
+  outside.end = {260, 80};
+  outside.color = QColor(QStringLiteral("#ff375f"));
+  outside.size = 4.0;
+  outside.id = 1;
+
+  Operation annotate;
+  annotate.type = Operation::Type::Annotate;
+  annotate.annotations = {outside};
+  OperationLog log;
+  log.ops = {annotate};
+  log.index = 1;
+  log.nextId = 2;
+  log.previewSize = capture.previewSize;
+
+  const QRectF sourceFrame(QPointF(), QSizeF(capture.previewSize));
+  const QRectF framedCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Framed);
+  const QRectF overflowCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Overflow);
+  const QRectF imageCanvas = captureCanvasRect(
+      sourceFrame.size(), {outside}, CanvasBoundaryMode::Image);
+  if (captureCanvasRect(sourceFrame.size(), {outside}) != framedCanvas ||
+      framedCanvas != QRectF(-64, -64, 327, 228) ||
+      overflowCanvas != QRectF(0, 0, 263, 100) ||
+      imageCanvas != sourceFrame ||
+      captureCanvasRect(sourceFrame.size(), {},
+                        CanvasBoundaryMode::Overflow) != sourceFrame) {
+    error = QStringLiteral("Canvas boundary geometry reached the wrong bounds");
+    return false;
+  }
+
+  const auto expectedOutput = [&](CanvasBoundaryMode mode) {
+    return renderCapture(capture, sourceFrame, {outside},
+                         BackgroundStyle::None, true, mode);
+  };
+  const QImage framedOutput = expectedOutput(CanvasBoundaryMode::Framed);
+  const QImage overflowOutput = expectedOutput(CanvasBoundaryMode::Overflow);
+  const QImage imageOutput = expectedOutput(CanvasBoundaryMode::Image);
+  const QImage framedOff =
+      renderCapture(capture, sourceFrame, {outside}, BackgroundStyle::Off, true,
+                    CanvasBoundaryMode::Framed);
+  const QImage overflowColor = renderCapture(
+      capture, sourceFrame, {outside}, BackgroundStyle::Aurora, true,
+      CanvasBoundaryMode::Overflow);
+  const QImage imageColor = renderCapture(capture, sourceFrame, {outside},
+                                          BackgroundStyle::Aurora, true,
+                                          CanvasBoundaryMode::Image);
+  if (framedOutput.size() != framedCanvas.size().toSize() ||
+      overflowOutput.size() != overflowCanvas.size().toSize() ||
+      imageOutput.size() != imageCanvas.size().toSize() ||
+      !(framedOutput.width() > overflowOutput.width() &&
+        overflowOutput.width() > imageOutput.width()) ||
+      framedOutput.pixelColor(0, 0).alpha() != 255 ||
+      framedOff.size() != framedOutput.size() ||
+      framedOff.pixelColor(0, 0).alpha() != 0 ||
+      overflowOutput.pixelColor(200, 10).alpha() != 0 ||
+      overflowColor.size() != overflowOutput.size() ||
+      overflowColor.pixelColor(200, 10).alpha() != 255 ||
+      imageColor != imageOutput) {
+    error = QStringLiteral("Canvas boundary exports were not clipped in order");
+    return false;
+  }
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File,
+                       QuickOutputMode::None, log);
+  editor.resize(640, 480);
+  editor.show();
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Canvas did not default to Framed");
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_G);
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Overflow ||
+      editor.currentCanvasForTest() != overflowCanvas ||
+      editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
+      editor.renderCurrentOutput() != overflowOutput ||
+      !editor.statusForTest().contains(QStringLiteral("Canvas: Overflow")) ||
+      editor.operationLog().constLast().type !=
+          Operation::Type::CanvasBoundary ||
+      editor.operationLog().constLast().canvasBoundary !=
+          CanvasBoundaryMode::Overflow) {
+    error = QStringLiteral("G did not switch non-destructively to Overflow");
+    return false;
+  }
+
+  if (!editor.waitForSnapshot() || editor.workingLogPath().isEmpty()) {
+    error = QStringLiteral("Overflow boundary was not persisted");
+    return false;
+  }
+  CaptureEditor restored(capture, CaptureEditor::CaptureMode::File);
+  QString restoreError;
+  if (!restored.restoreOperationLog(editor.workingLogPath(), restoreError) ||
+      restored.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      restored.currentCanvasForTest() != overflowCanvas ||
+      restored.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
+      restored.renderCurrentOutput() != overflowOutput) {
+    error =
+        QStringLiteral("Restoring Overflow changed its layers or clipping: %1")
+            .arg(restoreError);
+    return false;
+  }
+  restored.close();
+
+  QTest::keyClick(&editor, Qt::Key_G);
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Image ||
+      editor.currentCanvasForTest() != imageCanvas ||
+      editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
+      editor.renderCurrentOutput() != imageOutput ||
+      !editor.statusForTest().contains(QStringLiteral("Canvas: Image"))) {
+    error = QStringLiteral("G did not switch non-destructively to Image");
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(&editor, Qt::Key_G, Qt::ShiftModifier);
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.currentCanvasForTest() != framedCanvas ||
+      editor.currentAnnotationsForTest() != QVector<Annotation>{outside} ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Shift+G did not cycle backward to Framed");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() !=
+          CanvasBoundaryMode::Overflow ||
+      editor.renderCurrentOutput() != overflowOutput) {
+    error = QStringLiteral("Undo did not restore the prior canvas boundary");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentCanvasBoundaryForTest() != CanvasBoundaryMode::Framed ||
+      editor.renderCurrentOutput() != framedOutput) {
+    error = QStringLiteral("Redo did not restore the Framed boundary");
+    return false;
+  }
+
+  editor.close();
+  return true;
+}
+
 /** Runs the interaction and rendering smoke checks. */
 bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
   CaptureData capture;
@@ -3153,13 +3322,29 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
                       QPoint(700, 500));
   application.processEvents();
   const QRectF selection(100, 100, 600, 400);
-  const auto expected = [&](const QVector<Annotation> &annotations) {
-    return renderCapture(capture, selection, annotations,
-                         BackgroundStyle::None);
+  const QRectF sourceCanvas(QPointF(), selection.size());
+  const auto widgetPoint = [&](const QPointF &point) {
+    const QPointF mapped = editor.annotationPointToWidgetForTest(point);
+    return QPoint(qRound(mapped.x()), qRound(mapped.y()));
   };
-  const auto snapshotMatches = [&](const QImage &image) {
-    return flushedSnapshot(editor, snapshotPath)
-                   .convertToFormat(image.format()) == image;
+  const auto currentOutput = [&] {
+    return flushedSnapshot(editor, snapshotPath);
+  };
+  const auto expectedCurrent = [&](BackgroundStyle background,
+                                   bool imageShadow = true) {
+    return renderCapture(capture, selection,
+                         editor.currentAnnotationsForTest(), background,
+                         imageShadow);
+  };
+  const auto canvasIsDerived = [&] {
+    return editor.currentCanvasForTest() ==
+           captureCanvasRect(selection.size(),
+                             editor.currentAnnotationsForTest());
+  };
+  const QColor slate(QStringLiteral("#242424"));
+  const auto isSlateShadow = [&](const QColor &pixel) {
+    return pixel.alpha() == 255 && pixel.red() < slate.red() &&
+           pixel.green() < slate.green() && pixel.blue() < slate.blue();
   };
   const auto drag = [&](const QPoint &from, const QPoint &to) {
     QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
@@ -3168,79 +3353,456 @@ bool runSelectOutsideCanvasSmoke(QApplication &application, QString &error) {
     application.processEvents();
   };
 
-  // A rectangle at annotation (400,195)-(550,345); the widget offset is
-  // (100,105). Drag it 100 px right so its right side leaves the canvas.
+  // Start with a layer wholly inside the source frame.
   QTest::keyClick(&editor, Qt::Key_R);
-  drag(QPoint(500, 300), QPoint(650, 450));
-  Annotation rectangle;
-  rectangle.kind = Annotation::Kind::Rectangle;
-  rectangle.start = {400, 195};
-  rectangle.end = {550, 345};
-  rectangle.color = QColor(QStringLiteral("#ff375f"));
-  rectangle.size = 4;
-  if (!snapshotMatches(expected({rectangle}))) {
+  drag(widgetPoint({300, 140}), widgetPoint({450, 260}));
+  if (editor.currentAnnotationsForTest().size() != 1 ||
+      editor.currentAnnotationsForTest().constFirst().kind !=
+          Annotation::Kind::Rectangle ||
+      editor.currentCanvasForTest() != sourceCanvas || !canvasIsDerived()) {
     error = QStringLiteral("Outside-canvas smoke: rectangle did not render");
     return false;
   }
-  QTest::keyClick(&editor, Qt::Key_V);
-  // Press the top edge, clear of the corner and mid-side handles (eight on
-  // a box), so this is a move.
-  drag(QPoint(540, 300), QPoint(640, 300));
-  Annotation shifted = rectangle;
-  shifted.start.rx() += 100;
-  shifted.end.rx() += 100;
-  if (!snapshotMatches(expected({shifted}))) {
-    error = QStringLiteral("Outside-canvas smoke: rectangle did not move");
+
+  const QImage inside = currentOutput();
+  if (inside != expectedCurrent(BackgroundStyle::None)) {
+    error = QStringLiteral("Inside rectangle output did not match its layers");
     return false;
   }
 
-  // Its bottom-right handle now sits outside the canvas (widget (750,450));
-  // dragging it back in resizes the layer.
-  drag(QPoint(750, 450), QPoint(650, 400));
-  Annotation resized = shifted;
-  resized.end = {550, 295};
-  if (!snapshotMatches(expected({resized}))) {
+  // Carry it across the right edge. Canvas mapping stays fixed for the whole
+  // drag and refits only after the patch commits.
+  QTest::keyClick(&editor, Qt::Key_V);
+  const Annotation initial = editor.currentAnnotationsForTest().constFirst();
+  const QPointF initialMovePoint(
+      initial.start.x() + (initial.end.x() - initial.start.x()) * 0.3,
+      initial.start.y());
+  const QPoint moveStart = widgetPoint(initialMovePoint);
+  drag(moveStart, moveStart + QPoint(220, 0));
+  if (editor.currentAnnotationsForTest().size() != 1 || !canvasIsDerived() ||
+      editor.currentCanvasForTest().right() <= sourceCanvas.right()) {
+    error = QStringLiteral("Outside-canvas smoke: rectangle did not move");
+    return false;
+  }
+  const Annotation shifted = editor.currentAnnotationsForTest().constFirst();
+  const QRectF shiftedCanvas = editor.currentCanvasForTest();
+  const QImage shiftedOutput = currentOutput();
+  const QPoint shiftedSourceOrigin(qRound(-shiftedCanvas.left()),
+                                   qRound(-shiftedCanvas.top()));
+  if (shiftedOutput != expectedCurrent(BackgroundStyle::None) ||
+      shiftedOutput.size() != shiftedCanvas.size().toSize() ||
+      !isSlateShadow(shiftedOutput.pixelColor(shiftedSourceOrigin +
+                                              QPoint(610, 350))) ||
+      shiftedOutput.pixelColor(shiftedSourceOrigin + QPoint(650, 350)) !=
+          slate ||
+      shiftedOutput.pixelColor(shiftedSourceOrigin + QPoint(599, 350)) !=
+          QColor(QStringLiteral("#182030"))) {
     error = QStringLiteral(
-        "Dragging a handle that lies outside the canvas did not resize");
+        "Right-side growth did not shadow only the source card");
+    return false;
+  }
+
+  // Resize its exposed bottom-right handle farther out, then verify that undo
+  // and redo derive the exact prior/new canvases instead of accumulating a
+  // copied extension.
+  const QPoint resizeStart = widgetPoint(shifted.end);
+  drag(resizeStart, widgetPoint(shifted.end + QPointF(50, 170)));
+  const Annotation resized = editor.currentAnnotationsForTest().constFirst();
+  const QRectF resizedCanvas = editor.currentCanvasForTest();
+  const QImage resizedOutput = currentOutput();
+  if (!canvasIsDerived() || resizedCanvas.right() <= shiftedCanvas.right() ||
+      resizedCanvas.bottom() <= sourceCanvas.bottom() ||
+      resizedOutput != expectedCurrent(BackgroundStyle::None)) {
+    error = QStringLiteral(
+        "Dragging an exposed handle did not grow the canvas again");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
   application.processEvents();
-  if (!snapshotMatches(expected({shifted}))) {
+  if (editor.currentAnnotationsForTest().constFirst() != shifted ||
+      editor.currentCanvasForTest() != shiftedCanvas ||
+      currentOutput() != shiftedOutput) {
     error = QStringLiteral("Undo did not restore the outside-handle resize");
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentAnnotationsForTest().constFirst() != resized ||
+      editor.currentCanvasForTest() != resizedCanvas ||
+      currentOutput() != resizedOutput) {
+    error = QStringLiteral("Redo did not replay the grown-handle resize");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
 
-  // Its right edge is outside the canvas too (widget x 750); grab off the
-  // mid-side handle so this is a move, not a one-axis resize.
-  drag(QPoint(750, 340), QPoint(650, 340));
-  if (!snapshotMatches(expected({rectangle}))) {
+  // Carry the layer through the top-left. This forces a non-zero source
+  // offset and verifies that the shadow stays anchored to the old frame.
+  const QPointF shiftedMovePoint(
+      shifted.start.x() + (shifted.end.x() - shifted.start.x()) * 0.3,
+      shifted.start.y());
+  const QPoint shiftedStart = widgetPoint(shiftedMovePoint);
+  drag(shiftedStart, shiftedStart + QPoint(-600, -190));
+  const QRectF offsetCanvas = editor.currentCanvasForTest();
+  const QImage slateOutput = currentOutput();
+  if (!canvasIsDerived() || offsetCanvas.left() >= 0 ||
+      offsetCanvas.top() >= 0 ||
+      slateOutput != expectedCurrent(BackgroundStyle::None)) {
     error = QStringLiteral(
-        "Grabbing a selected layer outside the canvas did not move it");
+        "Top-left drag did not grow a stable offset canvas");
+    return false;
+  }
+  const QPoint sourceOrigin(qRound(-offsetCanvas.left()),
+                            qRound(-offsetCanvas.top()));
+  if (slateOutput.pixelColor(sourceOrigin + QPoint(300, 300)) !=
+          QColor(QStringLiteral("#182030")) ||
+      !isSlateShadow(
+          slateOutput.pixelColor(sourceOrigin + QPoint(-5, 300))) ||
+      slateOutput.pixelColor(0, sourceOrigin.y() + 300) != slate ||
+      slateOutput.pixelColor(sourceOrigin + QPoint(0, 300)) !=
+          QColor(QStringLiteral("#182030")) ||
+      slateOutput != currentOutput()) {
+    error = QStringLiteral(
+        "Grown output shifted the source or misplaced its shadow");
     return false;
   }
 
-  // Outside the canvas, anything but the selected layer stays inert: a
-  // click on the surround neither deselects nor changes anything, so
-  // Delete still removes the layer.
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(760, 150));
+  // Shift+B is a document edit, not another backdrop step: it removes only
+  // the source card's shadow, can be undone/redone, and survives sidecar
+  // persistence with the implicit Slate backdrop still implicit.
+  QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
   application.processEvents();
-  if (!snapshotMatches(expected({rectangle}))) {
-    error = QStringLiteral("A click outside the canvas changed the capture");
+  const QImage noShadowOutput = currentOutput();
+  if (noShadowOutput == slateOutput ||
+      noShadowOutput != expectedCurrent(BackgroundStyle::None, false) ||
+      noShadowOutput.pixelColor(sourceOrigin + QPoint(-5, 300)) != slate ||
+      editor.operationLog().isEmpty() ||
+      editor.operationLog().constLast().type != Operation::Type::Background ||
+      editor.operationLog().constLast().background != BackgroundStyle::None ||
+      editor.operationLog().constLast().imageShadow) {
+    error = QStringLiteral("Shift+B did not disable only the drop shadow");
+    return false;
+  }
+  if (!editor.waitForSnapshot() || editor.workingLogPath().isEmpty()) {
+    error = QStringLiteral("Disabled shadow operation was not persisted");
+    return false;
+  }
+  CaptureEditor shadowRestored(capture);
+  QString shadowRestoreError;
+  if (!shadowRestored.restoreOperationLog(editor.workingLogPath(),
+                                          shadowRestoreError) ||
+      shadowRestored.renderCurrentOutput() != noShadowOutput) {
+    error = QStringLiteral("Restoring disabled shadow changed output: %1")
+                .arg(shadowRestoreError);
+    return false;
+  }
+  shadowRestored.close();
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (currentOutput() != slateOutput) {
+    error = QStringLiteral("Undo did not restore the default drop shadow");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (currentOutput() != noShadowOutput) {
+    error = QStringLiteral("Redo did not disable the drop shadow again");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
+  application.processEvents();
+  if (currentOutput() != slateOutput) {
+    error = QStringLiteral("Shift+B did not toggle the drop shadow back on");
+    return false;
+  }
+
+  // Automatic growth starts on an implicit shadowed-gray mat but remains in
+  // fullscreen mode: B runs through every shadowed color, then shadowed gray,
+  // flat gray, and explicit Off before wrapping back to blue.
+  struct BackdropStep {
+    BackgroundStyle style;
+    bool shadow;
+  };
+  const std::array<BackdropStep, 7> grownCycle{{
+      {BackgroundStyle::Aurora, true},
+      {BackgroundStyle::Sunset, true},
+      {BackgroundStyle::Lagoon, true},
+      {BackgroundStyle::Violet, true},
+      {BackgroundStyle::Slate, true},
+      {BackgroundStyle::Slate, false},
+      {BackgroundStyle::Off, true},
+  }};
+  for (const BackdropStep step : grownCycle) {
+    QTest::keyClick(&editor, Qt::Key_B);
+    application.processEvents();
+    const Operation &operation = editor.operationLog().constLast();
+    if (operation.type != Operation::Type::Background ||
+        operation.background != step.style ||
+        operation.imageShadow != step.shadow ||
+        currentOutput() != expectedCurrent(step.style, step.shadow) ||
+        editor.currentCanvasForTest() != offsetCanvas) {
+      error = QStringLiteral("Grown backdrop cycle reached the wrong state");
+      return false;
+    }
+  }
+  // Leave this larger fixture on shadowed gray for the movement, contraction,
+  // and operation-log checks below.
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (currentOutput() != slateOutput) {
+    error = QStringLiteral(
+        "Undoing the grown backdrop wrap did not restore shadowed Slate");
+    return false;
+  }
+
+  // Moving the layer wholly back over the source contracts the canvas. Undo
+  // grows it from vector geometry again; delete contracts it for the same
+  // reason, with no special raster-resize operation to replay.
+  const Annotation offset = editor.currentAnnotationsForTest().constFirst();
+  const QPointF offsetMovePoint(
+      offset.start.x() + (offset.end.x() - offset.start.x()) * 0.3,
+      offset.start.y());
+  const QPoint offsetStart = widgetPoint(offsetMovePoint);
+  drag(offsetStart, offsetStart + QPoint(300, 150));
+  if (editor.currentCanvasForTest() != sourceCanvas || !canvasIsDerived()) {
+    error = QStringLiteral("Moving a layer back in did not contract canvas");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentCanvasForTest() != offsetCanvas ||
+      currentOutput() != slateOutput) {
+    error = QStringLiteral("Undo did not regrow the offset canvas");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_Delete);
   application.processEvents();
-  if (!snapshotMatches(expected({}))) {
-    error = QStringLiteral("A click outside the canvas deselected the layer");
+  if (!editor.currentAnnotationsForTest().isEmpty() ||
+      editor.currentCanvasForTest() != sourceCanvas) {
+    error = QStringLiteral("Deleting the outside layer did not contract canvas");
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentCanvasForTest() != offsetCanvas ||
+      currentOutput() != slateOutput) {
+    error = QStringLiteral("Undo delete did not regrow canvas");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+
+  // Typing across the frame grows by the committed glyph/pill bounds. Undo,
+  // redo, and operation-log restore all derive the same canvas and pixels.
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    widgetPoint({570, 100}));
+  application.processEvents();
+  auto *inlineEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (inlineEditor == nullptr) {
+    error = QStringLiteral("Text growth did not open the inline editor");
+    return false;
+  }
+  QTest::keyClicks(inlineEditor,
+                   QStringLiteral("Canvas grows for typed labels"));
+  QTest::keyClick(inlineEditor, Qt::Key_Return, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentAnnotationsForTest().size() != 1 ||
+      editor.currentAnnotationsForTest().constFirst().kind !=
+          Annotation::Kind::Text ||
+      editor.currentCanvasForTest().right() <= sourceCanvas.right() ||
+      !canvasIsDerived()) {
+    error = QStringLiteral("Committed text did not grow past the frame");
+    return false;
+  }
+  const QVector<Annotation> textAnnotations =
+      editor.currentAnnotationsForTest();
+  const QRectF textCanvas = editor.currentCanvasForTest();
+  const QImage textOutput = currentOutput();
+  const QPoint textSourceOrigin(qRound(-textCanvas.left()),
+                                qRound(-textCanvas.top()));
+  if (textOutput != expectedCurrent(BackgroundStyle::None) ||
+      !isSlateShadow(textOutput.pixelColor(textSourceOrigin +
+                                           QPoint(610, 350))) ||
+      textOutput.pixelColor(textSourceOrigin + QPoint(650, 350)) != slate) {
+    error = QStringLiteral(
+        "Text growth did not keep the source shadow on default Slate");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!editor.currentAnnotationsForTest().isEmpty() ||
+      editor.currentCanvasForTest() != sourceCanvas) {
+    error = QStringLiteral("Undo text did not contract canvas");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentAnnotationsForTest() != textAnnotations ||
+      editor.currentCanvasForTest() != textCanvas ||
+      currentOutput() != textOutput) {
+    error = QStringLiteral("Redo text did not replay canvas growth");
+    return false;
+  }
+
+  // Crop handles still belong to the source frame inside the wider canvas.
+  // Moving its left edge keeps the text at the same absolute capture point,
+  // including after Crop replay.
+  const QPointF absoluteTextStart =
+      editor.currentSelection().topLeft() + textAnnotations.constFirst().start;
+  QTest::keyClick(&editor, Qt::Key_V);
+  const QRectF sourceFrame = editor.sourceFrameWidgetRectForTest();
+  const QPoint cropLeft(qRound(sourceFrame.left() - 7),
+                        qRound(sourceFrame.center().y()));
+  drag(cropLeft, cropLeft + QPoint(20, 0));
+  const QRectF croppedSelection = editor.currentSelection();
+  const QVector<Annotation> croppedAnnotations =
+      editor.currentAnnotationsForTest();
+  const QRectF croppedCanvas = editor.currentCanvasForTest();
+  const QImage croppedOutput = currentOutput();
+  const QPointF replayedAbsoluteStart =
+      croppedSelection.topLeft() + croppedAnnotations.constFirst().start;
+  if (croppedSelection.left() <= selection.left() || !canvasIsDerived() ||
+      QLineF(absoluteTextStart, replayedAbsoluteStart).length() > 0.01) {
+    error = QStringLiteral("Source recrop shifted grown text");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentSelection() != selection ||
+      editor.currentAnnotationsForTest() != textAnnotations ||
+      editor.currentCanvasForTest() != textCanvas ||
+      currentOutput() != textOutput) {
+    error = QStringLiteral("Undo recrop changed grown text coordinates");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.currentSelection() != croppedSelection ||
+      editor.currentAnnotationsForTest() != croppedAnnotations ||
+      editor.currentCanvasForTest() != croppedCanvas ||
+      currentOutput() != croppedOutput) {
+    error = QStringLiteral("Redo recrop did not replay grown coordinates");
+    return false;
+  }
+
+  if (!editor.waitForSnapshot() || editor.workingLogPath().isEmpty()) {
+    error = QStringLiteral("Text growth operation log was not persisted");
+    return false;
+  }
+  CaptureEditor restored(capture);
+  QString restoreError;
+  if (!restored.restoreOperationLog(editor.workingLogPath(), restoreError) ||
+      restored.currentSelection() != croppedSelection ||
+      restored.currentAnnotationsForTest() != croppedAnnotations ||
+      restored.currentCanvasForTest() != croppedCanvas ||
+      restored.renderCurrentOutput() != croppedOutput) {
+    error = QStringLiteral("Restoring text growth changed canvas: %1")
+                .arg(restoreError);
+    return false;
+  }
+  restored.close();
   editor.close();
   QFile::remove(snapshotPath);
   return true;
 }
 
-/** Runs the interaction and rendering smoke checks. */
+/** Fullscreen B starts with blue, runs through every shadowed color, then
+ *  demonstrates shadowed gray, flat gray, Off, and its blue wrap. */
+bool runFullscreenBackdropCycleSmoke(QApplication &application,
+                                     QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 180, 120};
+  capture.monitor.pixelSize = {180, 120};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(180, 120, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#527196")));
+  capture.previewSize = capture.source.size();
+
+  struct BackdropStep {
+    BackgroundStyle style;
+    bool shadow;
+  };
+  const std::array<BackdropStep, 8> fullscreenCycle{{
+      {BackgroundStyle::Aurora, true},
+      {BackgroundStyle::Sunset, true},
+      {BackgroundStyle::Lagoon, true},
+      {BackgroundStyle::Violet, true},
+      {BackgroundStyle::Slate, true},
+      {BackgroundStyle::Slate, false},
+      {BackgroundStyle::Off, true},
+      {BackgroundStyle::Aurora, true},
+  }};
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+  editor.resize(640, 480);
+  editor.show();
+  application.processEvents();
+  QImage shadowedGray;
+  QImage flatGray;
+  for (const BackdropStep step : fullscreenCycle) {
+    QTest::keyClick(&editor, Qt::Key_B);
+    application.processEvents();
+    const Operation &operation = editor.operationLog().constLast();
+    const QImage output = editor.renderCurrentOutput();
+    const QImage expected = renderCapture(capture, editor.currentSelection(),
+                                          {}, step.style, step.shadow);
+    if (operation.type != Operation::Type::Background ||
+        operation.background != step.style ||
+        operation.imageShadow != step.shadow || output != expected) {
+      error =
+          QStringLiteral("Fullscreen backdrop cycle reached the wrong state");
+      return false;
+    }
+    if (step.style == BackgroundStyle::Slate && step.shadow)
+      shadowedGray = output;
+    else if (step.style == BackgroundStyle::Slate && !step.shadow)
+      flatGray = output;
+  }
+  if (shadowedGray.isNull() || flatGray.isNull() || shadowedGray == flatGray) {
+    error = QStringLiteral(
+        "Shadowed and flat fullscreen gray rendered identically");
+    return false;
+  }
+  editor.close();
+
+  CaptureEditor overrideEditor(capture, CaptureEditor::CaptureMode::File);
+  overrideEditor.resize(640, 480);
+  overrideEditor.show();
+  application.processEvents();
+  QTest::keyClick(&overrideEditor, Qt::Key_B, Qt::ShiftModifier);
+  QTest::keyClick(&overrideEditor, Qt::Key_B);
+  const Operation &firstColor = overrideEditor.operationLog().constLast();
+  if (firstColor.background != BackgroundStyle::Aurora ||
+      !firstColor.imageShadow) {
+    error = QStringLiteral(
+        "Fullscreen B did not restore shadow on its first blue backdrop");
+    return false;
+  }
+  QTest::keyClick(&overrideEditor, Qt::Key_B, Qt::ShiftModifier);
+  application.processEvents();
+  const Operation &manualOff = overrideEditor.operationLog().constLast();
+  if (manualOff.background != BackgroundStyle::Aurora ||
+      manualOff.imageShadow) {
+    error = QStringLiteral("Shift+B did not disable the current color shadow");
+    return false;
+  }
+  QTest::keyClick(&overrideEditor, Qt::Key_B);
+  application.processEvents();
+  const Operation &nextColor = overrideEditor.operationLog().constLast();
+  if (nextColor.background != BackgroundStyle::Sunset ||
+      !nextColor.imageShadow) {
+    error = QStringLiteral(
+        "B did not restore the next color's canonical shadow");
+    return false;
+  }
+  overrideEditor.close();
+  return true;
+}
+
 /** Checks that sampling a color is not a change of tool: the eyedropper
  *  hands back whatever was in hand, and recolors the layer that was selected
  *  rather than dropping the selection with it. */
@@ -4170,7 +4732,11 @@ bool runTextPillRenderingCheck(QString &error) {
                               qRound(text.start.y() +
                                      QFontMetricsF(annotationTextFont(text.size))
                                          .lineSpacing()));
-  if (multilineImage.pixelColor(secondLinePill) != QColor(248, 245, 235)) {
+  const QRectF multilineCanvas =
+      captureCanvasRect(QSizeF(300, 100), {multiline});
+  const QPoint multilineOrigin = (-multilineCanvas.topLeft()).toPoint();
+  if (multilineImage.pixelColor(multilineOrigin + secondLinePill) !=
+      QColor(248, 245, 235)) {
     error = QStringLiteral("Multiline text pill did not cover the second line");
     return false;
   }
@@ -4442,6 +5008,260 @@ bool runSelectAllDeleteSmoke(QApplication &application, QString &error) {
 
   editor.close();
   QFile::remove(snapshotPath);
+  return true;
+}
+
+/** A grown canvas keeps selection chrome on real layers only. Screenshot
+ *  crop chrome disappears for both single- and multi-layer selections, then
+ *  returns when the layers are put down. */
+bool runGrownCanvasSelectAllChromeSmoke(QApplication &application,
+                                        QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 600, 400};
+  capture.monitor.pixelSize = {600, 400};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(600, 400, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  Annotation inside;
+  inside.id = 1;
+  inside.kind = Annotation::Kind::Rectangle;
+  inside.start = {60, 100};
+  inside.end = {160, 200};
+  inside.color = QColor(QStringLiteral("#ff375f"));
+  inside.size = 4;
+  Annotation outside = inside;
+  outside.id = 2;
+  outside.start = {650, 250};
+  outside.end = {750, 350};
+
+  Operation annotate;
+  annotate.type = Operation::Type::Annotate;
+  annotate.annotations = {inside, outside};
+  OperationLog log;
+  log.ops = {annotate};
+  log.index = 1;
+  log.nextId = 3;
+  log.previewSize = capture.previewSize;
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File,
+                       QuickOutputMode::None, log);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  if (editor.currentCanvasForTest().right() <= capture.previewSize.width()) {
+    error = QStringLiteral("Select-all chrome fixture did not grow its canvas");
+    return false;
+  }
+
+  const QImage idle = editor.grab().toImage();
+  const QColor liveShadow = grabLogicalPixel(
+      idle, editor, editor.annotationPointToWidgetForTest({610, 220}));
+  const QColor liveMatte = grabLogicalPixel(
+      idle, editor, editor.annotationPointToWidgetForTest({645, 220}));
+  if (liveShadow.alpha() != 255 || liveShadow.red() >= 36 ||
+      liveShadow.green() >= 36 || liveShadow.blue() >= 36 ||
+      liveMatte != QColor(QStringLiteral("#242424"))) {
+    error = QStringLiteral(
+        "Live grown canvas did not shadow only the source frame");
+    return false;
+  }
+
+  // This canvas already shows the shadowed-gray opening state, so B advances
+  // directly to the first shadowed color rather than repeating gray.
+  QTest::keyClick(&editor, Qt::Key_B);
+  application.processEvents();
+  if (editor.operationLog().constLast().background !=
+          BackgroundStyle::Aurora ||
+      !editor.operationLog().constLast().imageShadow) {
+    error = QStringLiteral(
+        "B did not advance live grown gray to shadowed Aurora");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  const QColor automaticShadow = grabLogicalPixel(
+      editor.grab().toImage(), editor,
+      editor.annotationPointToWidgetForTest({610, 220}));
+  if (automaticShadow.alpha() != 255 || automaticShadow.red() >= 36 ||
+      automaticShadow.green() >= 36 || automaticShadow.blue() >= 36) {
+    error = QStringLiteral(
+        "Undo did not restore automatic grown-canvas shadow");
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
+  application.processEvents();
+  const QImage shadowDisabled = editor.grab().toImage();
+  const QColor formerShadow = grabLogicalPixel(
+      shadowDisabled, editor, editor.annotationPointToWidgetForTest({610, 220}));
+  if (formerShadow != QColor(QStringLiteral("#242424"))) {
+    error = QStringLiteral("Shift+B did not remove the live source shadow");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  const QColor restoredShadow = grabLogicalPixel(
+      editor.grab().toImage(), editor,
+      editor.annotationPointToWidgetForTest({610, 220}));
+  if (restoredShadow.alpha() != 255 || restoredShadow.red() >= 36 ||
+      restoredShadow.green() >= 36 || restoredShadow.blue() >= 36) {
+    error = QStringLiteral("Undo did not restore the live source shadow");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+  application.processEvents();
+  const QImage selected = editor.grab().toImage();
+  if (editor.selectedCountForTest() != 2) {
+    error = QStringLiteral("Ctrl+A did not select both grown-canvas layers");
+    return false;
+  }
+
+  const auto widgetRectForAnnotationRect = [&](const QRectF &logical) {
+    return QRectF(editor.annotationPointToWidgetForTest(logical.topLeft()),
+                  editor.annotationPointToWidgetForTest(logical.bottomRight()))
+        .normalized();
+  };
+  const auto imageRectForWidgetRect = [&](const QRectF &widgetRect) {
+    const qreal scaleX =
+        selected.width() / static_cast<qreal>(std::max(1, editor.width()));
+    const qreal scaleY =
+        selected.height() / static_cast<qreal>(std::max(1, editor.height()));
+    return QRect(qFloor(widgetRect.left() * scaleX),
+                 qFloor(widgetRect.top() * scaleY),
+                 std::max(1, qCeil(widgetRect.width() * scaleX)),
+                 std::max(1, qCeil(widgetRect.height() * scaleY)))
+        .intersected(selected.rect());
+  };
+  const auto differenceCount = [](const QImage &first, const QImage &second,
+                                  const QRect &region) {
+    int differences = 0;
+    for (int y = region.top(); y <= region.bottom(); ++y) {
+      for (int x = region.left(); x <= region.right(); ++x) {
+        if (first.pixel(x, y) != second.pixel(x, y))
+          ++differences;
+      }
+    }
+    return differences;
+  };
+  const auto blueChromeCount = [](const QImage &image, const QRect &region) {
+    int bluePixels = 0;
+    for (int y = region.top(); y <= region.bottom(); ++y) {
+      for (int x = region.left(); x <= region.right(); ++x) {
+        const QColor pixel = image.pixelColor(x, y);
+        if (pixel.blue() > 80 && pixel.blue() > pixel.red() + 50 &&
+            pixel.blue() > pixel.green() + 30)
+          ++bluePixels;
+      }
+    }
+    return bluePixels;
+  };
+  const auto brightChromeCount = [](const QImage &image,
+                                    const QRect &region) {
+    int brightPixels = 0;
+    for (int y = region.top(); y <= region.bottom(); ++y) {
+      for (int x = region.left(); x <= region.right(); ++x) {
+        const QColor pixel = image.pixelColor(x, y);
+        if (pixel.red() > 220 && pixel.green() > 220 && pixel.blue() > 220)
+          ++brightPixels;
+      }
+    }
+    return brightPixels;
+  };
+
+  const QRectF canvas = editor.currentCanvasForTest();
+  const QPointF outerEdgeTop =
+      editor.annotationPointToWidgetForTest({canvas.right(), 40});
+  const QPointF outerEdgeBottom =
+      editor.annotationPointToWidgetForTest({canvas.right(), 180});
+  const QRect outerCanvasEdge = imageRectForWidgetRect(
+      QRectF(outerEdgeTop - QPointF(3, 0),
+             outerEdgeBottom + QPointF(3, 0))
+          .normalized());
+  if (blueChromeCount(idle, outerCanvasEdge) == 0 ||
+      blueChromeCount(selected, outerCanvasEdge) != 0) {
+    error = QStringLiteral(
+        "Ctrl+A did not remove the grown-canvas selection perimeter");
+    return false;
+  }
+
+  // The old union's top edge crossed this empty gap. Ctrl+A must leave it
+  // untouched while adding dashed chrome around each actual rectangle.
+  const QRect groupOnly = imageRectForWidgetRect(
+      widgetRectForAnnotationRect(QRectF(230, 94, 360, 6)));
+  const QRect firstLayer = imageRectForWidgetRect(
+      widgetRectForAnnotationRect(QRectF(55, 94, 110, 8)));
+  const QRect secondLayer = imageRectForWidgetRect(
+      widgetRectForAnnotationRect(QRectF(645, 244, 110, 8)));
+  if (differenceCount(idle, selected, groupOnly) != 0 ||
+      differenceCount(idle, selected, firstLayer) == 0 ||
+      differenceCount(idle, selected, secondLayer) == 0) {
+    error = QStringLiteral(
+        "Multi-selection drew a union box instead of per-layer chrome");
+    return false;
+  }
+
+  const QRectF sourceFrame = editor.sourceFrameWidgetRectForTest();
+  const QRect sourceFrameEdge = imageRectForWidgetRect(
+      QRectF(QPointF(sourceFrame.right() - 3, sourceFrame.top() + 40),
+             QPointF(sourceFrame.right() + 3, sourceFrame.top() + 180)));
+  if (blueChromeCount(idle, sourceFrameEdge) == 0 ||
+      blueChromeCount(selected, sourceFrameEdge) != 0 ||
+      differenceCount(idle, selected, sourceFrameEdge) == 0) {
+    error = QStringLiteral("Ctrl+A left the source-frame border selected");
+    return false;
+  }
+  const QRect cropHandle = imageRectForWidgetRect(
+      QRectF(sourceFrame.right() + 1, sourceFrame.center().y() - 6, 12, 12));
+  if (brightChromeCount(idle, cropHandle) == 0 ||
+      brightChromeCount(selected, cropHandle) != 0 ||
+      differenceCount(idle, selected, cropHandle) == 0) {
+    error = QStringLiteral("Ctrl+A left the source crop handles selected");
+    return false;
+  }
+
+  // Putting the group down restores the source-frame border and crop handles.
+  QTest::mouseClick(
+      &editor, Qt::LeftButton, Qt::NoModifier,
+      editor.annotationPointToWidgetForTest({400, 50}).toPoint());
+  application.processEvents();
+  const QImage restored = editor.grab().toImage();
+  if (editor.selectedCountForTest() != 0 ||
+      blueChromeCount(restored, outerCanvasEdge) == 0 ||
+      blueChromeCount(restored, sourceFrameEdge) == 0 ||
+      brightChromeCount(restored, cropHandle) == 0) {
+    error = QStringLiteral(
+        "Putting layers down did not restore screenshot crop chrome");
+    return false;
+  }
+
+  // A single selected layer must hide the same screenshot chrome while
+  // retaining that layer's own bounds and handles.
+  QTest::mouseClick(
+      &editor, Qt::LeftButton, Qt::NoModifier,
+      editor.annotationPointToWidgetForTest({60, 150}).toPoint());
+  application.processEvents();
+  const QImage single = editor.grab().toImage();
+  if (editor.selectedCountForTest() != 1) {
+    error = QStringLiteral("Single-layer chrome check did not select a layer");
+    return false;
+  }
+  if (blueChromeCount(single, sourceFrameEdge) != 0) {
+    error = QStringLiteral("Single selection left the source border visible");
+    return false;
+  }
+  if (brightChromeCount(single, cropHandle) != 0) {
+    error = QStringLiteral("Single selection left a crop handle visible");
+    return false;
+  }
+  if (differenceCount(restored, single, firstLayer) == 0) {
+    error = QStringLiteral("Single selection did not retain layer chrome");
+    return false;
+  }
+
+  editor.close();
   return true;
 }
 
@@ -4739,6 +5559,26 @@ bool runKeyboardNudgeSmoke(QApplication &application, QString &error) {
   application.processEvents();
   if (!snapshotMatches(rectangle({100, 95}, {400, 215}))) {
     error = QStringLiteral("Plain resize was constrained without Shift");
+    return false;
+  }
+
+  // A held keyboard nudge refits immediately, before the coalesced patch is
+  // persisted, so an edge crossing never clips and then pops into place.
+  for (int step = 0; step < 21; ++step)
+    QTest::keyClick(&editor, Qt::Key_Right, Qt::ShiftModifier);
+  application.processEvents();
+  const Annotation nudgedOutside = rectangle({310, 95}, {610, 215});
+  if (editor.currentCanvasForTest().right() <= selection.width() ||
+      !snapshotMatches(nudgedOutside)) {
+    error = QStringLiteral("Edge-crossing nudge did not refit immediately");
+    return false;
+  }
+  settle();
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (!snapshotMatches(rectangle({100, 95}, {400, 215})) ||
+      editor.currentCanvasForTest() != QRectF(QPointF(), selection.size())) {
+    error = QStringLiteral("Undo did not contract a nudged canvas");
     return false;
   }
 
@@ -6033,9 +6873,17 @@ int main(int argc, char **argv) {
     qWarning().noquote() << snapshotError;
     return 80;
   }
+  if (!runCanvasBoundaryModeSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 202;
+  }
   if (!runSelectOutsideCanvasSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 106;
+  }
+  if (!runFullscreenBackdropCycleSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 142;
   }
   if (!runCenteredCreationSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -6068,6 +6916,10 @@ int main(int argc, char **argv) {
   if (!runSelectAllDeleteSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 101;
+  }
+  if (!runGrownCanvasSelectAllChromeSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 134;
   }
   if (!runDuplicateLayerSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -6862,8 +7714,13 @@ int main(int argc, char **argv) {
   QTest::keyClick(&cropEditor, Qt::Key_V);
   QTest::mouseClick(&cropEditor, Qt::LeftButton, Qt::NoModifier,
                     QPoint(390, 238));
+  // Layer selection owns the chrome until it is put down. Clicking empty
+  // canvas restores the source crop handles before the crop begins.
+  QTest::mouseClick(&cropEditor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(600, 400));
   application.processEvents();
   const QImage beforeCrop = cropEditor.grab().toImage();
+  const QRectF beforeCropFrame = cropEditor.sourceFrameWidgetRectForTest();
   if (!beforeCrop.save(outputRoot + QStringLiteral("-crop-handles.png"), "PNG"))
     return 31;
   QTest::mouseMove(&cropEditor, QPoint(682, 497), 20);
@@ -6875,12 +7732,12 @@ int main(int argc, char **argv) {
   application.processEvents();
   const QImage afterCrop = cropEditor.grab().toImage();
   if (beforeCrop == afterCrop ||
+      cropEditor.sourceFrameWidgetRectForTest() == beforeCropFrame ||
       !afterCrop.save(outputRoot + QStringLiteral("-cropped.png"), "PNG"))
     return 32;
   QTest::keyClick(&cropEditor, Qt::Key_Z, Qt::ControlModifier);
   application.processEvents();
-  if (cropEditor.grab().toImage().pixelColor(260, 210) !=
-      QColor(QStringLiteral("#0a84ff")))
+  if (cropEditor.sourceFrameWidgetRectForTest() != beforeCropFrame)
     return 58;
 
   CaptureEditor previewClipEditor(capture);
@@ -6981,19 +7838,123 @@ int main(int argc, char **argv) {
   croppedOut.end = {150, 60};
   croppedOut.color = QColor(QStringLiteral("#ff00ff"));
   croppedOut.size = 4;
-  const QImage clippedExport =
+  const QRectF grownCanvas =
+      captureCanvasRect(QSizeF(100, 100), {croppedOut});
+  const QImage grownExport =
       renderCapture(clippingCapture, QRectF(0, 0, 100, 100), {croppedOut},
                     BackgroundStyle::Aurora);
-  const QRect exportedImageBounds(64, 64, 100, 100);
-  for (int y = 0; y < clippedExport.height(); ++y) {
-    for (int x = 0; x < clippedExport.width(); ++x) {
-      if (exportedImageBounds.contains(x, y))
-        continue;
-      const QColor pixel = clippedExport.pixelColor(x, y);
+  const QPoint grownOrigin(qRound(-grownCanvas.left()),
+                           qRound(-grownCanvas.top()));
+  bool paintedOutsideSource = false;
+  for (int y = 0; y < grownExport.height(); ++y) {
+    for (int x = grownOrigin.x() + 100; x < grownExport.width(); ++x) {
+      const QColor pixel = grownExport.pixelColor(x, y);
       if (pixel.red() > 240 && pixel.green() < 32 && pixel.blue() > 240)
-        return 65;
+        paintedOutsideSource = true;
     }
   }
+  const QImage slateExport =
+      renderCapture(clippingCapture, QRectF(0, 0, 100, 100), {croppedOut},
+                    BackgroundStyle::None);
+  const QImage unshadowedSlateExport =
+      renderCapture(clippingCapture, QRectF(0, 0, 100, 100), {croppedOut},
+                    BackgroundStyle::None, false);
+  CaptureData highDpiGrowth = clippingCapture;
+  highDpiGrowth.monitor.scale = 2.0;
+  highDpiGrowth.monitor.pixelSize = {200, 200};
+  highDpiGrowth.source = clippingCapture.source.scaled(
+      200, 200, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+  const QImage highDpiGrowthExport =
+      renderCapture(highDpiGrowth, QRectF(0, 0, 100, 100), {croppedOut},
+                    BackgroundStyle::None);
+  const QColor slate(QStringLiteral("#242424"));
+  const auto isSlateShadow = [&](const QColor &pixel) {
+    return pixel.alpha() == 255 && pixel.red() < slate.red() &&
+           pixel.green() < slate.green() && pixel.blue() < slate.blue();
+  };
+  QImage shadowProbe(220, 220, QImage::Format_ARGB32_Premultiplied);
+  shadowProbe.fill(slate);
+  {
+    QPainter shadowPainter(&shadowProbe);
+    const QRectF sourceCard(60, 50, 100, 100);
+    paintCaptureImageShadow(shadowPainter, sourceCard);
+    shadowPainter.fillRect(sourceCard, Qt::white);
+  }
+  const std::array<int, 6> bottomShadowProfile = {
+      shadowProbe.pixelColor(110, 150).red(),
+      shadowProbe.pixelColor(110, 157).red(),
+      shadowProbe.pixelColor(110, 170).red(),
+      shadowProbe.pixelColor(110, 190).red(),
+      shadowProbe.pixelColor(110, 202).red(),
+      shadowProbe.pixelColor(110, 206).red()};
+  const bool softAmbientAndKeyShadow =
+      bottomShadowProfile.at(0) <= bottomShadowProfile.at(1) &&
+      bottomShadowProfile.at(1) < bottomShadowProfile.at(2) &&
+      bottomShadowProfile.at(2) < bottomShadowProfile.at(3) &&
+      bottomShadowProfile.at(3) < bottomShadowProfile.at(4) &&
+      bottomShadowProfile.at(4) < bottomShadowProfile.at(5) &&
+      bottomShadowProfile.back() == slate.red() &&
+      isSlateShadow(shadowProbe.pixelColor(110, 40)) &&
+      shadowProbe.pixelColor(110, 20) == slate;
+  const std::array<int, 5> slateShadowProfile = {
+      slateExport.pixelColor(grownOrigin + QPoint(100, 90)).red(),
+      slateExport.pixelColor(grownOrigin + QPoint(111, 90)).red(),
+      slateExport.pixelColor(grownOrigin + QPoint(123, 90)).red(),
+      slateExport.pixelColor(grownOrigin + QPoint(138, 90)).red(),
+      slateExport.pixelColor(grownOrigin + QPoint(142, 90)).red()};
+  const QPoint highDpiGrowthOrigin = grownOrigin * 2;
+  const std::array<int, 5> highDpiShadowProfile = {
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(200, 180))
+          .red(),
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(222, 180))
+          .red(),
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(246, 180))
+          .red(),
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(276, 180))
+          .red(),
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(284, 180))
+          .red()};
+  bool scaleIndependentShadow = true;
+  for (std::size_t i = 0; i < slateShadowProfile.size(); ++i) {
+    scaleIndependentShadow =
+        scaleIndependentShadow &&
+        std::abs(slateShadowProfile.at(i) - highDpiShadowProfile.at(i)) <= 2;
+  }
+  const bool softlyFadingShadow =
+      slateShadowProfile.at(0) < slateShadowProfile.at(1) &&
+      slateShadowProfile.at(1) < slateShadowProfile.at(2) &&
+      slateShadowProfile.at(2) < slateShadowProfile.at(3) &&
+      slateShadowProfile.at(3) < slateShadowProfile.at(4) &&
+      slateShadowProfile.back() == slate.red();
+  const bool restrainedShadowStrength =
+      bottomShadowProfile.front() >= 20 && slateShadowProfile.front() >= 20;
+  if (grownCanvas != QRectF(-64, -64, 228, 228) ||
+      grownExport.size() != QSize(228, 228) || !paintedOutsideSource ||
+      grownExport.pixelColor(grownOrigin) != QColor(Qt::white) ||
+      slateExport.size() != grownExport.size() ||
+      slateExport.pixelColor(grownOrigin + QPoint(99, 90)) !=
+          QColor(Qt::white) ||
+      unshadowedSlateExport.size() != slateExport.size() ||
+      unshadowedSlateExport.pixelColor(grownOrigin + QPoint(99, 90)) !=
+          QColor(Qt::white) ||
+      unshadowedSlateExport.pixelColor(grownOrigin + QPoint(100, 90)) !=
+          slate ||
+      unshadowedSlateExport.pixelColor(grownOrigin + QPoint(152, 90)) !=
+          slate ||
+      !softAmbientAndKeyShadow || !softlyFadingShadow ||
+      !restrainedShadowStrength ||
+      !scaleIndependentShadow ||
+      slateExport.pixelColor(grownOrigin + QPoint(152, 90)) != slate ||
+      highDpiGrowthExport.size() != QSize(456, 456) ||
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin + QPoint(199, 180)) !=
+          QColor(Qt::white) ||
+      !isSlateShadow(highDpiGrowthExport.pixelColor(highDpiGrowthOrigin +
+                                                    QPoint(200, 180))) ||
+      highDpiGrowthExport.pixelColor(highDpiGrowthOrigin +
+                                     QPoint(304, 180)) != slate ||
+      slateExport != renderCapture(clippingCapture, QRectF(0, 0, 100, 100),
+                                   {croppedOut}, BackgroundStyle::None))
+    return 65;
 
   CaptureData highDpiCapture = capture;
   highDpiCapture.monitor.scale = 2.0;

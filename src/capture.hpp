@@ -43,7 +43,8 @@ struct CaptureData {
   QVector<WindowTarget> windows;
 };
 
-enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
+enum class BackgroundStyle { None, Off, Slate, Aurora, Sunset, Lagoon, Violet };
+enum class CanvasBoundaryMode { Framed, Overflow, Image };
 enum class QuickOutputMode { None, Copy, Save, Both };
 
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
@@ -85,11 +86,21 @@ struct Annotation {
 };
 
 struct Operation {
-  enum class Type { Crop, Background, Annotate, Patch, Delete, Cut };
+  enum class Type {
+    Crop,
+    Background,
+    CanvasBoundary,
+    Annotate,
+    Patch,
+    Delete,
+    Cut
+  };
 
   Type type = Type::Annotate;
   QRectF crop;
   BackgroundStyle background = BackgroundStyle::None;
+  bool imageShadow = true;
+  CanvasBoundaryMode canvasBoundary = CanvasBoundaryMode::Framed;
   QVector<Annotation> annotations;
   QVector<quint64> ids;
   CutOp cut;
@@ -140,6 +151,17 @@ enum class AnnotationLayer { Redaction, Default };
 /** Bounds of a text layer's glyph box, or of its readability pill when it
  *  has one; `start` is the baseline origin. */
 [[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation);
+/**
+ * Pixel-aligned annotation space selected by `boundaryMode`. Grow contains
+ * every painted extent, Frame stops at the normal backdrop frame, and Image
+ * stops at the source frame. The source always starts at 0,0; a negative
+ * top/left means background was added before it. Keeping this as a derived
+ * value avoids translating layers or repeatedly copying the source.
+ */
+[[nodiscard]] QRectF
+captureCanvasRect(const QSizeF &sourceFrameSize,
+                  const QVector<Annotation> &annotations,
+                  CanvasBoundaryMode boundaryMode = CanvasBoundaryMode::Framed);
 /** Captures the named output through ext-image-copy-capture. */
 /** A live native capture session for one output (`MonitorInfo::name`, e.g.
  *  "DP-3") over its own Wayland connection: open once, then grab frames
@@ -191,7 +213,10 @@ void describeFileCapture(CaptureData &capture, QImage image,
 [[nodiscard]] QImage renderCapture(const CaptureData &capture,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,
-                                   BackgroundStyle backgroundStyle);
+                                   BackgroundStyle backgroundStyle,
+                                   bool imageShadow = true,
+                                   CanvasBoundaryMode boundaryMode =
+                                       CanvasBoundaryMode::Framed);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
@@ -214,6 +239,9 @@ void paintDefaultLayer(QPainter &painter, const QImage &redacted,
                        const QVector<Annotation> &annotations);
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
                             BackgroundStyle backgroundStyle);
+/** Paints the app's soft ambient-plus-key shadow around `imageRect`. */
+void paintCaptureImageShadow(QPainter &painter, const QRectF &imageRect,
+                             qreal scaleX = 1.0, qreal scaleY = 1.0);
 /**
  * Renders the selection region at `targetSize` for the redaction layer. The
  * result carries no annotations; callers overlay redactions with
