@@ -2578,10 +2578,18 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
     }
     QTest::mouseMove(&editor, QPoint(100, 300), 20);
     application.processEvents();
+    if (editor.measurementText().isEmpty()) {
+      error = QStringLiteral("Selection readout disappeared outside the shelf");
+      return false;
+    }
     QTest::mouseMove(&editor, stacked.center().toPoint(), 20);
     application.processEvents();
     if (!editor.recentsOpenForTest()) {
       error = QStringLiteral("Hovering the stack did not fan the shelf out");
+      return false;
+    }
+    if (!editor.measurementText().isEmpty()) {
+      error = QStringLiteral("Selection readout overlapped the open shelf");
       return false;
     }
     const QRectF fanned = editor.recentCardRectForTest(0);

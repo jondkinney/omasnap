@@ -1876,6 +1876,8 @@ QString CaptureEditor::measurementText() const {
   if (capture_.source.isNull())
     return {};
   if (phase_ == Phase::Select) {
+    if (recentsOpen_)
+      return {};
     if (windowMode_) {
       if (hoveredWindow_ < 0 || hoveredWindow_ >= capture_.windows.size())
         return {};
