@@ -781,6 +781,10 @@ private:
   QString textCardOpenedFilename_;
   bool textCardDiscardArmed_ = false;
   bool textCardReopenArmed_ = false;
+  QString textCardFrameKey_;
+  int textCardDetectRevision_ = -1;
+  QString textCardDetectFilename_;
+  QString textCardDetectedLanguage_;
   bool clipboardTextCardEditing_ = false;
   bool textCardRestoreEditing_ = false;
   TextCardEditor *textCardModal_ = nullptr;

@@ -530,7 +530,7 @@ QPainterPath powerlineSegment(const QRect &status, int left, int right,
 
 void prepareTextDocument(QTextDocument &document, const QString &snippet,
                          const TextCardTheme &theme, int textWidth,
-                         const QString &language) {
+                         const QString &language, bool withHighlighter) {
   const QFont codeFont = textCardCodeFont();
   document.setDocumentMargin(0.0);
   document.setDefaultFont(codeFont);
@@ -541,8 +541,10 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
   document.setDefaultTextOption(option);
   document.setPlainText(snippet);
   document.setTextWidth(textWidth);
-  auto *highlighter = new TextCardHighlighter(&document, theme, language);
-  highlighter->rehighlight();
+  if (withHighlighter) {
+    auto *highlighter = new TextCardHighlighter(&document, theme, language);
+    highlighter->rehighlight();
+  }
 }
 } // namespace
 
@@ -741,7 +743,7 @@ TextCardRender renderTextCardLayout(const QString &text,
 
   const int textWidth = kPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth;
   QTextDocument document;
-  prepareTextDocument(document, snippet, theme, textWidth, language);
+  prepareTextDocument(document, snippet, theme, textWidth, language, drawText);
   const int documentHeight =
       std::max(1, qCeil(document.documentLayout()->documentSize().height()));
   const int editorHeight = std::max(kMinimumEditorHeight, documentHeight);

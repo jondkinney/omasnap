@@ -5942,6 +5942,8 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardOpenedText_ = text;
   textCardOpenedFilename_ = textCardFilename_;
   textCardDiscardArmed_ = false;
+  textCardFrameKey_.clear();
+  textCardDetectRevision_ = -1;
   clipboardTextCardEditing_ = true;
   textCardModal_->reset();
   textCardModal_->setSelectionColor(textCardTheme_.selection);
@@ -5990,15 +5992,29 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   QString previewText = textCardDocumentText_;
   if (previewText.trimmed().isEmpty())
     previewText = QString(QChar(0x200b));
+  int wrappedLines = 0;
+  for (QTextBlock block = textCardEditor_->document()->begin();
+       block.isValid(); block = block.next())
+    wrappedLines += std::max(1, block.layout()->lineCount());
+  const QString frameKey =
+      QStringLiteral("%1\n%2\n%3\n%4\n%5")
+          .arg(textCardModal_->mode(), textCardFilename_,
+               textCardSyntaxLanguage_)
+          .arg(wrappedLines)
+          .arg(windowedPresentation_ ? 1 : 0);
+  if (frameKey == textCardFrameKey_)
+    return;
   QString error;
   TextCardRender frame = renderTextCardLayout(
       previewText, textCardTheme_, error, false, textCardModal_->mode(),
       textCardFilename_, windowedPresentation_ ? TextCardLayout::Compact
                                                : TextCardLayout::Share);
   if (frame.image.isNull()) {
+    textCardFrameKey_.clear();
     setStatus(error);
     return;
   }
+  textCardFrameKey_ = frameKey;
   adoptTextCardSurface(std::move(frame.image));
   textCardSourceEditorRect_ = frame.editorRect;
   textCardSourceTitleRect_ = frame.titleRect;
@@ -6044,16 +6060,21 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
   QFont font(annotationTextFontName(TextFont::JetBrainsMono));
   font.setPixelSize(std::max(8, qRound(kTextCardCodePixelSize * scale)));
   font.setStyleHint(QFont::Monospace);
-  textCardEditor_->setFont(font);
+  if (textCardEditor_->font() != font)
+    textCardEditor_->setFont(font);
   textCardEditor_->setCursorWidth(
       textCardModal_->insertMode()
           ? std::max(1, qRound(2 * scale))
           : std::max(2, QFontMetrics(font).horizontalAdvance(QLatin1Char('M'))));
   QTextOption option = textCardEditor_->document()->defaultTextOption();
-  option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-  option.setTabStopDistance(QFontMetricsF(font).horizontalAdvance(' ') *
-                            kTextCardTabSpaces);
-  textCardEditor_->document()->setDefaultTextOption(option);
+  const qreal tabStop =
+      QFontMetricsF(font).horizontalAdvance(' ') * kTextCardTabSpaces;
+  if (option.wrapMode() != QTextOption::WrapAtWordBoundaryOrAnywhere ||
+      !qFuzzyCompare(option.tabStopDistance(), tabStop)) {
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    option.setTabStopDistance(tabStop);
+    textCardEditor_->document()->setDefaultTextOption(option);
+  }
 
   QFont filenameFont = font;
   filenameFont.setPixelSize(
@@ -6096,8 +6117,15 @@ void CaptureEditor::endClipboardTextCardFilenameEdit(bool accept) {
 void CaptureEditor::reinstallClipboardTextCardHighlighter() {
   if (!clipboardTextCardEditing_ || textCardHighlighterUpdating_)
     return;
-  const QString language = detectTextCardLanguage(
-      textCardEditor_->toPlainText(), textCardFilename_);
+  const int revision = textCardEditor_->document()->revision();
+  if (revision != textCardDetectRevision_ ||
+      textCardFilename_ != textCardDetectFilename_) {
+    textCardDetectedLanguage_ = detectTextCardLanguage(
+        textCardEditor_->toPlainText(), textCardFilename_);
+    textCardDetectRevision_ = revision;
+    textCardDetectFilename_ = textCardFilename_;
+  }
+  const QString language = textCardDetectedLanguage_;
   if (textCardHighlighter_ && textCardSyntaxLanguage_ == language)
     return;
   textCardHighlighterUpdating_ = true;
