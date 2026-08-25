@@ -3,6 +3,7 @@
 
 #include "capture.hpp"
 #include "editor.hpp"
+#include "text-card.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -72,22 +73,26 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Could not save the clipboard text-card fixture");
     return false;
   }
-  int darkPixels = 0;
+  const TextCardTheme theme = loadTextCardTheme();
+  int panelPixels = 0;
+  int outlinePixels = 0;
   int keywordPixels = 0;
   for (int y = 0; y < card.height(); ++y) {
     for (int x = 0; x < card.width(); ++x) {
       const QColor pixel = card.pixelColor(x, y);
-      if (pixel == QColor(QStringLiteral("#11141a")))
-        ++darkPixels;
-      if (pixel == QColor(QStringLiteral("#c792ea")))
+      if (pixel == theme.panel)
+        ++panelPixels;
+      if (pixel == theme.outline)
+        ++outlinePixels;
+      if (pixel == theme.keyword)
         ++keywordPixels;
     }
   }
   if (card.width() != 1200 || card.height() < 675 ||
-      card.pixelColor(0, 0).alpha() != 255 || darkPixels < 10000 ||
-      keywordPixels < 3) {
-    error = QStringLiteral("Clipboard text card lost its stage, window, or "
-                           "syntax highlighting: %1")
+      card.pixelColor(0, 0) != theme.background || panelPixels < 10000 ||
+      outlinePixels < 1000 || keywordPixels < 3) {
+    error = QStringLiteral("Clipboard text card lost its Omarchy background, "
+                           "square outline, or syntax highlighting: %1")
                 .arg(renderError);
     return false;
   }
@@ -108,12 +113,96 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(&editor, Qt::Key_V,
                   Qt::ControlModifier | Qt::ShiftModifier);
   QApplication::processEvents();
-  if (editor.captureData().source != card ||
-      editor.currentSelection() != QRectF(QPointF(), QSizeF(card.size())) ||
-      editor.renderCurrentOutput() != card ||
-      !editor.statusForTest().contains(QStringLiteral("Clipboard text card"))) {
+  if (!editor.clipboardTextCardEditingForTest() ||
+      editor.clipboardTextCardTextForTest() != expected ||
+      !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
     error = QStringLiteral(
-        "Ctrl+Shift+V did not open the clipboard text card for editing");
+        "Ctrl+Shift+V did not open the clipboard text in Normal mode");
+    return false;
+  }
+
+  auto *cardEditor = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!cardEditor) {
+    error = QStringLiteral("Clipboard text card did not focus its editor");
+    return false;
+  }
+  if (cardEditor->cursorWidth() <= 2) {
+    error = QStringLiteral("Clipboard-card Normal mode lost its block cursor");
+    return false;
+  }
+  QApplication::processEvents();
+  if (!editor.grab().save(
+          outputRoot + QStringLiteral("-clipboard-text-card-normal.png"),
+          "PNG")) {
+    error = QStringLiteral("Could not save the Normal-mode text-card fixture");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_A, Qt::ShiftModifier);
+  if (!editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("A did not enter clipboard-card Insert mode");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return);
+  QTest::keyClick(cardEditor, Qt::Key_Tab);
+  QTest::keyClicks(cardEditor, QStringLiteral("echo \"done\""));
+  QApplication::processEvents();
+  if (!editor.grab().save(
+          outputRoot + QStringLiteral("-clipboard-text-card-editing.png"),
+          "PNG")) {
+    error = QStringLiteral("Could not save the live text-card editor fixture");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  const QString edited = expected + QStringLiteral("\n\techo \"done\"");
+  const int beforeH = cardEditor->textCursor().position();
+  QTest::keyClick(cardEditor, Qt::Key_H);
+  if (editor.clipboardTextCardTextForTest() != edited ||
+      cardEditor->textCursor().position() != beforeH - 1 ||
+      !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
+    error = QStringLiteral(
+        "Clipboard-card Insert editing or Normal-mode h movement failed: "
+        "text=%1, cursor=%2/%3, status=%4")
+                .arg(editor.clipboardTextCardTextForTest())
+                .arg(cardEditor->textCursor().position())
+                .arg(beforeH - 1)
+                .arg(editor.statusForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  if (editor.clipboardTextCardTextForTest() == edited) {
+    error = QStringLiteral("Clipboard-card Normal-mode x did not delete");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card Normal-mode u did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (editor.clipboardTextCardTextForTest() == edited) {
+    error = QStringLiteral("Clipboard-card Normal-mode dd did not delete");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card Normal-mode u did not restore dd");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  QString editedRenderError;
+  const QImage editedCard = renderTextCard(edited, editedRenderError);
+  if (editor.clipboardTextCardEditingForTest() ||
+      editor.captureData().source != editedCard ||
+      editor.currentSelection() !=
+          QRectF(QPointF(), QSizeF(editedCard.size())) ||
+      editor.renderCurrentOutput() != editedCard ||
+      !editor.statusForTest().contains(QStringLiteral("rendered"))) {
+    error = QStringLiteral(
+        "Ctrl+Enter did not flatten the edited clipboard text card: %1")
+                .arg(editedRenderError);
     return false;
   }
   editor.close();
@@ -187,6 +276,30 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  const QString themePath =
+      QDir(directory.path()).filePath(QStringLiteral("colors.toml"));
+  QFile themeFile(themePath);
+  const QByteArray theme = QByteArrayLiteral(
+      "background = \"#101820\"\n"
+      "dark_background = \"#111827\"\n"
+      "darker_background = \"#080d14\"\n"
+      "foreground = \"#e5e7eb\"\n"
+      "dark_foreground = \"#64748b\"\n"
+      "muted = \"#475569\"\n"
+      "selection = \"#334155\"\n"
+      "accent = \"#7dd3fc\"\n"
+      "magenta = \"#c084fc\"\n"
+      "blue = \"#60a5fa\"\n"
+      "cyan = \"#67e8f9\"\n"
+      "orange = \"#fb923c\"\n"
+      "yellow = \"#fde047\"\n");
+  if (!themeFile.open(QIODevice::WriteOnly) ||
+      themeFile.write(theme) != theme.size()) {
+    error = QStringLiteral("Could not create the clipboard-card test theme");
+    return false;
+  }
+  themeFile.close();
+
   const bool pathWasSet = qEnvironmentVariableIsSet("PATH");
   const QByteArray oldPath = qgetenv("PATH");
   const bool imageWasSet =
@@ -202,6 +315,13 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
   const bool clipboardTextWasSet =
       qEnvironmentVariableIsSet("OMASNAP_TEST_CLIPBOARD_TEXT");
   const QByteArray oldClipboardText = qgetenv("OMASNAP_TEST_CLIPBOARD_TEXT");
+  const bool colorsWereSet =
+      qEnvironmentVariableIsSet("OMASNAP_TEST_OMARCHY_COLORS");
+  const QByteArray oldColors = qgetenv("OMASNAP_TEST_OMARCHY_COLORS");
+  const bool themeNameWasSet =
+      qEnvironmentVariableIsSet("OMASNAP_TEST_OMARCHY_THEME_NAME");
+  const QByteArray oldThemeName =
+      qgetenv("OMASNAP_TEST_OMARCHY_THEME_NAME");
   const auto restoreEnvironment = qScopeGuard([=] {
     pathWasSet ? qputenv("PATH", oldPath) : qunsetenv("PATH");
     imageWasSet ? qputenv("OMASNAP_TEST_CLIPBOARD_IMAGE", oldImage)
@@ -215,6 +335,11 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
     clipboardTextWasSet
         ? qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", oldClipboardText)
         : qunsetenv("OMASNAP_TEST_CLIPBOARD_TEXT");
+    colorsWereSet ? qputenv("OMASNAP_TEST_OMARCHY_COLORS", oldColors)
+                  : qunsetenv("OMASNAP_TEST_OMARCHY_COLORS");
+    themeNameWasSet
+        ? qputenv("OMASNAP_TEST_OMARCHY_THEME_NAME", oldThemeName)
+        : qunsetenv("OMASNAP_TEST_OMARCHY_THEME_NAME");
   });
   qputenv("PATH", directory.path().toUtf8() + ':' + oldPath);
   qputenv("OMASNAP_TEST_CLIPBOARD_IMAGE", imagePath.toUtf8());
@@ -222,6 +347,8 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
   qunsetenv("OMASNAP_TEST_CLIPBOARD_READ_FAILURE");
   qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
           "const answer = \"hello\";\n# install\nomasnap --version");
+  qputenv("OMASNAP_TEST_OMARCHY_COLORS", themePath.toUtf8());
+  qputenv("OMASNAP_TEST_OMARCHY_THEME_NAME", "test-theme");
 
   return runImageCheck(error) && runTextOnlyCheck(error) &&
          runTextCardCheck(outputRoot, error) &&

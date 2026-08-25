@@ -35,7 +35,10 @@
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSignalBlocker>
+#include <QSyntaxHighlighter>
 #include <QTextBlock>
+#include <QTextCursor>
 #include <QTextLayout>
 #include <QTextDocument>
 #include <QThread>
@@ -771,6 +774,21 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
         update();
       });
 
+  textCardEditor_ = new QPlainTextEdit(this);
+  textCardEditor_->hide();
+  textCardEditor_->setFrameShape(QFrame::NoFrame);
+  textCardEditor_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  textCardEditor_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  textCardEditor_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+  textCardEditor_->setWordWrapMode(
+      QTextOption::WrapAtWordBoundaryOrAnywhere);
+  textCardEditor_->setTabChangesFocus(false);
+  textCardEditor_->setContentsMargins(0, 0, 0, 0);
+  textCardEditor_->document()->setDocumentMargin(0.0);
+  textCardEditor_->installEventFilter(this);
+  connect(textCardEditor_, &QPlainTextEdit::textChanged, this,
+          [this] { updateClipboardTextCardPreview(); });
+
   ocrAnimTimer_.setInterval(16);
   connect(&ocrAnimTimer_, &QTimer::timeout, this, [this] { update(); });
   ocrResultTimer_.setSingleShot(true);
@@ -993,7 +1011,52 @@ CaptureEditor::~CaptureEditor() {
 }
 
 bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
-  if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
+  if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
+    auto *key = static_cast<QKeyEvent *>(event);
+    if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+        key->modifiers().testFlag(Qt::ControlModifier)) {
+      finishClipboardTextCard();
+      return true;
+    }
+    if (!textCardInsertMode_)
+      return handleClipboardTextCardNormalKey(key);
+    if (key->key() == Qt::Key_Escape) {
+      setClipboardTextCardInsertMode(false);
+      return true;
+    }
+    if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+      QTextCursor cursor = textCardEditor_->textCursor();
+      const bool outdent = key->key() == Qt::Key_Backtab ||
+                           key->modifiers().testFlag(Qt::ShiftModifier);
+      if (!outdent) {
+        cursor.insertText(QStringLiteral("\t"));
+      } else if (!cursor.hasSelection()) {
+        const int original = cursor.position();
+        const int lineStart = cursor.block().position();
+        int remove = 0;
+        while (remove < kTextCardTabSpaces && original - remove > lineStart) {
+          cursor.setPosition(original - remove - 1);
+          cursor.setPosition(original - remove, QTextCursor::KeepAnchor);
+          const QString previous = cursor.selectedText();
+          if (previous == QStringLiteral("\t")) {
+            remove = 1;
+            break;
+          }
+          if (previous != QStringLiteral(" ")) {
+            remove = 0;
+            break;
+          }
+          ++remove;
+        }
+        if (remove > 0) {
+          cursor.setPosition(original - remove);
+          cursor.setPosition(original, QTextCursor::KeepAnchor);
+          cursor.removeSelectedText();
+        }
+      }
+      return true;
+    }
+  } else if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
       if (key->modifiers().testFlag(Qt::ControlModifier)) {
@@ -1029,6 +1092,147 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     });
   }
   return QWidget::eventFilter(watched, event);
+}
+
+void CaptureEditor::setClipboardTextCardInsertMode(bool insertMode) {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardInsertMode_ = insertMode;
+  textCardPendingCommand_ = {};
+  updateClipboardTextCardEditorGeometry();
+  setStatus(insertMode
+                ? QStringLiteral("Text card · INSERT · Esc Normal · "
+                                 "Ctrl+Enter renders")
+                : QStringLiteral("Text card · NORMAL · hjkl move · i/a/o "
+                                 "insert · Ctrl+Enter renders · q cancels"));
+  updateClipboardTextCardPreview();
+}
+
+bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
+  if (key->modifiers().testFlag(Qt::ControlModifier) &&
+      key->key() == Qt::Key_R) {
+    textCardEditor_->redo();
+    textCardPendingCommand_ = {};
+    return true;
+  }
+  if (key->modifiers() &
+      (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+    textCardPendingCommand_ = {};
+    return true;
+  }
+
+  QTextCursor cursor = textCardEditor_->textCursor();
+  const QString command = key->text();
+  const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
+  if (shifted && key->key() == Qt::Key_G) {
+    textCardPendingCommand_ = {};
+    cursor.movePosition(QTextCursor::End);
+    textCardEditor_->setTextCursor(cursor);
+    return true;
+  }
+  if (shifted && key->key() == Qt::Key_I) {
+    textCardPendingCommand_ = {};
+    const QTextBlock block = cursor.block();
+    int first = 0;
+    while (first < block.text().size() && block.text().at(first).isSpace())
+      ++first;
+    cursor.setPosition(block.position() + first);
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  }
+  if (shifted && key->key() == Qt::Key_A) {
+    textCardPendingCommand_ = {};
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  }
+  if (shifted && key->key() == Qt::Key_O) {
+    textCardPendingCommand_ = {};
+    cursor.movePosition(QTextCursor::StartOfBlock);
+    const int blankLine = cursor.position();
+    cursor.insertText(QStringLiteral("\n"));
+    cursor.setPosition(blankLine);
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  }
+  if (textCardPendingCommand_ == QLatin1Char('g')) {
+    textCardPendingCommand_ = {};
+    if (command == QStringLiteral("g"))
+      cursor.movePosition(QTextCursor::Start);
+    textCardEditor_->setTextCursor(cursor);
+    return true;
+  }
+  if (textCardPendingCommand_ == QLatin1Char('d')) {
+    textCardPendingCommand_ = {};
+    if (command == QStringLiteral("d")) {
+      cursor.movePosition(QTextCursor::StartOfBlock);
+      const int start = cursor.position();
+      cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+      if (!cursor.atEnd())
+        cursor.movePosition(QTextCursor::NextCharacter,
+                            QTextCursor::KeepAnchor);
+      else if (start > 0) {
+        cursor.setPosition(start - 1);
+        cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+      }
+      cursor.removeSelectedText();
+    }
+    textCardEditor_->setTextCursor(cursor);
+    return true;
+  }
+
+  if (command == QStringLiteral("g")) {
+    textCardPendingCommand_ = QLatin1Char('g');
+    return true;
+  }
+  if (command == QStringLiteral("d")) {
+    textCardPendingCommand_ = QLatin1Char('d');
+    return true;
+  }
+  if (command == QStringLiteral("h"))
+    cursor.movePosition(QTextCursor::PreviousCharacter);
+  else if (command == QStringLiteral("j"))
+    cursor.movePosition(QTextCursor::Down);
+  else if (command == QStringLiteral("k"))
+    cursor.movePosition(QTextCursor::Up);
+  else if (command == QStringLiteral("l"))
+    cursor.movePosition(QTextCursor::NextCharacter);
+  else if (command == QStringLiteral("0"))
+    cursor.movePosition(QTextCursor::StartOfBlock);
+  else if (command == QStringLiteral("$"))
+    cursor.movePosition(QTextCursor::EndOfBlock);
+  else if (command == QStringLiteral("w"))
+    cursor.movePosition(QTextCursor::NextWord);
+  else if (command == QStringLiteral("b"))
+    cursor.movePosition(QTextCursor::PreviousWord);
+  else if (command == QStringLiteral("x"))
+    cursor.deleteChar();
+  else if (command == QStringLiteral("u")) {
+    textCardEditor_->undo();
+    return true;
+  } else if (command == QStringLiteral("i")) {
+    setClipboardTextCardInsertMode(true);
+    return true;
+  } else if (command == QStringLiteral("a")) {
+    cursor.movePosition(QTextCursor::NextCharacter);
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  } else if (command == QStringLiteral("o")) {
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    cursor.insertText(QStringLiteral("\n"));
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  } else if (command == QStringLiteral("q")) {
+    cancelClipboardTextCard();
+    return true;
+  }
+  textCardEditor_->setTextCursor(cursor);
+  return true;
 }
 
 QColor CaptureEditor::annotationColor() const {
@@ -3165,6 +3369,11 @@ void CaptureEditor::enterEdit(QString status) {
 }
 
 void CaptureEditor::handleEscape() {
+  if (clipboardTextCardEditing_) {
+    if (textCardInsertMode_)
+      setClipboardTextCardInsertMode(false);
+    return;
+  }
   if (cutDragActive_) {
     cutDragActive_ = false;
     dragging_ = false;
@@ -3760,6 +3969,11 @@ void CaptureEditor::handleToolbar(const QString &action) {
 
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
+  if (clipboardTextCardEditing_) {
+    textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+    event->accept();
+    return;
+  }
   if (!ocrResultText_.isEmpty()) {
     const int key = event->key();
     const bool modifierOnly = key == Qt::Key_Shift || key == Qt::Key_Control ||
@@ -4153,6 +4367,10 @@ void CaptureEditor::leaveEvent(QEvent *event) {
 }
 
 void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_) {
+    cursor_ = event->position();
+    return;
+  }
   if (panning_) {
     panView(event->position() - panAnchor_);
     panAnchor_ = event->position();
@@ -4470,6 +4688,8 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_)
+    return;
   if (phase_ != Phase::Edit || event->button() != Qt::LeftButton ||
       !editImageRect().contains(event->position()))
     return;
@@ -4486,6 +4706,11 @@ void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
 void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (busy_ || capturePending_)
     return;
+  if (clipboardTextCardEditing_) {
+    textCardEditor_->setFocus(Qt::MouseFocusReason);
+    event->accept();
+    return;
+  }
   if (!ocrResultText_.isEmpty())
     dismissOcrOverlay();
   if (event->button() == Qt::RightButton) {
@@ -4859,6 +5084,10 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_) {
+    event->accept();
+    return;
+  }
   if (event->button() == Qt::MiddleButton && panning_) {
     panning_ = false;
     updatePointerCursor();
@@ -5136,6 +5365,10 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::wheelEvent(QWheelEvent *event) {
+  if (clipboardTextCardEditing_) {
+    event->accept();
+    return;
+  }
   if (phase_ != Phase::Edit) {
     QWidget::wheelEvent(event);
     return;
@@ -5578,15 +5811,155 @@ void CaptureEditor::openClipboardTextCard() {
     setStatus(error);
     return;
   }
-  QImage card = renderTextCard(text, error);
-  if (card.isNull()) {
+  textCardTheme_ = loadTextCardTheme();
+  TextCardRender card =
+      renderTextCardLayout(text, textCardTheme_, error, false, false);
+  if (card.image.isNull()) {
     setStatus(error.isEmpty() ? QStringLiteral("Could not render text card")
                               : error);
     return;
   }
-  adoptImage(std::move(card), OperationLog(), SelectTab::Region,
-             QStringLiteral("Clipboard text card · syntax highlighted · "
-                            "Ctrl+C copies · Enter copies + saves"));
+
+  // This frame is a live draft, not a working document. The finalized card
+  // gets the one persisted source after Ctrl+Enter.
+  const bool suppressSnapshots = suppressSnapshots_;
+  suppressSnapshots_ = true;
+  adoptImage(std::move(card.image), OperationLog(), SelectTab::Region,
+             QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
+                            "Ctrl+Enter renders · q cancels"));
+  suppressSnapshots_ = suppressSnapshots;
+
+  clipboardTextCardEditing_ = true;
+  textCardInsertMode_ = false;
+  textCardPendingCommand_ = {};
+  textCardSourceEditorRect_ = card.editorRect;
+  delete textCardHighlighter_;
+  textCardHighlighter_ = nullptr;
+  {
+    const QSignalBlocker blocker(textCardEditor_);
+    textCardEditor_->setPlainText(text);
+  }
+  textCardHighlighter_ =
+      installTextCardHighlighter(textCardEditor_->document(), textCardTheme_);
+  textCardEditor_->setStyleSheet(
+      QStringLiteral("QPlainTextEdit { color: %1; background: %2; border: "
+                     "none; padding: 0; selection-color: %1; "
+                     "selection-background-color: %3; }")
+          .arg(textCardTheme_.foreground.name(), textCardTheme_.panel.name(),
+               textCardTheme_.selection.name()));
+  textCardEditor_->show();
+  textCardEditor_->raise();
+  textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+  updateClipboardTextCardEditorGeometry();
+  update();
+}
+
+void CaptureEditor::updateClipboardTextCardPreview() {
+  if (!clipboardTextCardEditing_)
+    return;
+  QString previewText = textCardEditor_->toPlainText();
+  if (previewText.trimmed().isEmpty())
+    previewText = QString(QChar(0x200b));
+  QString error;
+  TextCardRender frame = renderTextCardLayout(
+      previewText, textCardTheme_, error, false, textCardInsertMode_);
+  if (frame.image.isNull()) {
+    setStatus(error);
+    return;
+  }
+  capture_.source = std::move(frame.image);
+  capture_.previewSize = capture_.source.size();
+  pristineSource_ = capture_.source;
+  pristineLogicalSize_ = capture_.previewSize;
+  selection_ = QRectF(QPointF(), QSizeF(capture_.previewSize));
+  canvasRect_ = selection_;
+  textCardSourceEditorRect_ = frame.editorRect;
+  redactionBaseStale_ = true;
+  backdropKey_ = 0;
+  updateClipboardTextCardEditorGeometry();
+  update();
+}
+
+void CaptureEditor::updateClipboardTextCardEditorGeometry() {
+  if (!clipboardTextCardEditing_ || capture_.previewSize.isEmpty())
+    return;
+  const QRectF source = sourceFrameWidgetRect();
+  if (source.isEmpty())
+    return;
+  const qreal scale = source.width() / capture_.previewSize.width();
+  const QRectF editor(source.left() + textCardSourceEditorRect_.left() * scale,
+                      source.top() + textCardSourceEditorRect_.top() * scale,
+                      textCardSourceEditorRect_.width() * scale,
+                      textCardSourceEditorRect_.height() * scale);
+  const QRect geometry = editor.toAlignedRect();
+  if (textCardEditor_->geometry() != geometry)
+    textCardEditor_->setGeometry(geometry);
+
+  QFont font(annotationTextFontName(TextFont::JetBrainsMono));
+  font.setPixelSize(std::max(8, qRound(kTextCardCodePixelSize * scale)));
+  font.setStyleHint(QFont::Monospace);
+  textCardEditor_->setFont(font);
+  textCardEditor_->setCursorWidth(
+      textCardInsertMode_
+          ? std::max(1, qRound(2 * scale))
+          : std::max(2, QFontMetrics(font).horizontalAdvance(QLatin1Char('M'))));
+  QTextOption option = textCardEditor_->document()->defaultTextOption();
+  option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+  option.setTabStopDistance(QFontMetricsF(font).horizontalAdvance(' ') *
+                            kTextCardTabSpaces);
+  textCardEditor_->document()->setDefaultTextOption(option);
+}
+
+void CaptureEditor::finishClipboardTextCard() {
+  if (!clipboardTextCardEditing_)
+    return;
+  QString error;
+  const QImage card =
+      renderTextCardLayout(textCardEditor_->toPlainText(), textCardTheme_, error)
+          .image;
+  if (card.isNull()) {
+    setStatus(error);
+    textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+    return;
+  }
+  resetClipboardTextCardEditor();
+  capture_.source = card;
+  capture_.previewSize = card.size();
+  pristineSource_ = card;
+  pristineLogicalSize_ = card.size();
+  selection_ = QRectF(QPointF(), QSizeF(card.size()));
+  canvasRect_ = selection_;
+  cuts_.clear();
+  ops_.clear();
+  opIndex_ = 0;
+  sourceWritten_ = false;
+  redactionBaseStale_ = true;
+  backdropKey_ = 0;
+  setFocus(Qt::OtherFocusReason);
+  setStatus(QStringLiteral("Text card rendered · annotate normally · Ctrl+C "
+                           "copies · Enter copies + saves"));
+  scheduleSnapshot();
+  updatePointerCursor();
+  update();
+}
+
+void CaptureEditor::cancelClipboardTextCard() {
+  if (!clipboardTextCardEditing_)
+    return;
+  resetClipboardTextCardEditor();
+  setFocus(Qt::OtherFocusReason);
+  returnToSelect(false);
+}
+
+void CaptureEditor::resetClipboardTextCardEditor() {
+  clipboardTextCardEditing_ = false;
+  textCardInsertMode_ = false;
+  textCardPendingCommand_ = {};
+  textCardEditor_->hide();
+  delete textCardHighlighter_;
+  textCardHighlighter_ = nullptr;
+  const QSignalBlocker blocker(textCardEditor_);
+  textCardEditor_->clear();
 }
 
 void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
@@ -5598,6 +5971,8 @@ void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
   // it again.
   if (scrollPanel_)
     endScrollCapture();
+  if (clipboardTextCardEditing_)
+    resetClipboardTextCardEditor();
   if (textEditor_->isVisible()) {
     textEditor_->clear();
     textEditor_->hide();
@@ -6054,6 +6429,18 @@ qreal selectionBoundsRadius(const Annotation &annotation, qreal inset) {
     return std::min(pill.height() / 4.0, 6.0) + inset;
   }
   return 0.0;
+}
+
+void CaptureEditor::paintClipboardTextCardEditing(QPainter &painter) {
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
+  const bool opaqueBackdrop = windowedPresentation_ && windowedBackdropOpaque_;
+  painter.fillRect(rect(), opaqueBackdrop ? textCardTheme_.background
+                                          : QColor(0, 0, 0, 176));
+  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  const QRectF image = sourceFrameWidgetRect();
+  if (!image.isEmpty())
+    painter.drawImage(image, capture_.source);
+  drawStatusPill(painter, rect(), status_);
 }
 
 void CaptureEditor::paintEdit(QPainter &painter) {
@@ -6736,6 +7123,15 @@ void CaptureEditor::paintEvent(QPaintEvent *event) {
   Q_UNUSED(event)
   if (scrollPanel_)
     return; // the panel owns the surface; the page shows through its hole
+  if (clipboardTextCardEditing_) {
+    updateClipboardTextCardEditorGeometry();
+    QPainter painter(this);
+    painter.setRenderHints(QPainter::Antialiasing |
+                           QPainter::SmoothPixmapTransform |
+                           QPainter::TextAntialiasing);
+    paintClipboardTextCardEditing(painter);
+    return;
+  }
   QPainter painter(this);
   painter.setRenderHints(QPainter::Antialiasing |
                          QPainter::SmoothPixmapTransform |

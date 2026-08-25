@@ -253,8 +253,6 @@ void describeFileCapture(CaptureData &capture, QImage image,
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 /** Loads plain text from the current Wayland clipboard. */
 [[nodiscard]] bool loadClipboardText(QString &text, QString &error);
-/** Renders a shareable, syntax-colored clipboard snippet as an image. */
-[[nodiscard]] QImage renderTextCard(const QString &text, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
 [[nodiscard]] bool copyImageToClipboard(const QImage &image, QString &error);
 [[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,

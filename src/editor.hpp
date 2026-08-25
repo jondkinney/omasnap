@@ -6,6 +6,7 @@
 #include "palette-config.hpp"
 #include "recent-snaps.hpp"
 #include "stroke-smoothing.hpp"
+#include "text-card.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -309,6 +310,14 @@ public:
   }
   /// Current status line. Test accessor.
   [[nodiscard]] QString statusForTest() const { return status_; }
+  /** Whether the clipboard card's Neovim-style source editor owns input. */
+  [[nodiscard]] bool clipboardTextCardEditingForTest() const {
+    return clipboardTextCardEditing_;
+  }
+  /** Current unflattened clipboard-card source. */
+  [[nodiscard]] QString clipboardTextCardTextForTest() const {
+    return textCardEditor_ ? textCardEditor_->toPlainText() : QString();
+  }
   /// Text-height I-beam in annotation coordinates, or an empty rect when the
   /// Snap highlighter has no text row near the pointer. Test accessor.
   [[nodiscard]] QRectF highlighterPreviewRectForTest() const;
@@ -459,6 +468,13 @@ private:
   void adoptStitched(const QImage &image);
   /// Turns plain clipboard text into a styled, syntax-colored share card.
   void openClipboardTextCard();
+  void updateClipboardTextCardPreview();
+  void updateClipboardTextCardEditorGeometry();
+  void finishClipboardTextCard();
+  void cancelClipboardTextCard();
+  void resetClipboardTextCardEditor();
+  void setClipboardTextCardInsertMode(bool insertMode);
+  [[nodiscard]] bool handleClipboardTextCardNormalKey(QKeyEvent *key);
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -518,6 +534,7 @@ private:
   void handleEscape();
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
+  void paintClipboardTextCardEditing(QPainter &painter);
   void paintSelect(QPainter &painter);
   void refreshBackdropCache();
   void refreshComposedCapture();
@@ -725,6 +742,13 @@ private:
   QString status_ =
       QStringLiteral("Drag to select an area · Space selects a window");
   InlineTextEdit *textEditor_ = nullptr;
+  QPlainTextEdit *textCardEditor_ = nullptr;
+  QSyntaxHighlighter *textCardHighlighter_ = nullptr;
+  TextCardTheme textCardTheme_;
+  QRect textCardSourceEditorRect_;
+  bool clipboardTextCardEditing_ = false;
+  bool textCardInsertMode_ = false;
+  QChar textCardPendingCommand_;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

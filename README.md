@@ -47,8 +47,8 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   under `~/Pictures/Screenshots` by default.
 - Open an image already on the clipboard directly in the annotation editor.
 - Turn clipboard text into a share-ready, syntax-colored card with `Ctrl+Shift+V`:
-  JetBrains Mono in a rounded dark window on a colorful backdrop, ready for the
-  normal annotation, copy, and save workflow.
+  edit it with a compact Neovim-style modal key set inside a square frame whose
+  background, outline, text, and syntax colors follow the active Omarchy theme.
 - A recents shelf: the select overlay stacks small cards of the last five captures
   along the right edge; hover to fan them out, click one to reopen it in the editor
   with its layers still editable instead of taking a new screenshot.
@@ -257,10 +257,26 @@ error instead of opening an empty editor.
 ### Clipboard text cards
 
 Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
-capture screen. Omasnap renders the clipboard as a syntax-colored JetBrains Mono
-card inside a rounded dark window on a colorful background, then opens that card
-in the normal editor. Use `Ctrl+C` to copy it, `Ctrl+S` to save it, or `Enter` to
-do both. Every annotation and canvas control remains available.
+capture screen. Omasnap opens it in a square, Neovim-inspired JetBrains Mono
+editor using the active Omarchy theme's background, surface, outline, selection,
+foreground, and syntax colors. It starts in Normal mode; `Ctrl+Enter` renders the
+text into the card and hands it to the normal annotation editor. From there,
+`Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every annotation and
+canvas control remains available after rendering.
+
+The intentionally small modal key set covers the motions and edits useful for
+massaging a snippet without embedding a full editor:
+
+| Text-card input | Action |
+|---|---|
+| `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal mode |
+| `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
+| `Esc` | Return from Insert to Normal mode |
+| `x`, `dd` | Delete a character or line in Normal mode |
+| `u`, `Ctrl+R` | Undo or redo |
+| `Tab`, `Shift+Tab` | Indent or outdent in Insert mode |
+| `Ctrl+Enter` | Render the card and continue in the annotation editor |
+| `q` | Cancel from Normal mode and return to capture selection |
 
 File URLs are accepted too. A saved capture notification's "Click to edit" action launches
 `omasnap` on the finished screenshot, so it can be reopened and re-annotated.
