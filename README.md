@@ -290,6 +290,7 @@ massaging a snippet without embedding a full editor:
 | `C`, `cc`, `cw`, `ce`, `ciw`, `caw` | Change to end of line, a whole line, through word end, or the inner/around word |
 | `r` | Replace the character under the cursor — or every selected character in Visual mode — with the next key typed |
 | `>>`, `<<` | Indent or outdent the current line by one tab; in Visual mode (also `Tab`/`Shift+Tab`) they shift the selected lines and keep the selection so presses repeat |
+| `.` | Repeat the last change — operators, `r`, indents, puts, and full insert changes like `cw` with the text that was typed |
 | `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them; `o` swaps the selection ends and `p` replaces the selection with the register, which then holds the replaced text |
 | `yy`, `yw`, `ye`, `yiw`, `yaw` | Copy the current line, to the next word, through word end, or the inner/around word |
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line; deleted text fills the register `p` puts |

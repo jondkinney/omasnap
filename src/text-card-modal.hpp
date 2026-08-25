@@ -71,6 +71,8 @@ private:
                                        bool fromCursor = false);
   [[nodiscard]] int wordForwardStop(const QTextCursor &cursor) const;
   void emitUnsupportedMotion(const QString &pending, const QString &command);
+  void recordKey(const QKeyEvent *key);
+  void replayLastChange();
   void yankLine();
   void put(bool before);
 
@@ -102,4 +104,15 @@ private:
 
   QVector<UndoMark> undoMarks_;
   QVector<UndoMark> redoMarks_;
+
+  /** One keystroke of the last change, replayed verbatim by `.`. */
+  struct RecordedKey {
+    int key = 0;
+    Qt::KeyboardModifiers modifiers;
+    QString text;
+  };
+
+  QVector<RecordedKey> pendingRecord_;
+  QVector<RecordedKey> lastChange_;
+  bool replaying_ = false;
 };

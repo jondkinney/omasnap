@@ -174,7 +174,7 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
       compactWindow.width() < compact.image.width() ||
       compactWindow.width() > compact.image.width() + 120 ||
       compactWindow.height() < compact.image.height() ||
-      compactWindow.height() > compact.image.height() + 120) {
+      compactWindow.height() > compact.image.height() + 140) {
     error = QStringLiteral(
         "Compact clipboard editor did not hug its code card and toolbar");
     return false;
@@ -835,6 +835,48 @@ bool runTextCardNormalModeCheck(CaptureEditor &editor,
     QTest::keyClick(cardEditor, Qt::Key_U);
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral("Visual indent commands did not undo apart");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  QTest::keyClicks(cardEditor, QStringLiteral("."));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("nst "))) {
+    error = QStringLiteral("Dot did not repeat x: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(6));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClicks(cardEditor, QStringLiteral("zap"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClicks(cardEditor, QStringLiteral("."));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("zap zap = "))) {
+    error = QStringLiteral("Dot did not repeat a change with typed text: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(12));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral(">>"));
+  QTest::keyClicks(cardEditor, QStringLiteral("."));
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral("\n\t\t\techo"))) {
+    error = QStringLiteral("Dot did not repeat the indent");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Dot-repeated changes did not undo apart");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_G);

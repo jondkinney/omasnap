@@ -45,7 +45,7 @@ constexpr int kCompactPadding = 16;
 constexpr int kPanelShadowOffset = 12;
 constexpr int kCompactWindowSide = 24;
 constexpr int kCompactWindowTop = 64;
-constexpr int kCompactWindowBottom = 24;
+constexpr int kCompactWindowBottom = 56;
 
 class TextCardHighlighter final : public QSyntaxHighlighter {
 public:

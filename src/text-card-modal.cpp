@@ -5,6 +5,7 @@
 #include "text-card.hpp"
 
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QPlainTextEdit>
@@ -138,6 +139,9 @@ void TextCardModal::reset() {
   insertEditUndoSteps_ = 0;
   undoMarks_.clear();
   redoMarks_.clear();
+  pendingRecord_.clear();
+  lastChange_.clear();
+  replaying_ = false;
   edit_->setExtraSelections({});
 }
 
@@ -162,6 +166,7 @@ void TextCardModal::beginInsertEdit(int cursorPosition) {
 }
 
 bool TextCardModal::handleInsertKey(QKeyEvent *key) {
+  recordKey(key);
   if (key->key() == Qt::Key_Escape) {
     setInsertMode(false);
     return true;
@@ -208,6 +213,10 @@ void TextCardModal::endInsertEdit() {
                                          edit_->toPlainText().size())),
                           insertEditUndoSteps_, after});
     redoMarks_.clear();
+    if (!replaying_ && !pendingRecord_.isEmpty()) {
+      lastChange_ = pendingRecord_;
+      pendingRecord_.clear();
+    }
   }
   insertEditStart_ = -1;
 }
@@ -216,6 +225,10 @@ void TextCardModal::recordUndoCursor(int cursorPosition) {
   const int after = edit_->document()->availableUndoSteps();
   undoMarks_.push_back({std::max(0, cursorPosition), after - 1, after});
   redoMarks_.clear();
+  if (!replaying_ && !pendingRecord_.isEmpty()) {
+    lastChange_ = pendingRecord_;
+    pendingRecord_.clear();
+  }
 }
 
 void TextCardModal::undo(bool redo) {
@@ -832,6 +845,34 @@ bool TextCardModal::applyWordOperator(bool change, bool around,
   return true;
 }
 
+// Keys accumulate while an operator, selection, or insert session is in
+// flight; a change commit snapshots them as the `.` replay sequence.
+void TextCardModal::recordKey(const QKeyEvent *key) {
+  if (replaying_)
+    return;
+  if (!pendingRecord_.isEmpty() && pendingCommand_.isEmpty() &&
+      !insertMode_ && visualAnchor_ < 0 && !insertEditActive_)
+    pendingRecord_.clear();
+  pendingRecord_.append({key->key(), key->modifiers(), key->text()});
+}
+
+void TextCardModal::replayLastChange() {
+  if (lastChange_.isEmpty()) {
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · nothing to repeat yet"));
+    return;
+  }
+  pendingRecord_.clear();
+  replaying_ = true;
+  const QVector<RecordedKey> keys = lastChange_;
+  for (const RecordedKey &recorded : keys) {
+    QKeyEvent replay(QEvent::KeyPress, recorded.key, recorded.modifiers,
+                     recorded.text);
+    QCoreApplication::sendEvent(edit_, &replay);
+  }
+  replaying_ = false;
+}
+
 void TextCardModal::emitUnsupportedMotion(const QString &pending,
                                            const QString &command) {
   if (command.isEmpty())
@@ -953,6 +994,7 @@ bool TextCardModal::applyMotion(QTextCursor &cursor,
 }
 
 bool TextCardModal::handleKey(QKeyEvent *key) {
+  recordKey(key);
   if (visualAnchor_ >= 0)
     return handleVisualKey(key);
   if (key->modifiers().testFlag(Qt::ControlModifier) &&
@@ -1255,6 +1297,11 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
   }
   if (command == QStringLiteral(">") || command == QStringLiteral("<")) {
     pendingCommand_ = command;
+    return true;
+  }
+  if (command == QStringLiteral(".")) {
+    pendingRecord_.clear();
+    replayLastChange();
     return true;
   }
   if (key->key() == Qt::Key_V) {

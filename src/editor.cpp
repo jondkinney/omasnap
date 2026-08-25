@@ -2183,10 +2183,10 @@ QRectF CaptureEditor::baseImageRect() const {
     return {};
   if (clipboardTextCardEditing_ && windowedPresentation_) {
     // The live snippet has its own two-button toolbar and a compact source;
-    // it does not reserve the annotation editor's guide and tool bands.
+    // the bottom band leaves the status pill clear of the card's shadow.
     constexpr qreal side = 24.0;
     constexpr qreal top = 64.0;
-    constexpr qreal bottom = 24.0;
+    constexpr qreal bottom = 56.0;
     const QRectF available(
         side, top, std::max<qreal>(1, width() - 2 * side),
         std::max<qreal>(1, height() - top - bottom));
