@@ -6034,19 +6034,21 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   for (QTextBlock block = textCardEditor_->document()->begin();
        block.isValid(); block = block.next())
     wrappedLines += std::max(1, block.layout()->lineCount());
+  const QString cardMode = textCardFilenameEditor_->isVisible()
+                               ? QStringLiteral("FILENAME")
+                               : textCardModal_->mode();
   const QString frameKey =
       QStringLiteral("%1\n%2\n%3\n%4\n%5")
-          .arg(textCardModal_->mode(), textCardFilename_,
-               textCardSyntaxLanguage_)
+          .arg(cardMode, textCardFilename_, textCardSyntaxLanguage_)
           .arg(wrappedLines)
           .arg(windowedPresentation_ ? 1 : 0);
   if (frameKey == textCardFrameKey_)
     return;
   QString error;
   TextCardRender frame = renderTextCardLayout(
-      previewText, textCardTheme_, error, false, textCardModal_->mode(),
-      textCardFilename_, windowedPresentation_ ? TextCardLayout::Compact
-                                               : TextCardLayout::Share);
+      previewText, textCardTheme_, error, false, cardMode, textCardFilename_,
+      windowedPresentation_ ? TextCardLayout::Compact
+                            : TextCardLayout::Share);
   if (frame.image.isNull()) {
     textCardFrameKey_.clear();
     setStatus(error);
@@ -6151,6 +6153,7 @@ void CaptureEditor::beginClipboardTextCardFilenameEdit() {
   textCardFilenameEditor_->show();
   textCardFilenameEditor_->raise();
   textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
+  updateClipboardTextCardPreview();
   setStatus(QStringLiteral("Text card · FILENAME · type a path or name · "
                            "Enter/Tab accepts · Ctrl+W window · Esc cancels"));
 }

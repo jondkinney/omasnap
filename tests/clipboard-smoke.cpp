@@ -335,7 +335,13 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card Normal mode lost its block cursor");
     return false;
   }
+  const QImage frameBeforeFilename = editor.captureData().source;
   QTest::keyClick(cardEditor, Qt::Key_F, Qt::ShiftModifier);
+  if (editor.captureData().source == frameBeforeFilename) {
+    error = QStringLiteral(
+        "The card statusline did not switch to FILENAME while renaming");
+    return false;
+  }
   auto *filenameEditor =
       qobject_cast<QLineEdit *>(QApplication::focusWidget());
   if (!filenameEditor ||
