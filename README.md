@@ -46,6 +46,9 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped files
   under `~/Pictures/Screenshots` by default.
 - Open an image already on the clipboard directly in the annotation editor.
+- Turn clipboard text into a share-ready, syntax-colored card with `Ctrl+Shift+V`:
+  JetBrains Mono in a rounded dark window on a colorful backdrop, ready for the
+  normal annotation, copy, and save workflow.
 - A recents shelf: the select overlay stacks small cards of the last five captures
   along the right edge; hover to fan them out, click one to reopen it in the editor
   with its layers still editable instead of taking a new screenshot.
@@ -251,6 +254,14 @@ omasnap --clipboard
 The clipboard must offer readable image data. Text-only clipboard contents return an
 error instead of opening an empty editor.
 
+### Clipboard text cards
+
+Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
+capture screen. Omasnap renders the clipboard as a syntax-colored JetBrains Mono
+card inside a rounded dark window on a colorful background, then opens that card
+in the normal editor. Use `Ctrl+C` to copy it, `Ctrl+S` to save it, or `Enter` to
+do both. Every annotation and canvas control remains available.
+
 File URLs are accepted too. A saved capture notification's "Click to edit" action launches
 `omasnap` on the finished screenshot, so it can be reopened and re-annotated.
 
@@ -346,6 +357,7 @@ without reaching for the pointer.
 | `SUPER + Arrow` | Move among windows in window mode |
 | `Enter` | Capture the highlighted window |
 | `Ctrl+A` | Select the full focused monitor (the Fullscreen tab) |
+| `Ctrl+Shift+V` | Turn clipboard text into a syntax-colored share card and open it in the editor |
 | Hover the right-edge stack | Fan out the five most recent captures; click one to reopen it |
 | `Esc` | Dismiss (while selecting; in the editor, `Esc` returns to Select and a second `Esc` closes) |
 

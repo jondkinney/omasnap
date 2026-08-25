@@ -3805,6 +3805,15 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   }
   if (phase_ == Phase::Select) {
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    if (event->key() == Qt::Key_V &&
+        modifiers.testFlag(Qt::ControlModifier) &&
+        modifiers.testFlag(Qt::ShiftModifier) &&
+        !modifiers.testFlag(Qt::AltModifier) &&
+        !modifiers.testFlag(Qt::MetaModifier)) {
+      openClipboardTextCard();
+      return;
+    }
     if (event->matches(QKeySequence::SelectAll)) {
       selectFullscreen();
       return;
@@ -5562,6 +5571,24 @@ void CaptureEditor::adoptStitched(const QImage &image) {
                                   "crop"));
 }
 
+void CaptureEditor::openClipboardTextCard() {
+  QString text;
+  QString error;
+  if (!loadClipboardText(text, error)) {
+    setStatus(error);
+    return;
+  }
+  QImage card = renderTextCard(text, error);
+  if (card.isNull()) {
+    setStatus(error.isEmpty() ? QStringLiteral("Could not render text card")
+                              : error);
+    return;
+  }
+  adoptImage(std::move(card), OperationLog(), SelectTab::Region,
+             QStringLiteral("Clipboard text card · syntax highlighted · "
+                            "Ctrl+C copies · Enter copies + saves"));
+}
+
 void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
                                const QString &status) {
   // The editor normally works on a region of the frozen screen. Here it is
@@ -6008,6 +6035,8 @@ void CaptureEditor::paintSelect(QPainter &painter) {
                    {{QStringLiteral("Drag"), QStringLiteral("Area")},
                     {QStringLiteral("Space"), QStringLiteral("Window")},
                     {QStringLiteral("Ctrl+A"), QStringLiteral("Fullscreen")},
+                    {QStringLiteral("Ctrl+Shift+V"),
+                     QStringLiteral("Clipboard text card")},
                     {QStringLiteral("R"), QStringLiteral("Last region")},
                     {QStringLiteral("S"), QStringLiteral("Scrolling region")},
                     {QStringLiteral("Esc"), QStringLiteral("Close")}});

@@ -3,6 +3,7 @@
 #include "output-config.hpp"
 
 #include <QBuffer>
+#include <QAbstractTextDocumentLayout>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -19,8 +20,13 @@
 #include <QPointF>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QSyntaxHighlighter>
+#include <QTextCharFormat>
+#include <QTextDocument>
+#include <QTextOption>
 
 #include <QUrl>
 #include <algorithm>
@@ -1551,6 +1557,257 @@ bool loadClipboardImage(QImage &image, QString &error) {
   }
   error = QStringLiteral("Clipboard image could not be decoded");
   return false;
+}
+
+bool loadClipboardText(QString &text, QString &error) {
+  text.clear();
+  error.clear();
+
+  const ProcessResult listed =
+      runProcess(QStringLiteral("wl-paste"), {QStringLiteral("--list-types")},
+                 {}, 5000);
+  if (!listed.finished || listed.exitCode != 0) {
+    const QString detail = QString::fromUtf8(listed.error).trimmed();
+    error = detail.isEmpty()
+                ? QStringLiteral("Could not read the Wayland clipboard")
+                : QStringLiteral("Could not read the Wayland clipboard: %1")
+                      .arg(detail);
+    return false;
+  }
+
+  const QStringList offered =
+      QString::fromUtf8(listed.output)
+          .split('\n', Qt::SkipEmptyParts, Qt::CaseSensitive);
+  QStringList textTypes;
+  const QStringList preferred{
+      QStringLiteral("text/plain;charset=utf-8"),
+      QStringLiteral("text/plain;charset=UTF-8"),
+      QStringLiteral("UTF8_STRING"), QStringLiteral("text/plain")};
+  for (const QString &mimeType : preferred) {
+    if (offered.contains(mimeType))
+      textTypes.append(mimeType);
+  }
+  for (const QString &mimeType : offered) {
+    const QString trimmed = mimeType.trimmed();
+    if (trimmed.startsWith(QStringLiteral("text/")) &&
+        !textTypes.contains(trimmed))
+      textTypes.append(trimmed);
+  }
+  if (textTypes.isEmpty()) {
+    error = QStringLiteral("Clipboard does not contain text");
+    return false;
+  }
+
+  QString readError;
+  for (const QString &mimeType : textTypes) {
+    const ProcessResult pasted = runProcess(
+        QStringLiteral("wl-paste"),
+        {QStringLiteral("--no-newline"), QStringLiteral("--type"), mimeType},
+        {}, 5000);
+    if (!pasted.finished || pasted.exitCode != 0) {
+      const QString detail = QString::fromUtf8(pasted.error).trimmed();
+      if (!detail.isEmpty())
+        readError = detail;
+      continue;
+    }
+    text = QString::fromUtf8(pasted.output);
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace('\r', '\n');
+    while (text.startsWith('\n'))
+      text.remove(0, 1);
+    while (text.endsWith('\n'))
+      text.chop(1);
+    if (!text.trimmed().isEmpty())
+      return true;
+  }
+
+  error = readError.isEmpty()
+              ? QStringLiteral("Clipboard text is empty")
+              : QStringLiteral("Could not read clipboard text: %1")
+                    .arg(readError);
+  text.clear();
+  return false;
+}
+
+namespace {
+class TextCardHighlighter final : public QSyntaxHighlighter {
+public:
+  explicit TextCardHighlighter(QTextDocument *document)
+      : QSyntaxHighlighter(document) {
+    addRule(QStringLiteral(
+                R"(\b(?:alignas|auto|bool|break|case|catch|class|const|constexpr|continue|def|do|done|elif|else|enum|export|false|fi|final|finally|float|for|foreach|from|function|if|import|in|int|interface|let|namespace|new|null|nullptr|override|private|protected|public|return|static|string|struct|switch|then|throw|true|try|type|using|var|void|while|yield)\b)"),
+            QColor(QStringLiteral("#c792ea")), QFont::DemiBold);
+    addRule(QStringLiteral(
+                R"((?:^|(?<=\s))(?:\$\s*)?(?:cd|cmake|curl|docker|echo|git|make|npm|omasnap|pacman|pnpm|python|sudo|tar|yarn)(?=\s|$))"),
+            QColor(QStringLiteral("#82aaff")), QFont::DemiBold);
+    addRule(QStringLiteral(R"((?<!\w)--?[A-Za-z][\w-]*)"),
+            QColor(QStringLiteral("#89ddff")));
+    addRule(QStringLiteral(R"(https?://[^\s)\]}>]+)"),
+            QColor(QStringLiteral("#7fdbca")));
+    addRule(QStringLiteral(R"(\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b)"),
+            QColor(QStringLiteral("#f78c6c")));
+    addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)"),
+            QColor(QStringLiteral("#ecc48d")));
+    addRule(QStringLiteral(R"((?:^|\s)(?:#|//).*$)"),
+            QColor(QStringLiteral("#6f7d8c")), QFont::Normal, true);
+    addRule(QStringLiteral(R"(^\s*```.*$)"),
+            QColor(QStringLiteral("#6f7d8c")));
+  }
+
+protected:
+  void highlightBlock(const QString &text) override {
+    for (const Rule &rule : rules_) {
+      QRegularExpressionMatchIterator matches = rule.pattern.globalMatch(text);
+      while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        setFormat(match.capturedStart(), match.capturedLength(), rule.format);
+        if (rule.toEnd)
+          break;
+      }
+    }
+  }
+
+private:
+  struct Rule {
+    QRegularExpression pattern;
+    QTextCharFormat format;
+    bool toEnd = false;
+  };
+
+  void addRule(const QString &pattern, const QColor &color,
+               QFont::Weight weight = QFont::Normal, bool toEnd = false) {
+    QTextCharFormat format;
+    format.setForeground(color);
+    format.setFontWeight(weight);
+    rules_.push_back({QRegularExpression(pattern), format, toEnd});
+  }
+
+  QVector<Rule> rules_;
+};
+
+QString textCardSnippet(QString text, QString &error) {
+  text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+  text.replace('\r', '\n');
+  while (text.startsWith('\n'))
+    text.remove(0, 1);
+  while (text.endsWith('\n'))
+    text.chop(1);
+  if (text.trimmed().isEmpty()) {
+    error = QStringLiteral("Clipboard text is empty");
+    return {};
+  }
+  if (text.size() > 16000 || text.count('\n') >= 120) {
+    error = QStringLiteral(
+        "Clipboard text is too long for a share card (16,000 characters or "
+        "120 lines max)");
+    return {};
+  }
+  for (qsizetype index = 0; index < text.size(); ++index) {
+    const QChar character = text.at(index);
+    if (character.unicode() < 0x20 && character != '\n' && character != '\t')
+      text[index] = QLatin1Char(' ');
+  }
+  return text;
+}
+} // namespace
+
+QImage renderTextCard(const QString &text, QString &error) {
+  error.clear();
+  const QString snippet = textCardSnippet(text, error);
+  if (snippet.isEmpty())
+    return {};
+
+  static constexpr int kOutputWidth = 1200;
+  static constexpr int kMinimumOutputHeight = 675;
+  static constexpr int kWindowWidth = 1040;
+  static constexpr int kHeaderHeight = 64;
+  static constexpr int kHorizontalTextPadding = 46;
+  static constexpr int kTopTextPadding = 36;
+  static constexpr int kBottomTextPadding = 44;
+  const int textWidth = kWindowWidth - kHorizontalTextPadding * 2;
+
+  static_cast<void>(loadCaptureFonts());
+  QFont codeFont(annotationTextFontName(TextFont::JetBrainsMono));
+  codeFont.setPixelSize(25);
+  codeFont.setStyleHint(QFont::Monospace);
+
+  QTextDocument document;
+  document.setDocumentMargin(0.0);
+  document.setDefaultFont(codeFont);
+  QTextOption option;
+  option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+  option.setTabStopDistance(QFontMetricsF(codeFont).horizontalAdvance(' ') * 4);
+  document.setDefaultTextOption(option);
+  document.setPlainText(snippet);
+  document.setTextWidth(textWidth);
+  TextCardHighlighter highlighter(&document);
+  highlighter.rehighlight();
+  const int documentHeight =
+      std::max(1, qCeil(document.documentLayout()->documentSize().height()));
+  const int windowHeight = kHeaderHeight + kTopTextPadding + documentHeight +
+                           kBottomTextPadding;
+  const int outputHeight = std::max(kMinimumOutputHeight, windowHeight + 160);
+
+  QImage image(kOutputWidth, outputHeight,
+               QImage::Format_ARGB32_Premultiplied);
+  image.fill(Qt::transparent);
+  QPainter painter(&image);
+  painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+
+  QLinearGradient stage(0, 0, kOutputWidth, outputHeight);
+  stage.setColorAt(0.0, QColor(QStringLiteral("#4b2ca3")));
+  stage.setColorAt(0.52, QColor(QStringLiteral("#a32c72")));
+  stage.setColorAt(1.0, QColor(QStringLiteral("#d2603b")));
+  painter.fillRect(image.rect(), stage);
+
+  const QRectF window((kOutputWidth - kWindowWidth) / 2.0,
+                      (outputHeight - windowHeight) / 2.0, kWindowWidth,
+                      windowHeight);
+  for (int spread = 28; spread >= 4; spread -= 4) {
+    const int alpha = std::max(3, 30 - spread / 2);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, alpha));
+    painter.drawRoundedRect(window.translated(0, spread / 2.0)
+                                .adjusted(-spread / 5.0, -spread / 5.0,
+                                          spread / 5.0, spread / 5.0),
+                            22 + spread / 5.0, 22 + spread / 5.0);
+  }
+  painter.setPen(QPen(QColor(255, 255, 255, 32), 1));
+  painter.setBrush(QColor(QStringLiteral("#11141a")));
+  painter.drawRoundedRect(window, 22, 22);
+  painter.setPen(QPen(QColor(255, 255, 255, 20), 1));
+  painter.drawLine(QPointF(window.left(), window.top() + kHeaderHeight),
+                   QPointF(window.right(), window.top() + kHeaderHeight));
+
+  const qreal dotY = window.top() + kHeaderHeight / 2.0;
+  const std::array<QColor, 3> dots{QColor(QStringLiteral("#ff5f57")),
+                                   QColor(QStringLiteral("#febc2e")),
+                                   QColor(QStringLiteral("#28c840"))};
+  painter.setPen(Qt::NoPen);
+  for (int index = 0; index < static_cast<int>(dots.size()); ++index) {
+    painter.setBrush(dots.at(static_cast<std::size_t>(index)));
+    painter.drawEllipse(QPointF(window.left() + 30 + index * 25, dotY), 7, 7);
+  }
+  QFont labelFont(annotationTextFontName(TextFont::InterDisplay));
+  labelFont.setPixelSize(13);
+  labelFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.8);
+  painter.setFont(labelFont);
+  painter.setPen(QColor(216, 222, 233, 105));
+  painter.drawText(
+      QRectF(window.left() + 120, window.top(), window.width() - 150,
+             kHeaderHeight),
+      Qt::AlignVCenter | Qt::AlignRight, QStringLiteral("OMASNAP · CLIPBOARD"));
+
+  painter.save();
+  painter.translate(window.left() + kHorizontalTextPadding,
+                    window.top() + kHeaderHeight + kTopTextPadding);
+  QAbstractTextDocumentLayout::PaintContext context;
+  context.clip = QRectF(0, 0, textWidth, documentHeight);
+  context.palette.setColor(QPalette::Text, QColor(QStringLiteral("#d8dee9")));
+  document.documentLayout()->draw(&painter, context);
+  painter.restore();
+  painter.end();
+  return image;
 }
 
 bool copyPngFileToClipboard(const QString &path, QString &error) {

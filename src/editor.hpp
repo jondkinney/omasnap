@@ -457,6 +457,8 @@ private:
   void endScrollCapture();
   /// A stitched scroll capture becomes the image being edited.
   void adoptStitched(const QImage &image);
+  /// Turns plain clipboard text into a styled, syntax-colored share card.
+  void openClipboardTextCard();
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.

@@ -10393,7 +10393,7 @@ int main(int argc, char **argv) {
   }
 
   QString clipboardError;
-  if (!runClipboardSmoke(clipboardError)) {
+  if (!runClipboardSmoke(outputRoot, clipboardError)) {
     qWarning().noquote() << clipboardError;
     return 88;
   }
