@@ -54,8 +54,7 @@ private:
   [[nodiscard]] int wordEnd(int cursorPosition) const;
   [[nodiscard]] std::optional<QPair<int, int>>
   wordRange(bool around, bool fromCursor = false) const;
-  [[nodiscard]] bool applyMotion(QTextCursor &cursor,
-                                 const QString &command) const;
+  [[nodiscard]] bool applyMotion(QTextCursor &cursor, const QString &command);
   void deleteRange(int first, int last, bool change, const QString &deleted);
   [[nodiscard]] bool applyEndOperator(bool change);
   [[nodiscard]] bool applyWordOperator(bool change, bool around,
@@ -81,6 +80,8 @@ private:
 
   QString yank_;
   bool yankLinewise_ = false;
+  int goalColumn_ = -1;
+  bool stickyEol_ = false;
   QString pendingCommand_;
   bool insertEditActive_ = false;
   int insertEditStart_ = -1;

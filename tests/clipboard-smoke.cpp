@@ -432,6 +432,26 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card xp did not undo cleanly");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClicks(cardEditor, QStringLiteral("$"));
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->findBlockByNumber(2).position() + 16) {
+    error = QStringLiteral(
+        "Clipboard-card $ then j did not stick to line ends: %1")
+                .arg(cardEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_K);
+  QTest::keyClick(cardEditor, Qt::Key_0);
+  QTest::keyClick(cardEditor, Qt::Key_H);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->findBlockByNumber(1).position()) {
+    error = QStringLiteral("Clipboard-card h wrapped across a line start");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);

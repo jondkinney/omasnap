@@ -45,6 +45,8 @@ TextCardEditor::TextCardEditor(QPlainTextEdit *edit, QObject *parent)
 
 void TextCardEditor::reset() {
   endInsertEdit();
+  goalColumn_ = -1;
+  stickyEol_ = false;
   insertMode_ = false;
   visualLineMode_ = false;
   visualAnchor_ = -1;
@@ -252,6 +254,11 @@ void TextCardEditor::leaveVisualMode(int cursorPosition) {
 bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
   const QString command = key->text();
   const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
+  if (command != QStringLiteral("j") && command != QStringLiteral("k")) {
+    goalColumn_ = -1;
+    if (command != QStringLiteral("$"))
+      stickyEol_ = false;
+  }
   if (key->key() == Qt::Key_Escape) {
     leaveVisualMode(visualPosition_);
     return true;
@@ -571,20 +578,38 @@ void TextCardEditor::put(bool before) {
 }
 
 bool TextCardEditor::applyMotion(QTextCursor &cursor,
-                                 const QString &command) const {
-  if (command == QStringLiteral("h"))
-    cursor.movePosition(QTextCursor::PreviousCharacter);
-  else if (command == QStringLiteral("j"))
-    cursor.movePosition(QTextCursor::Down);
-  else if (command == QStringLiteral("k"))
-    cursor.movePosition(QTextCursor::Up);
-  else if (command == QStringLiteral("l"))
-    cursor.movePosition(QTextCursor::NextCharacter);
-  else if (command == QStringLiteral("0"))
+                                 const QString &command) {
+  if (command == QStringLiteral("h")) {
+    // h and l stay on their line, Vim-style.
+    if (!cursor.atBlockStart())
+      cursor.movePosition(QTextCursor::PreviousCharacter);
+  } else if (command == QStringLiteral("j") ||
+             command == QStringLiteral("k")) {
+    // Logical lines, not wrapped display rows, with the column remembered
+    // across shorter lines; after `$` the target is each line's end.
+    const QTextBlock block = cursor.block();
+    const QTextBlock target =
+        command == QStringLiteral("j") ? block.next() : block.previous();
+    if (!target.isValid())
+      return true;
+    if (goalColumn_ < 0)
+      goalColumn_ = cursor.position() - block.position();
+    const int lastColumn =
+        std::max(0, static_cast<int>(target.text().size()) - 1);
+    cursor.setPosition(target.position() +
+                       (stickyEol_ ? lastColumn
+                                   : std::min(goalColumn_, lastColumn)));
+  } else if (command == QStringLiteral("l")) {
+    if (!cursor.atBlockEnd()) {
+      cursor.movePosition(QTextCursor::NextCharacter);
+      clampToLastCharacter(cursor);
+    }
+  } else if (command == QStringLiteral("0"))
     cursor.movePosition(QTextCursor::StartOfBlock);
   else if (command == QStringLiteral("$")) {
     cursor.movePosition(QTextCursor::EndOfBlock);
     clampToLastCharacter(cursor);
+    stickyEol_ = true;
   } else if (command == QStringLiteral("w"))
     cursor.movePosition(QTextCursor::NextWord);
   else if (command == QStringLiteral("b"))
@@ -614,6 +639,11 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
   QTextCursor cursor = edit_->textCursor();
   const QString command = key->text();
   const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
+  if (command != QStringLiteral("j") && command != QStringLiteral("k")) {
+    goalColumn_ = -1;
+    if (command != QStringLiteral("$"))
+      stickyEol_ = false;
+  }
   if (shifted && key->key() == Qt::Key_J) {
     pendingCommand_.clear();
     joinLines();
