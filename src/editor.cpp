@@ -798,8 +798,10 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
       QTextOption::WrapAtWordBoundaryOrAnywhere);
   textCardEditor_->setTabChangesFocus(false);
   textCardEditor_->setContentsMargins(0, 0, 0, 0);
+  textCardEditor_->setContextMenuPolicy(Qt::NoContextMenu);
   textCardEditor_->document()->setDocumentMargin(0.0);
   textCardEditor_->installEventFilter(this);
+  textCardEditor_->viewport()->installEventFilter(this);
   connect(textCardEditor_, &QPlainTextEdit::textChanged, this,
           [this] {
             reinstallClipboardTextCardHighlighter();
@@ -1143,6 +1145,17 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
       cursor.insertText(QStringLiteral("\t"));
       return true;
     }
+    // Widget undo would rewind past the session grouping; undo belongs to
+    // Normal-mode u and Ctrl+R.
+    if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo))
+      return true;
+  } else if (watched == textCardEditor_->viewport() &&
+             (event->type() == QEvent::MouseButtonPress ||
+              event->type() == QEvent::MouseButtonRelease) &&
+             static_cast<QMouseEvent *>(event)->button() ==
+                 Qt::MiddleButton) {
+    // Middle-click paste would bypass the modal layer and its undo marks.
+    return true;
   } else if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
