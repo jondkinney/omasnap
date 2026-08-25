@@ -59,6 +59,24 @@ public:
             theme.number);
     addRule(QStringLiteral(R"(https?://[^\s)\]}>]+)"), theme.flag);
 
+    if (language == QStringLiteral("C++") ||
+        language == QStringLiteral("JavaScript") ||
+        language == QStringLiteral("TypeScript") ||
+        language == QStringLiteral("QML") ||
+        language == QStringLiteral("Rust") || language == QStringLiteral("Go") ||
+        language == QStringLiteral("CSS") ||
+        language == QStringLiteral("SCSS") ||
+        language == QStringLiteral("Sass")) {
+      addBlockSpan(QStringLiteral("/*"), QStringLiteral("*/"), theme.comment);
+    } else if (language == QStringLiteral("Python")) {
+      addBlockSpan(QStringLiteral("\"\"\""), QStringLiteral("\"\"\""),
+                   theme.string);
+      addBlockSpan(QStringLiteral("'''"), QStringLiteral("'''"), theme.string);
+    } else if (language == QStringLiteral("Lua")) {
+      addBlockSpan(QStringLiteral("--[["), QStringLiteral("]]"),
+                   theme.comment);
+    }
+
     if (language == QStringLiteral("Shell")) {
       addRule(QStringLiteral(
                   R"(\b(?:case|do|done|elif|else|esac|export|fi|for|function|if|in|select|then|time|until|while)\b)"),
@@ -208,6 +226,40 @@ protected:
         offset = start + length;
       }
     }
+
+    // Multi-line constructs carry across blocks: state index + 1 means this
+    // block starts inside blockSpans_[index].
+    setCurrentBlockState(0);
+    int active = previousBlockState() - 1;
+    int searchFrom = 0;
+    while (true) {
+      int start = 0;
+      if (active < 0) {
+        start = -1;
+        for (int index = 0; index < blockSpans_.size(); ++index) {
+          const int found = text.indexOf(blockSpans_[index].open, searchFrom);
+          if (found >= 0 && (start < 0 || found < start)) {
+            start = found;
+            active = index;
+          }
+        }
+        if (active < 0)
+          break;
+        searchFrom =
+            start + static_cast<int>(blockSpans_[active].open.size());
+      }
+      const int end = text.indexOf(blockSpans_[active].close, searchFrom);
+      if (end < 0) {
+        setFormat(start, text.size() - start, blockSpans_[active].format);
+        setCurrentBlockState(active + 1);
+        break;
+      }
+      const int stop =
+          end + static_cast<int>(blockSpans_[active].close.size());
+      setFormat(start, stop - start, blockSpans_[active].format);
+      searchFrom = stop;
+      active = -1;
+    }
   }
 
 private:
@@ -220,6 +272,12 @@ private:
     RuleScope scope = RuleScope::SkipsStrings;
   };
 
+  struct BlockSpan {
+    QString open;
+    QString close;
+    QTextCharFormat format;
+  };
+
   void addRule(const QString &pattern, const QColor &color,
                QFont::Weight weight = QFont::Normal, bool toEnd = false,
                RuleScope scope = RuleScope::SkipsStrings) {
@@ -229,7 +287,15 @@ private:
     rules_.push_back({QRegularExpression(pattern), format, toEnd, scope});
   }
 
+  void addBlockSpan(const QString &open, const QString &close,
+                    const QColor &color) {
+    QTextCharFormat format;
+    format.setForeground(color);
+    blockSpans_.push_back({open, close, format});
+  }
+
   QVector<Rule> rules_;
+  QVector<BlockSpan> blockSpans_;
 };
 
 QColor readableColor(const QHash<QString, QColor> &colors, const QString &key,

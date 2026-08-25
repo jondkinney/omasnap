@@ -210,6 +210,32 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
                 .arg(precedenceError);
     return false;
   }
+  QString blockCommentError;
+  const QImage blockCommentCard =
+      renderTextCardLayout(
+          QStringLiteral("/* first line\nsecond line */\nint x = 1;"), theme,
+          blockCommentError, true, QStringLiteral("NORMAL"),
+          QStringLiteral("test.cpp"))
+          .image;
+  int blockCommentPixels = 0;
+  int blockKeywordPixels = 0;
+  for (int y = 0; y < blockCommentCard.height(); ++y) {
+    for (int x = 0; x < blockCommentCard.width(); ++x) {
+      const QColor pixel = blockCommentCard.pixelColor(x, y);
+      if (pixel == theme.comment)
+        ++blockCommentPixels;
+      if (pixel == theme.keyword)
+        ++blockKeywordPixels;
+    }
+  }
+  if (blockCommentPixels < 400 || blockKeywordPixels < 30) {
+    error = QStringLiteral(
+        "Multi-line comment did not span blocks: comment=%1 keyword=%2 %3")
+                .arg(blockCommentPixels)
+                .arg(blockKeywordPixels)
+                .arg(blockCommentError);
+    return false;
+  }
 
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
