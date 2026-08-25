@@ -605,6 +605,9 @@ private:
   QVector<CutOp> cuts_;
   bool windowedPresentation_ = false;
   bool windowedHandoffOnEdit_ = false;
+  /// Latched once a successor owns the document; keys queued behind the
+  /// blocking handoff flush must not spawn another one.
+  bool handOffStarted_ = false;
   bool windowedBackdropOpaque_ = true;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;

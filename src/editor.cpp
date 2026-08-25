@@ -1105,8 +1105,10 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
       event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (isPlainControlChord(key, Qt::Key_W)) {
-      endClipboardTextCardFilenameEdit(true);
-      handOffLiveTextCard();
+      if (!key->isAutoRepeat()) {
+        endClipboardTextCardFilenameEdit(true);
+        handOffLiveTextCard();
+      }
       return true;
     }
     if (key->key() == Qt::Key_Escape) {
@@ -1132,8 +1134,13 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
         key->key() == Qt::Key_Alt || key->key() == Qt::Key_Meta;
     if (key->key() != Qt::Key_Q && !modifierOnly)
       textCardDiscardArmed_ = false;
+    // A held q would arm the discard and confirm it on the next repeat.
+    if (key->key() == Qt::Key_Q && key->isAutoRepeat() &&
+        !textCardModal_->insertMode())
+      return true;
     if (isPlainControlChord(key, Qt::Key_W)) {
-      handOffLiveTextCard();
+      if (!key->isAutoRepeat())
+        handOffLiveTextCard();
       return true;
     }
     const bool editFilename =
@@ -1148,7 +1155,10 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     }
     if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
         key->modifiers().testFlag(Qt::ControlModifier)) {
-      finishClipboardTextCard();
+      // Repeats of the commit chord land in the annotation phase, where
+      // Enter finishes the whole capture.
+      if (!key->isAutoRepeat())
+        finishClipboardTextCard();
       return true;
     }
     if (!textCardModal_->insertMode())
@@ -3313,7 +3323,7 @@ bool CaptureEditor::prepareHandoff(QString &path, QString &error) {
 }
 
 void CaptureEditor::handOffEditor(bool toWindow) {
-  if (busy_)
+  if (busy_ || handOffStarted_)
     return;
   QString path;
   QString error;
@@ -3334,6 +3344,7 @@ void CaptureEditor::handOffEditor(bool toWindow) {
     setStatus(QStringLiteral("Could not start omasnap"));
     return;
   }
+  handOffStarted_ = true;
   close();
 }
 
@@ -4035,6 +4046,12 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   const bool modifierOnly =
       event->key() == Qt::Key_Shift || event->key() == Qt::Key_Control ||
       event->key() == Qt::Key_Alt || event->key() == Qt::Key_Meta;
+  // A held Ctrl+E would arm the reopen and confirm it on the next repeat,
+  // silently discarding the annotations.
+  if (reopenChord && event->isAutoRepeat()) {
+    event->accept();
+    return;
+  }
   if (!reopenChord && !modifierOnly)
     textCardReopenArmed_ = false;
   if (reopenChord) {
@@ -4230,7 +4247,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
     // Enter on a selected label reopens it for editing; anywhere else it
-    // finishes the capture.
+    // finishes the capture. Repeats held over from another phase (a card
+    // commit, a text layer) must not save and exit.
+    if (event->isAutoRepeat())
+      return;
     if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
         selectedAnnotations_.size() <= 1 &&
         annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text &&
@@ -4383,7 +4403,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     pinSnapshot();
     return;
   } else if (event->key() == Qt::Key_W) {
-    handOffEditor(!windowedPresentation_);
+    // Auto-repeat never swaps processes: repeats queued behind the handoff
+    // land in the successor and would immediately hand back.
+    if (!event->isAutoRepeat())
+      handOffEditor(!windowedPresentation_);
     return;
   } else if (event->key() == Qt::Key_G) {
     cycleCanvasBoundary(

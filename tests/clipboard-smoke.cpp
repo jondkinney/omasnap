@@ -1885,6 +1885,92 @@ bool runTextCardHandoffCheck(const CaptureData &capture,
   return true;
 }
 
+/** A compositor key repeat: identical to a press, with autorep set. */
+void sendAutoRepeatKey(QWidget *target, Qt::Key key,
+                       Qt::KeyboardModifiers modifiers = Qt::NoModifier,
+                       const QString &text = {}) {
+  QKeyEvent press(QEvent::KeyPress, key, modifiers, text, true);
+  QApplication::sendEvent(target, &press);
+  QKeyEvent release(QEvent::KeyRelease, key, modifiers, text, true);
+  QApplication::sendEvent(target, &release);
+  QApplication::processEvents();
+}
+
+/** Auto-repeat cannot confirm an armed gate or cross a phase change. */
+bool runTextCardRepeatGuardCheck(const CaptureData &capture, QString &error) {
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expectedCardText().toUtf8());
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+  editor.setSuppressSnapshots(true);
+  editor.resize(640, 480);
+  editor.show();
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_V,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::processEvents();
+  auto *cardEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!editor.clipboardTextCardEditingForTest() || !cardEditor) {
+    error = QStringLiteral("Repeat-guard card did not open");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  sendAutoRepeatKey(cardEditor, Qt::Key_Q, Qt::NoModifier,
+                    QStringLiteral("q"));
+  if (!editor.clipboardTextCardTextForTest().startsWith(QLatin1Char('q'))) {
+    error = QStringLiteral("Insert-mode auto-repeat q stopped typing");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  sendAutoRepeatKey(cardEditor, Qt::Key_Q, Qt::NoModifier,
+                    QStringLiteral("q"));
+  if (!editor.clipboardTextCardEditingForTest() ||
+      editor.statusForTest().contains(QStringLiteral("discards"))) {
+    error = QStringLiteral("Auto-repeat q armed or confirmed the discard");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Q);
+  if (!editor.clipboardTextCardEditingForTest() ||
+      !editor.statusForTest().contains(QStringLiteral("q again discards"))) {
+    error = QStringLiteral("A real q no longer arms the discard");
+    return false;
+  }
+  sendAutoRepeatKey(cardEditor, Qt::Key_Q, Qt::NoModifier,
+                    QStringLiteral("q"));
+  if (!editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("Auto-repeat q confirmed an armed discard");
+    return false;
+  }
+  sendAutoRepeatKey(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  if (!editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("Auto-repeat Ctrl+Enter committed the card");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("A real Ctrl+Enter no longer commits the card");
+    return false;
+  }
+  sendAutoRepeatKey(&editor, Qt::Key_Return);
+  if (!editor.isVisible()) {
+    error = QStringLiteral("A leaked Enter repeat finished the capture");
+    return false;
+  }
+  sendAutoRepeatKey(&editor, Qt::Key_E, Qt::ControlModifier);
+  if (editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("Auto-repeat Ctrl+E reopened the card");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("A real Ctrl+E no longer reopens the card");
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 /** Drives the full clipboard text-card flow section by section. */
 bool runTextCardCheck(const QString &outputRoot, QString &error) {
   if (!runTextCardDetectionCheck(error) ||
@@ -1910,7 +1996,8 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       !runTextCardNormalModeCheck(editor, cardEditor, error) ||
       !runTextCardVisualModeCheck(editor, cardEditor, outputRoot,
                                   error) ||
-      !runTextCardRenderRoundTripCheck(editor, cardEditor, error))
+      !runTextCardRenderRoundTripCheck(editor, cardEditor, error) ||
+      !runTextCardRepeatGuardCheck(capture, error))
     return false;
   return runTextCardHandoffCheck(capture, outputRoot, error);
 }
