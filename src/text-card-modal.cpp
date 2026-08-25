@@ -2,6 +2,7 @@
 #include "text-card-modal.hpp"
 
 #include "capture.hpp"
+#include "text-card.hpp"
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -384,6 +385,23 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     pendingCommand_.clear();
     return true;
   }
+  if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+    pendingCommand_.clear();
+    shiftSelection(key->key() == Qt::Key_Backtab || shifted);
+    return true;
+  }
+  if (pendingCommand_ == QStringLiteral(">") ||
+      pendingCommand_ == QStringLiteral("<")) {
+    const QString pending = pendingCommand_;
+    pendingCommand_.clear();
+    if (command == pending)
+      shiftSelection(pending == QStringLiteral("<"));
+    return true;
+  }
+  if (command == QStringLiteral(">") || command == QStringLiteral("<")) {
+    pendingCommand_ = command;
+    return true;
+  }
   if (pendingCommand_ == QStringLiteral("r")) {
     pendingCommand_.clear();
     const QString replacement = replacementText(key);
@@ -566,6 +584,72 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
       lastCharacter < 0 ? 0 : std::clamp(motion.position(), 0, lastCharacter);
   updateVisualSelection();
   return true;
+}
+
+// Indents or outdents every line in the block range by one tab stop; a
+// press with nothing to change records no undo mark.
+void TextCardModal::shiftLines(int firstBlockNumber, int lastBlockNumber,
+                               bool outdent) {
+  QTextDocument *document = edit_->document();
+  QTextCursor edit(document);
+  edit.beginEditBlock();
+  bool changed = false;
+  for (int number = firstBlockNumber; number <= lastBlockNumber; ++number) {
+    const QTextBlock block = document->findBlockByNumber(number);
+    if (!block.isValid())
+      continue;
+    if (!outdent) {
+      if (block.text().isEmpty())
+        continue;
+      edit.setPosition(block.position());
+      edit.insertText(QStringLiteral("\t"));
+      changed = true;
+      continue;
+    }
+    const QString line = block.text();
+    int remove = 0;
+    if (line.startsWith(QLatin1Char('\t')))
+      remove = 1;
+    else
+      while (remove < kTextCardTabSpaces && remove < line.size() &&
+             line.at(remove) == QLatin1Char(' '))
+        ++remove;
+    if (remove > 0) {
+      edit.setPosition(block.position());
+      edit.setPosition(block.position() + remove, QTextCursor::KeepAnchor);
+      edit.removeSelectedText();
+      changed = true;
+    }
+  }
+  edit.endEditBlock();
+  if (changed)
+    recordUndoCursor(
+        document->findBlockByNumber(firstBlockNumber).position());
+}
+
+// Shifts the selected lines and re-covers them so the command repeats.
+void TextCardModal::shiftSelection(bool outdent) {
+  const QTextDocument *document = edit_->document();
+  const int firstBlock =
+      document->findBlock(visualSelectionStart_).blockNumber();
+  const int lastBlock =
+      document
+          ->findBlock(std::max(visualSelectionStart_,
+                               visualSelectionEnd_ - 1))
+          .blockNumber();
+  shiftLines(firstBlock, lastBlock, outdent);
+  const QTextBlock first = document->findBlockByNumber(firstBlock);
+  const QTextBlock last = document->findBlockByNumber(lastBlock);
+  visualAnchor_ = first.position();
+  visualPosition_ = std::max(
+      last.position(),
+      last.position() + static_cast<int>(last.text().size()) - 1);
+  updateVisualSelection();
+  emit statusRequested(
+      outdent ? QStringLiteral("Text card · VISUAL · lines outdented · "
+                               "Tab/Shift+Tab or >>/<< repeat · Esc Normal")
+              : QStringLiteral("Text card · VISUAL · lines indented · "
+                               "Tab/Shift+Tab or >>/<< repeat · Esc Normal"));
 }
 
 void TextCardModal::joinLines() {
@@ -1145,6 +1229,32 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
     pendingCommand_ = QStringLiteral("r");
     emit statusRequested(QStringLiteral(
         "Text card · NORMAL · r · type the replacement · Esc cancels"));
+    return true;
+  }
+  if (pendingCommand_ == QStringLiteral(">") ||
+      pendingCommand_ == QStringLiteral("<")) {
+    const QString pending = pendingCommand_;
+    pendingCommand_.clear();
+    if (command == pending) {
+      const bool outdent = pending == QStringLiteral("<");
+      const int blockNumber = cursor.block().blockNumber();
+      shiftLines(blockNumber, blockNumber, outdent);
+      QTextCursor landed = edit_->textCursor();
+      moveToFirstNonBlank(landed);
+      edit_->setTextCursor(landed);
+      emit statusRequested(
+          outdent
+              ? QStringLiteral("Text card · NORMAL · line outdented · "
+                               "<< repeats · u undoes")
+              : QStringLiteral("Text card · NORMAL · line indented · "
+                               ">> repeats · u undoes"));
+    } else {
+      emitUnsupportedMotion(pending, command);
+    }
+    return true;
+  }
+  if (command == QStringLiteral(">") || command == QStringLiteral("<")) {
+    pendingCommand_ = command;
     return true;
   }
   if (key->key() == Qt::Key_V) {

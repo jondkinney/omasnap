@@ -1140,7 +1140,8 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
         key->key() == Qt::Key_Backtab ||
         (key->key() == Qt::Key_Tab &&
          key->modifiers().testFlag(Qt::ShiftModifier));
-    if (editFilename) {
+    // In Visual mode Shift+Tab outdents the selection instead.
+    if (editFilename && !textCardModal_->visualMode()) {
       textCardModal_->exitToNormal();
       beginClipboardTextCardFilenameEdit();
       return true;

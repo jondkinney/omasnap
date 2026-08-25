@@ -771,6 +771,72 @@ bool runTextCardNormalModeCheck(CaptureEditor &editor,
     error = QStringLiteral("Clipboard-card r commands did not undo");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral(">>"));
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral("\n\t\techo"))) {
+    error = QStringLiteral("Clipboard-card >> did not indent the line");
+    return false;
+  }
+  QTest::keyClicks(cardEditor, QStringLiteral("<<"));
+  QTest::keyClicks(cardEditor, QStringLiteral("<<"));
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral("\necho \"done\""))) {
+    error = QStringLiteral("Clipboard-card << did not outdent the line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card indent commands did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_Tab);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("\tconst answer = \"hello\";\n\t# install"))) {
+    error = QStringLiteral("Visual Tab did not indent the selected lines");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Tab);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("\t\tconst")) ||
+      editor.clipboardTextCardModeForTest() !=
+          QStringLiteral("VISUAL LINE")) {
+    error = QStringLiteral("Visual Tab did not repeat on the kept selection");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Backtab);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("\tconst"))) {
+    error = QStringLiteral("Visual Shift+Tab did not outdent");
+    return false;
+  }
+  QTest::keyClicks(cardEditor, QStringLiteral(">>"));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("\t\tconst")) ||
+      editor.clipboardTextCardModeForTest() !=
+          QStringLiteral("VISUAL LINE")) {
+    error = QStringLiteral("Visual >> did not indent the kept selection");
+    return false;
+  }
+  QTest::keyClicks(cardEditor, QStringLiteral("<<"));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("\tconst"))) {
+    error = QStringLiteral("Visual << did not outdent the kept selection");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  for (int undo = 0; undo < 5; ++undo)
+    QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Visual indent commands did not undo apart");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_Right);

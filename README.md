@@ -285,10 +285,11 @@ massaging a snippet without embedding a full editor:
 | `h` `j` `k` `l` or arrows/Backspace, `w` `b` `e`, `0` `$` or Home/End, `gg` `G` | Move in Normal or Visual mode; `j`/`k` walk logical lines, remember their column, and stay at line ends after `$` |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
 | `Esc` | Return from Insert or Visual to Normal mode |
-| `F`, `Shift+Tab`, or click the title | Edit the displayed filename; its extension switches live syntax highlighting even before code is entered; Enter or Tab accepts and Esc cancels |
+| `F`, `Shift+Tab` (outside Visual), or click the title | Edit the displayed filename; its extension switches live syntax highlighting even before code is entered; Enter or Tab accepts and Esc cancels |
 | `x` or Delete, `dd`, `dw`, `de`, `diw`, `daw`, `D`, `Shift+J` | Delete a character, line, to the next word, through word end, inner/around word, to the line end, or join with the next line |
 | `C`, `cc`, `cw`, `ce`, `ciw`, `caw` | Change to end of line, a whole line, through word end, or the inner/around word |
 | `r` | Replace the character under the cursor — or every selected character in Visual mode — with the next key typed |
+| `>>`, `<<` | Indent or outdent the current line by one tab; in Visual mode (also `Tab`/`Shift+Tab`) they shift the selected lines and keep the selection so presses repeat |
 | `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them; `o` swaps the selection ends and `p` replaces the selection with the register, which then holds the replaced text |
 | `yy`, `yw`, `ye`, `yiw`, `yaw` | Copy the current line, to the next word, through word end, or the inner/around word |
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line; deleted text fills the register `p` puts |

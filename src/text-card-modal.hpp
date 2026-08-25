@@ -58,6 +58,8 @@ private:
   void updateVisualSelection();
   void leaveVisualMode(int cursorPosition);
   [[nodiscard]] bool handleVisualKey(QKeyEvent *key);
+  void shiftLines(int firstBlockNumber, int lastBlockNumber, bool outdent);
+  void shiftSelection(bool outdent);
   void joinLines();
   [[nodiscard]] int wordEnd(int cursorPosition) const;
   [[nodiscard]] std::optional<QPair<int, int>>
