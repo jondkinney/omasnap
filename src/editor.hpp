@@ -325,6 +325,10 @@ public:
   [[nodiscard]] QString clipboardTextCardFilenameForTest() const {
     return textCardFilename_;
   }
+  /** Syntax profile currently attached to the live clipboard editor. */
+  [[nodiscard]] QString clipboardTextCardLanguageForTest() const {
+    return textCardSyntaxLanguage_;
+  }
   /** Whether a rendered card still has source available for Ctrl+E. */
   [[nodiscard]] bool clipboardTextCardSourceRetainedForTest() const {
     return !textCardDocumentText_.isEmpty();
@@ -500,6 +504,8 @@ private:
   void leaveClipboardTextCardVisualMode(int cursorPosition);
   [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
   void joinClipboardTextCardLines();
+  [[nodiscard]] std::optional<QPair<int, int>> clipboardTextCardWordRange(
+      bool around, bool fromCursor = false) const;
   [[nodiscard]] bool applyClipboardTextCardWordOperator(
       bool change, bool around, bool fromCursor = false);
   void yankClipboardTextCardLine();
@@ -777,6 +783,8 @@ private:
   QPlainTextEdit *textCardEditor_ = nullptr;
   QLineEdit *textCardFilenameEditor_ = nullptr;
   QSyntaxHighlighter *textCardHighlighter_ = nullptr;
+  bool textCardHighlighterUpdating_ = false;
+  QString textCardSyntaxLanguage_;
   TextCardTheme textCardTheme_;
   QRect textCardSourceEditorRect_;
   QRect textCardSourceTitleRect_;

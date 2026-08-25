@@ -476,6 +476,23 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
 
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
+          QStringLiteral("const") ||
+      cardEditor->textCursor().position() != 0 ||
+      !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
+    error = QStringLiteral(
+        "Clipboard-card viw did not select and yank the inner word");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_V);
   QTest::keyClick(cardEditor, Qt::Key_L);
   if (cardEditor->textCursor().position() != 1 ||
@@ -665,6 +682,61 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card Visual-line c did not undo");
     return false;
   }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (!editor.clipboardTextCardTextForTest().isEmpty()) {
+    error = QStringLiteral("Clipboard-card Visual delete did not empty source");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Tab, Qt::ShiftModifier);
+  filenameEditor = qobject_cast<QLineEdit *>(QApplication::focusWidget());
+  if (!filenameEditor) {
+    error = QStringLiteral(
+        "Clipboard-card empty source could not focus filename editing");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClicks(filenameEditor, QStringLiteral("text.rb"));
+  if (editor.clipboardTextCardLanguageForTest() != QStringLiteral("Ruby")) {
+    error = QStringLiteral(
+        "Clipboard-card empty source did not apply its filename language live");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_Tab);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClicks(cardEditor, QStringLiteral("def greet"));
+  QTest::keyClick(cardEditor, Qt::Key_Return);
+  QTest::keyClicks(cardEditor, QStringLiteral("end"));
+  QApplication::processEvents();
+  if (editor.clipboardTextCardTextForTest() !=
+          QStringLiteral("def greet\nend") ||
+      editor.clipboardTextCardLanguageForTest() != QStringLiteral("Ruby")) {
+    error = QStringLiteral(
+        "Clipboard-card Ruby profile did not remain active while typing");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  cardEditor->setPlainText(edited);
+  QTest::keyClick(cardEditor, Qt::Key_Tab, Qt::ShiftModifier);
+  filenameEditor = qobject_cast<QLineEdit *>(QApplication::focusWidget());
+  if (!filenameEditor) {
+    error = QStringLiteral(
+        "Clipboard-card could not restore its filename after language test");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClicks(filenameEditor, QStringLiteral("~/share/install.sh"));
+  QTest::keyClick(filenameEditor, Qt::Key_Tab);
+  if (editor.clipboardTextCardTextForTest() != edited ||
+      editor.clipboardTextCardLanguageForTest() != QStringLiteral("Shell")) {
+    error = QStringLiteral(
+        "Clipboard-card source did not restore after live language test");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
   QApplication::processEvents();
   QString editedRenderError;
@@ -758,7 +830,21 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Could not save the compact text-card fixture");
     return false;
   }
-  handedOff.close();
+  auto *compactEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!compactEditor) {
+    error = QStringLiteral("Compact text card did not focus its editor");
+    return false;
+  }
+  QTest::keyClick(compactEditor, Qt::Key_Q);
+  QApplication::processEvents();
+  if (handedOff.isVisible() ||
+      handedOff.statusForTest().contains(
+          QStringLiteral("Screen capture failed"))) {
+    error = QStringLiteral(
+        "Clipboard-card q did not exit cleanly without a capture failure");
+    return false;
+  }
   return true;
 }
 
