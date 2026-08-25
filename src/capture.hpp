@@ -132,6 +132,11 @@ struct OperationLog {
   /// coordinates live in that space, so a source captured on a scaled
   /// monitor reopens at the same scale. Invalid when unknown.
   QSize previewSize;
+  /// Original source retained for a rendered clipboard text card. A live
+  /// draft sets textCardEditing so an overlay/window handoff reopens it.
+  QString textCardText{};
+  QString textCardFilename{};
+  bool textCardEditing = false;
 
   bool operator==(const OperationLog &) const = default;
 };

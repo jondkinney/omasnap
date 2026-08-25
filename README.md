@@ -266,10 +266,12 @@ and its extension selects a language-specific syntax profile. Press
 and detected language. Profiles cover Shell, C/C++, JavaScript/TypeScript,
 Python, Ruby, Rust, Go, QML, JSON, YAML, TOML, CSS/SCSS/Sass, Markdown, Lua,
 and CMake, with a plain-text fallback. It starts in Normal mode; `Ctrl+Enter`
-renders the text
-into the card and hands it to the normal annotation editor. From there,
-`Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every annotation and
-canvas control remains available after rendering.
+renders the text into the card and hands it to the normal annotation editor.
+`Ctrl+W` moves the live source editor between the fullscreen overlay and a
+normal compositor window. After rendering, `Ctrl+E` reopens the retained source
+and filename for typo fixes. From there, `Ctrl+C` copies, `Ctrl+S` saves, and
+`Enter` does both. Every annotation and canvas control remains available after
+rendering.
 
 The intentionally small modal key set covers the motions and edits useful for
 massaging a snippet without embedding a full editor:
@@ -287,6 +289,7 @@ massaging a snippet without embedding a full editor:
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line |
 | `u`, `Ctrl+R` | Undo or redo; the cursor returns to the start of that change |
 | `Tab` | Indent in Insert mode |
+| `Ctrl+W` | Re-present the live source editor as a normal window or fullscreen overlay |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
 | `q` | Cancel from Normal mode and return to capture selection |
 
@@ -412,6 +415,7 @@ without reaching for the pointer.
 | `Shift+B` | Toggle the screenshot card's drop shadow; on by default |
 | `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Framed, Overflow, Image. Framed auto-grows with the normal frame; Overflow grows only the sides needed by annotations with no frame; Image clips at the original screenshot edge |
 | `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
+| `Ctrl+E` | Reopen retained source and filename when the current image is a rendered text card |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: selected pen smoothing from 0–6, the next pen's smoothing when none is selected, rectangle corner radius, or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |

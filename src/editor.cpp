@@ -678,6 +678,10 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                              QWidget *parent)
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
+  const bool reopenTextCard =
+      log.textCardEditing && !log.textCardText.isEmpty();
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultConfigPath());
@@ -1007,6 +1011,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   if (mode != CaptureMode::File && quickOutputMode_ == QuickOutputMode::None)
     loadRecents();
   updatePointerCursor();
+  if (reopenTextCard)
+    QTimer::singleShot(0, this, [this] { reopenClipboardTextCard(); });
 }
 
 CaptureEditor::~CaptureEditor() {
@@ -1029,6 +1035,14 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
   if (watched == textCardFilenameEditor_ &&
       event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
+    if (key->key() == Qt::Key_W &&
+        key->modifiers().testFlag(Qt::ControlModifier) &&
+        !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
+                                      Qt::MetaModifier)) {
+      endClipboardTextCardFilenameEdit(true);
+      handOffEditor(!windowedPresentation_);
+      return true;
+    }
     if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
       endClipboardTextCardFilenameEdit(true);
       return true;
@@ -1050,6 +1064,13 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     });
   } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
+    if (key->key() == Qt::Key_W &&
+        key->modifiers().testFlag(Qt::ControlModifier) &&
+        !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
+                                      Qt::MetaModifier)) {
+      handOffEditor(!windowedPresentation_);
+      return true;
+    }
     const bool editFilename =
         key->key() == Qt::Key_Backtab ||
         (key->key() == Qt::Key_Tab &&
@@ -1189,10 +1210,10 @@ void CaptureEditor::setClipboardTextCardInsertMode(bool insertMode) {
   updateClipboardTextCardEditorGeometry();
   setStatus(insertMode
                 ? QStringLiteral("Text card · INSERT · Esc Normal · "
-                                 "Ctrl+Enter renders")
+                                 "Ctrl+W window · Ctrl+Enter renders")
                 : QStringLiteral("Text card · NORMAL · hjkl move · i/a/o "
-                                 "insert · F filename · Ctrl+Enter renders · "
-                                 "q cancels"));
+                                 "insert · F filename · Ctrl+W window · "
+                                 "Ctrl+Enter renders · q cancels"));
   updateClipboardTextCardPreview();
 }
 
@@ -1288,8 +1309,8 @@ void CaptureEditor::leaveClipboardTextCardVisualMode(int cursorPosition) {
   cursor.setPosition(std::clamp(cursorPosition, 0, textLength));
   textCardEditor_->setTextCursor(cursor);
   setStatus(QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
-                           "v selects · F filename · Ctrl+Enter renders · "
-                           "q cancels"));
+                           "v selects · F filename · Ctrl+W window · "
+                           "Ctrl+Enter renders · q cancels"));
   updateClipboardTextCardPreview();
 }
 
@@ -3383,6 +3404,8 @@ bool CaptureEditor::restoreOperationLog(const QString &path, QString &error) {
   OperationLog log;
   if (!loadOperationLog(path, log, error))
     return false;
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
   ops_ = std::move(log.ops);
   opIndex_ = std::clamp(log.index, 0, static_cast<int>(ops_.size()));
   nextAnnotationId_ = std::max<quint64>(log.nextId, 1);
@@ -3773,8 +3796,16 @@ void CaptureEditor::startSnapshotRender() {
   const QImage source = capture_.source;
   const QString path = snapshotPath_;
   const QString logPath = operationLogPath(path);
-  const OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
-                         pristineLogicalSize_};
+  OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
+                   pristineLogicalSize_};
+  log.textCardText = clipboardTextCardEditing_
+                         ? textCardEditor_->toPlainText()
+                         : textCardDocumentText_;
+  log.textCardFilename = clipboardTextCardEditing_
+                             ? textCardFilename_
+                             : textCardDocumentFilename_;
+  log.textCardEditing =
+      clipboardTextCardEditing_ && !log.textCardText.isEmpty();
   const bool writeSource = !sourceWritten_ || !QFile::exists(path);
   snapshotWatcher_.setFuture(QtConcurrent::run(
       [source, path, logPath, log, writeSource] {
@@ -4533,6 +4564,15 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
     else
       textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+    event->accept();
+    return;
+  }
+  if (phase_ == Phase::Edit && event->key() == Qt::Key_E &&
+      event->modifiers().testFlag(Qt::ControlModifier) &&
+      !event->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
+                                      Qt::MetaModifier) &&
+      !textCardDocumentText_.isEmpty()) {
+    reopenClipboardTextCard();
     event->accept();
     return;
   }
@@ -6380,8 +6420,16 @@ void CaptureEditor::openClipboardTextCard() {
     setStatus(error);
     return;
   }
+  beginClipboardTextCard(text, defaultTextCardFilename(text));
+}
+
+void CaptureEditor::beginClipboardTextCard(const QString &text,
+                                           const QString &filename) {
+  QString error;
   textCardTheme_ = loadTextCardTheme();
-  textCardFilename_ = defaultTextCardFilename(text);
+  textCardFilename_ = filename.trimmed().isEmpty()
+                          ? defaultTextCardFilename(text)
+                          : filename;
   TextCardRender card = renderTextCardLayout(
       text, textCardTheme_, error, false, QStringLiteral("NORMAL"),
       textCardFilename_);
@@ -6397,10 +6445,12 @@ void CaptureEditor::openClipboardTextCard() {
   suppressSnapshots_ = true;
   adoptImage(std::move(card.image), OperationLog(), SelectTab::Region,
              QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
-                            "v selects · F filename · Ctrl+Enter renders · "
-                            "q cancels"));
+                            "v selects · F filename · Ctrl+W window · "
+                            "Ctrl+Enter renders · q cancels"));
   suppressSnapshots_ = suppressSnapshots;
 
+  textCardDocumentText_ = text;
+  textCardDocumentFilename_ = textCardFilename_;
   clipboardTextCardEditing_ = true;
   textCardInsertMode_ = false;
   textCardVisualLineMode_ = false;
@@ -6449,7 +6499,9 @@ void CaptureEditor::openClipboardTextCard() {
 void CaptureEditor::updateClipboardTextCardPreview() {
   if (!clipboardTextCardEditing_)
     return;
-  QString previewText = textCardEditor_->toPlainText();
+  textCardDocumentText_ = textCardEditor_->toPlainText();
+  textCardDocumentFilename_ = textCardFilename_;
+  QString previewText = textCardDocumentText_;
   if (previewText.trimmed().isEmpty())
     previewText = QString(QChar(0x200b));
   QString error;
@@ -6526,7 +6578,7 @@ void CaptureEditor::beginClipboardTextCardFilenameEdit() {
   textCardFilenameEditor_->raise();
   textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
   setStatus(QStringLiteral("Text card · FILENAME · type a path or name · "
-                           "Enter/Tab accepts · Esc cancels"));
+                           "Enter/Tab accepts · Ctrl+W window · Esc cancels"));
 }
 
 void CaptureEditor::endClipboardTextCardFilenameEdit(bool accept) {
@@ -6542,7 +6594,7 @@ void CaptureEditor::endClipboardTextCardFilenameEdit(bool accept) {
   updateClipboardTextCardPreview();
   textCardEditor_->setFocus(Qt::ShortcutFocusReason);
   setStatus(QStringLiteral("Text card · NORMAL · %1 · %2 syntax · "
-                           "F renames")
+                           "F renames · Ctrl+W window")
                 .arg(QFileInfo(textCardFilename_).fileName(),
                      detectTextCardLanguage(textCardEditor_->toPlainText(),
                                             textCardFilename_)));
@@ -6559,9 +6611,11 @@ void CaptureEditor::finishClipboardTextCard() {
   if (!clipboardTextCardEditing_)
     return;
   endClipboardTextCardInsertEdit();
+  const QString sourceText = textCardEditor_->toPlainText();
+  const QString sourceFilename = textCardFilename_;
   QString error;
   const QImage card = renderTextCardLayout(
-                          textCardEditor_->toPlainText(), textCardTheme_, error,
+                          sourceText, textCardTheme_, error,
                           true, QStringLiteral("NORMAL"), textCardFilename_)
                           .image;
   if (card.isNull()) {
@@ -6569,7 +6623,9 @@ void CaptureEditor::finishClipboardTextCard() {
     textCardEditor_->setFocus(Qt::ShortcutFocusReason);
     return;
   }
-  resetClipboardTextCardEditor();
+  textCardDocumentText_ = sourceText;
+  textCardDocumentFilename_ = sourceFilename;
+  resetClipboardTextCardEditor(false);
   capture_.source = card;
   capture_.previewSize = card.size();
   pristineSource_ = card;
@@ -6583,11 +6639,21 @@ void CaptureEditor::finishClipboardTextCard() {
   redactionBaseStale_ = true;
   backdropKey_ = 0;
   setFocus(Qt::OtherFocusReason);
-  setStatus(QStringLiteral("Text card rendered · annotate normally · Ctrl+C "
-                           "copies · Enter copies + saves"));
+  setStatus(QStringLiteral("Text card rendered · Ctrl+E re-edits · annotate "
+                           "normally · Ctrl+C copies · Enter copies + saves"));
   scheduleSnapshot();
   updatePointerCursor();
   update();
+}
+
+void CaptureEditor::reopenClipboardTextCard() {
+  if (textCardDocumentText_.isEmpty()) {
+    setStatus(QStringLiteral("This capture has no editable text-card source"));
+    return;
+  }
+  const QString text = textCardDocumentText_;
+  const QString filename = textCardDocumentFilename_;
+  beginClipboardTextCard(text, filename);
 }
 
 void CaptureEditor::cancelClipboardTextCard() {
@@ -6598,7 +6664,7 @@ void CaptureEditor::cancelClipboardTextCard() {
   returnToSelect(false);
 }
 
-void CaptureEditor::resetClipboardTextCardEditor() {
+void CaptureEditor::resetClipboardTextCardEditor(bool clearDocument) {
   endClipboardTextCardInsertEdit();
   clipboardTextCardEditing_ = false;
   textCardInsertMode_ = false;
@@ -6625,6 +6691,10 @@ void CaptureEditor::resetClipboardTextCardEditor() {
   textCardFilename_.clear();
   textCardFilenameBeforeEdit_.clear();
   textCardSourceTitleRect_ = {};
+  if (clearDocument) {
+    textCardDocumentText_.clear();
+    textCardDocumentFilename_.clear();
+  }
 }
 
 void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
@@ -6638,6 +6708,8 @@ void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
     endScrollCapture();
   if (clipboardTextCardEditing_)
     resetClipboardTextCardEditor();
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
   if (textEditor_->isVisible()) {
     textEditor_->clear();
     textEditor_->hide();

@@ -118,7 +118,8 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   const TextCardTheme theme = loadTextCardTheme();
-  if (theme.keyword != QColor(QStringLiteral("#112233")) ||
+  if (theme.panel != QColor(QStringLiteral("#667788")) ||
+      theme.keyword != QColor(QStringLiteral("#112233")) ||
       theme.command != QColor(QStringLiteral("#223344")) ||
       theme.flag != QColor(QStringLiteral("#334455")) ||
       theme.number != QColor(QStringLiteral("#445566")) ||
@@ -666,13 +667,63 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       editor.currentSelection() !=
           QRectF(QPointF(), QSizeF(editedCard.size())) ||
       editor.renderCurrentOutput() != editedCard ||
-      !editor.statusForTest().contains(QStringLiteral("rendered"))) {
+      !editor.statusForTest().contains(QStringLiteral("rendered")) ||
+      !editor.clipboardTextCardSourceRetainedForTest()) {
     error = QStringLiteral(
         "Ctrl+Enter did not flatten the edited clipboard text card: %1")
                 .arg(editedRenderError);
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardEditingForTest() ||
+      editor.clipboardTextCardTextForTest() != edited ||
+      editor.clipboardTextCardFilenameForTest() !=
+          QStringLiteral("~/share/install.sh")) {
+    error = QStringLiteral(
+        "Ctrl+E did not reopen the rendered text-card source and filename");
+    return false;
+  }
+  auto *reopenedEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!reopenedEditor) {
+    error = QStringLiteral("Reopened text card did not focus its source");
+    return false;
+  }
+  QTest::keyClick(reopenedEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardEditingForTest() ||
+      editor.captureData().source != editedCard) {
+    error = QStringLiteral("Reopened text card did not render consistently");
+    return false;
+  }
   editor.close();
+
+  CaptureData handoffCapture;
+  handoffCapture.monitor = capture.monitor;
+  handoffCapture.source = editedCard;
+  handoffCapture.previewSize = editedCard.size();
+  OperationLog handoffLog;
+  handoffLog.previewSize = editedCard.size();
+  handoffLog.textCardText = edited;
+  handoffLog.textCardFilename = QStringLiteral("~/share/install.sh");
+  handoffLog.textCardEditing = true;
+  CaptureEditor handedOff(std::move(handoffCapture),
+                          CaptureEditor::CaptureMode::File,
+                          QuickOutputMode::None, std::move(handoffLog));
+  handedOff.setSuppressSnapshots(true);
+  handedOff.resize(640, 480);
+  handedOff.show();
+  QApplication::processEvents();
+  if (!handedOff.clipboardTextCardEditingForTest() ||
+      handedOff.clipboardTextCardTextForTest() != edited ||
+      handedOff.clipboardTextCardFilenameForTest() !=
+          QStringLiteral("~/share/install.sh")) {
+    error = QStringLiteral(
+        "Window handoff did not restore the live text-card document");
+    return false;
+  }
+  handedOff.close();
   return true;
 }
 
@@ -778,7 +829,8 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
       "    \"property\": \"#334455\",\n"
       "    \"number\": \"#445566\",\n"
       "    \"string\": \"#556677\"\n"
-      "  }\n"
+      "  },\n"
+      "  \"colors\": { \"editor.background\": \"#667788\" }\n"
       "}\n");
   if (!codeThemeFile.open(QIODevice::WriteOnly) ||
       codeThemeFile.write(codeTheme) != codeTheme.size()) {

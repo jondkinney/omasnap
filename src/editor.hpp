@@ -324,6 +324,10 @@ public:
   [[nodiscard]] QString clipboardTextCardFilenameForTest() const {
     return textCardFilename_;
   }
+  /** Whether a rendered card still has source available for Ctrl+E. */
+  [[nodiscard]] bool clipboardTextCardSourceRetainedForTest() const {
+    return !textCardDocumentText_.isEmpty();
+  }
   /// Text-height I-beam in annotation coordinates, or an empty rect when the
   /// Snap highlighter has no text row near the pointer. Test accessor.
   [[nodiscard]] QRectF highlighterPreviewRectForTest() const;
@@ -474,6 +478,8 @@ private:
   void adoptStitched(const QImage &image);
   /// Turns plain clipboard text into a styled, syntax-colored share card.
   void openClipboardTextCard();
+  void beginClipboardTextCard(const QString &text, const QString &filename);
+  void reopenClipboardTextCard();
   void updateClipboardTextCardPreview();
   void updateClipboardTextCardEditorGeometry();
   void beginClipboardTextCardFilenameEdit();
@@ -481,7 +487,7 @@ private:
   void reinstallClipboardTextCardHighlighter();
   void finishClipboardTextCard();
   void cancelClipboardTextCard();
-  void resetClipboardTextCardEditor();
+  void resetClipboardTextCardEditor(bool clearDocument = true);
   void setClipboardTextCardInsertMode(bool insertMode);
   void beginClipboardTextCardInsertEdit(int cursorPosition);
   void endClipboardTextCardInsertEdit();
@@ -773,6 +779,8 @@ private:
   QRect textCardSourceTitleRect_;
   QString textCardFilename_;
   QString textCardFilenameBeforeEdit_;
+  QString textCardDocumentText_;
+  QString textCardDocumentFilename_;
   bool clipboardTextCardEditing_ = false;
   bool textCardInsertMode_ = false;
   bool textCardVisualLineMode_ = false;

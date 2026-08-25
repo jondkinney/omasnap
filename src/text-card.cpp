@@ -244,14 +244,21 @@ QHash<QString, QColor> readOmarchySyntaxColors(const QString &path) {
   const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
   if (!document.isObject())
     return colors;
+  const QJsonObject root = document.object();
   const QJsonObject semanticColors =
-      document.object().value(QStringLiteral("semanticTokenColors")).toObject();
+      root.value(QStringLiteral("semanticTokenColors")).toObject();
   for (auto color = semanticColors.constBegin();
        color != semanticColors.constEnd(); ++color) {
     const QColor parsed = jsonThemeColor(color.value());
     if (parsed.isValid())
       colors.insert(color.key(), parsed);
   }
+  const QJsonObject editorColors =
+      root.value(QStringLiteral("colors")).toObject();
+  const QColor editorBackground =
+      jsonThemeColor(editorColors.value(QStringLiteral("editor.background")));
+  if (editorBackground.isValid())
+    colors.insert(QStringLiteral("editor.background"), editorBackground);
   return colors;
 }
 
@@ -519,10 +526,14 @@ TextCardTheme loadTextCardTheme() {
   const QHash<QString, QColor> colors = readOmarchyColors(path);
   const QHash<QString, QColor> syntaxColors = readOmarchySyntaxColors(
       QFileInfo(path).dir().filePath(QStringLiteral("vscode-theme.json")));
-  const QColor background = readableColor(colors, QStringLiteral("background"),
-                                          QColor(QStringLiteral("#2e3440")));
-  const QColor panel = readableColor(colors, QStringLiteral("dark_background"),
-                                     QColor(QStringLiteral("#222730")));
+  const QColor editorBackground =
+      readableColor(colors, QStringLiteral("background"),
+                    QColor(QStringLiteral("#2e3440")));
+  const QColor background =
+      readableColor(colors, QStringLiteral("dark_background"),
+                    QColor(QStringLiteral("#222730")));
+  const QColor panel = semanticColor(
+      syntaxColors, {QStringLiteral("editor.background")}, editorBackground);
   const QColor header =
       readableColor(colors, QStringLiteral("darker_background"),
                     QColor(QStringLiteral("#191c23")));

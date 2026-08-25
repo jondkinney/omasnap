@@ -6065,6 +6065,9 @@ bool runTextFontSmoke(QApplication &application, QString &error) {
   saved.ops = editor.operationLog();
   saved.index = editor.operationIndex();
   saved.previewSize = capture.previewSize;
+  saved.textCardText = QStringLiteral("puts 'theme round trip'");
+  saved.textCardFilename = QStringLiteral("snippet.rb");
+  saved.textCardEditing = true;
   const QString path =
       QDir(directory.path()).filePath(QStringLiteral("text-fonts.json"));
   OperationLog loaded;

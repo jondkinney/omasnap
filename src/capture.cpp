@@ -2359,6 +2359,11 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
     root.insert(QStringLiteral("previewWidth"), log.previewSize.width());
     root.insert(QStringLiteral("previewHeight"), log.previewSize.height());
   }
+  if (!log.textCardText.isEmpty()) {
+    root.insert(QStringLiteral("textCardText"), log.textCardText);
+    root.insert(QStringLiteral("textCardFilename"), log.textCardFilename);
+    root.insert(QStringLiteral("textCardEditing"), log.textCardEditing);
+  }
   root.insert(QStringLiteral("ops"), ops);
 
   QSaveFile file(path);
@@ -2404,6 +2409,13 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.previewSize =
       QSize(root.value(QStringLiteral("previewWidth")).toInt(),
             root.value(QStringLiteral("previewHeight")).toInt());
+  loaded.textCardText =
+      root.value(QStringLiteral("textCardText")).toString();
+  loaded.textCardFilename =
+      root.value(QStringLiteral("textCardFilename")).toString();
+  loaded.textCardEditing =
+      !loaded.textCardText.isEmpty() &&
+      root.value(QStringLiteral("textCardEditing")).toBool();
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)
