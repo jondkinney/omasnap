@@ -496,6 +496,7 @@ private:
   void cancelClipboardTextCard();
   void resetClipboardTextCardEditor(bool clearDocument = true);
   void adoptTextCardSurface(QImage image);
+  bool handOffLiveTextCard();
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.

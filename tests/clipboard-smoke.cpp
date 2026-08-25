@@ -278,6 +278,38 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   capture.source = QImage(320, 240, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#182030")));
   capture.previewSize = capture.source.size();
+  {
+    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", "   \n  ");
+    CaptureEditor rejectionEditor(capture, CaptureEditor::CaptureMode::Region);
+    rejectionEditor.setSuppressSnapshots(true);
+    rejectionEditor.resize(640, 480);
+    rejectionEditor.show();
+    QApplication::processEvents();
+    QTest::keyClick(&rejectionEditor, Qt::Key_V,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    if (rejectionEditor.clipboardTextCardEditingForTest() ||
+        !rejectionEditor.statusForTest().contains(QStringLiteral("empty"))) {
+      error = QStringLiteral(
+          "A blank clipboard was not rejected before opening a card");
+      return false;
+    }
+    QStringList overflowLines;
+    for (int line = 0; line < 130; ++line)
+      overflowLines.append(QStringLiteral("line %1").arg(line));
+    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
+            overflowLines.join(QLatin1Char('\n')).toUtf8());
+    QTest::keyClick(&rejectionEditor, Qt::Key_V,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    if (rejectionEditor.clipboardTextCardEditingForTest() ||
+        !rejectionEditor.statusForTest().contains(
+            QStringLiteral("too long"))) {
+      error = QStringLiteral(
+          "An oversize clipboard was not rejected before opening a card");
+      return false;
+    }
+    rejectionEditor.close();
+    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expected.toUtf8());
+  }
   CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
   editor.setSuppressSnapshots(true);
   editor.resize(640, 480);
@@ -1356,6 +1388,18 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Compact text card did not focus its editor");
     return false;
   }
+  QTest::keyClick(compactEditor, Qt::Key_V);
+  QTest::keyClick(compactEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(compactEditor, Qt::Key_D);
+  QTest::keyClick(compactEditor, Qt::Key_W, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!handedOff.isVisible() ||
+      !handedOff.statusForTest().contains(QStringLiteral("empty"))) {
+    error = QStringLiteral(
+        "Ctrl+W handed off a draft that cannot render");
+    return false;
+  }
+  QTest::keyClick(compactEditor, Qt::Key_U);
   QTest::keyClick(compactEditor, Qt::Key_X);
   QTest::keyClick(compactEditor, Qt::Key_Q);
   QApplication::processEvents();

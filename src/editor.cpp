@@ -1096,7 +1096,7 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (isPlainControlChord(key, Qt::Key_W)) {
       endClipboardTextCardFilenameEdit(true);
-      handOffEditor(!windowedPresentation_);
+      handOffLiveTextCard();
       return true;
     }
     if (key->key() == Qt::Key_Escape) {
@@ -1118,7 +1118,7 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
   } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (isPlainControlChord(key, Qt::Key_W)) {
-      handOffEditor(!windowedPresentation_);
+      handOffLiveTextCard();
       return true;
     }
     const bool editFilename =
@@ -4761,7 +4761,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
         if (button.action == QStringLiteral("text-card-done"))
           finishClipboardTextCard();
         else
-          handOffEditor(!windowedPresentation_);
+          handOffLiveTextCard();
         event->accept();
         return;
       }
@@ -5887,7 +5887,27 @@ void CaptureEditor::openClipboardTextCard() {
     setStatus(error);
     return;
   }
+  // Reject before any content scanning: language detection over an unbounded
+  // clipboard would stall the UI thread.
+  const QString sourceError = textCardSourceError(text);
+  if (!sourceError.isEmpty()) {
+    setStatus(sourceError);
+    return;
+  }
   beginClipboardTextCard(text, defaultTextCardFilename(text));
+}
+
+// A presentation switch flushes the live draft to a new process; a draft
+// that cannot render would dead-end there.
+bool CaptureEditor::handOffLiveTextCard() {
+  const QString sourceError =
+      textCardSourceError(textCardEditor_->toPlainText());
+  if (!sourceError.isEmpty()) {
+    setStatus(sourceError);
+    return false;
+  }
+  handOffEditor(!windowedPresentation_);
+  return true;
 }
 
 void CaptureEditor::beginClipboardTextCard(const QString &text,
@@ -6659,8 +6679,7 @@ void CaptureEditor::paintClipboardTextCardEditing(QPainter &painter) {
   if (!image.isEmpty())
     painter.drawImage(image, capture_.source);
   paintClipboardTextCardToolbar(painter);
-  if (!windowedPresentation_)
-    drawStatusPill(painter, rect(), status_);
+  drawStatusPill(painter, rect(), status_);
 }
 
 void CaptureEditor::paintClipboardTextCardToolbar(QPainter &painter) {

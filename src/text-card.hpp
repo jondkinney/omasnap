@@ -50,6 +50,8 @@ struct TextCardRender {
                                              const QString &filename = {});
 /** Chooses a useful editable default name from the detected language. */
 [[nodiscard]] QString defaultTextCardFilename(const QString &text);
+/** Empty when the text fits a card; the user-facing reason otherwise. */
+[[nodiscard]] QString textCardSourceError(const QString &text);
 /** Adds the detected filename/content syntax profile to an editable document. */
 [[nodiscard]] QSyntaxHighlighter *
 installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,

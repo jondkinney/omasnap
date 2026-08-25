@@ -634,6 +634,12 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
   return QStringLiteral("Plain Text");
 }
 
+QString textCardSourceError(const QString &text) {
+  QString error;
+  static_cast<void>(textCardSnippet(text, error));
+  return error;
+}
+
 QString defaultTextCardFilename(const QString &text) {
   return QStringLiteral("~/clipboard/snippet.%1")
       .arg(extensionForLanguage(detectTextCardLanguage(text)));
