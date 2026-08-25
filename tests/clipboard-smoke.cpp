@@ -20,6 +20,14 @@
 #include <cstdlib>
 
 namespace {
+/** Text most recently persisted through the fake wl-copy. */
+QString copiedSinkText() {
+  QFile file(qEnvironmentVariable("OMASNAP_TEST_CLIPBOARD_SINK"));
+  if (!file.open(QIODevice::ReadOnly))
+    return {};
+  return QString::fromUtf8(file.readAll());
+}
+
 /** Writes an executable fake command. */
 bool writeExecutable(const QString &path, const QByteArray &contents) {
   QFile file(path);
@@ -665,8 +673,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_V);
   QTest::keyClick(cardEditor, Qt::Key_E);
   QTest::keyClick(cardEditor, Qt::Key_Y);
-  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
-          QStringLiteral("answer") ||
+  if (copiedSinkText() != QStringLiteral("answer") ||
       cardEditor->textCursor().position() != 6) {
     error = QStringLiteral("Clipboard-card Visual e did not select to word end");
     return false;
@@ -864,8 +871,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_I);
   QTest::keyClick(cardEditor, Qt::Key_W);
   QTest::keyClick(cardEditor, Qt::Key_Y);
-  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
-          QStringLiteral("const") ||
+  if (copiedSinkText() != QStringLiteral("const") ||
       cardEditor->textCursor().position() != 0 ||
       !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
     error = QStringLiteral(
@@ -883,8 +889,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Y);
-  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
-          QStringLiteral("co") ||
+  if (copiedSinkText() != QStringLiteral("co") ||
       cardEditor->textCursor().position() != 0 ||
       cardEditor->textCursor().hasSelection() ||
       !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
@@ -914,8 +919,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_Y);
   const QString firstTwoLines =
       QStringLiteral("const answer = \"hello\";\n# install\n");
-  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
-          firstTwoLines ||
+  if (copiedSinkText() != firstTwoLines ||
       cardEditor->textCursor().position() != 0) {
     error = QStringLiteral(
         "Clipboard-card V/y did not copy whole lines or restore the cursor");
@@ -952,8 +956,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       "const answer = \"hello\";\nconst answer = \"hello\";\n# install\n"
       "omasnap --version\n\techo \"done\"");
   if (editor.clipboardTextCardTextForTest() != duplicatedLine ||
-      QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
-          QStringLiteral("const answer = \"hello\";\n")) {
+      copiedSinkText() != QStringLiteral("const answer = \"hello\";\n")) {
     error = QStringLiteral("Clipboard-card yyp did not duplicate the line");
     return false;
   }
@@ -1446,12 +1449,27 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
       "fi\n"
       "if [[ \"${1:-}\" == \"--no-newline\" && \"${2:-}\" == \"--type\" "
       "&& \"${3:-}\" == text/plain* ]]; then\n"
-      "  printf '%s' \"$OMASNAP_TEST_CLIPBOARD_TEXT\"\n"
+      "  if [[ -n \"${OMASNAP_TEST_CLIPBOARD_SINK:-}\" && -f "
+      "\"$OMASNAP_TEST_CLIPBOARD_SINK\" ]]; then\n"
+      "    cat -- \"$OMASNAP_TEST_CLIPBOARD_SINK\"\n"
+      "  else\n"
+      "    printf '%s' \"$OMASNAP_TEST_CLIPBOARD_TEXT\"\n"
+      "  fi\n"
       "  exit 0\n"
       "fi\n"
       "exit 1\n");
   if (!writeExecutable(fakeWlPaste, script)) {
     error = QStringLiteral("Could not create fake wl-paste command");
+    return false;
+  }
+  const QString fakeWlCopy =
+      QDir(directory.path()).filePath(QStringLiteral("wl-copy"));
+  if (!writeExecutable(fakeWlCopy,
+                       QByteArrayLiteral(
+                           "#!/usr/bin/env bash\n"
+                           "set -euo pipefail\n"
+                           "cat > \"$OMASNAP_TEST_CLIPBOARD_SINK\"\n"))) {
+    error = QStringLiteral("Could not create fake wl-copy command");
     return false;
   }
 
@@ -1523,6 +1541,9 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
       qEnvironmentVariableIsSet("OMASNAP_TEST_OMARCHY_THEME_NAME");
   const QByteArray oldThemeName =
       qgetenv("OMASNAP_TEST_OMARCHY_THEME_NAME");
+  const bool sinkWasSet =
+      qEnvironmentVariableIsSet("OMASNAP_TEST_CLIPBOARD_SINK");
+  const QByteArray oldSink = qgetenv("OMASNAP_TEST_CLIPBOARD_SINK");
   const auto restoreEnvironment = qScopeGuard([=] {
     pathWasSet ? qputenv("PATH", oldPath) : qunsetenv("PATH");
     imageWasSet ? qputenv("OMASNAP_TEST_CLIPBOARD_IMAGE", oldImage)
@@ -1541,6 +1562,8 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
     themeNameWasSet
         ? qputenv("OMASNAP_TEST_OMARCHY_THEME_NAME", oldThemeName)
         : qunsetenv("OMASNAP_TEST_OMARCHY_THEME_NAME");
+    sinkWasSet ? qputenv("OMASNAP_TEST_CLIPBOARD_SINK", oldSink)
+               : qunsetenv("OMASNAP_TEST_CLIPBOARD_SINK");
   });
   qputenv("PATH", directory.path().toUtf8() + ':' + oldPath);
   qputenv("OMASNAP_TEST_CLIPBOARD_IMAGE", imagePath.toUtf8());
@@ -1548,6 +1571,10 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
   qunsetenv("OMASNAP_TEST_CLIPBOARD_READ_FAILURE");
   qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
           "const answer = \"hello\";\n# install\nomasnap --version");
+  qputenv("OMASNAP_TEST_CLIPBOARD_SINK",
+          QDir(directory.path())
+              .filePath(QStringLiteral("clipboard-copy.txt"))
+              .toUtf8());
   qputenv("OMASNAP_TEST_OMARCHY_COLORS", themePath.toUtf8());
   qputenv("OMASNAP_TEST_OMARCHY_THEME_NAME", "test-theme");
 

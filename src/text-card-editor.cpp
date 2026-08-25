@@ -1,6 +1,8 @@
 /** @fileoverview Modal Normal/Insert/Visual editing on the card's source. */
 #include "text-card-editor.hpp"
 
+#include "capture.hpp"
+
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -346,13 +348,19 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
     yank_ = text;
     yankLinewise_ = visualLineMode_;
     if (command == QStringLiteral("y")) {
-      QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
+      // wl-copy keeps serving the offer after omasnap exits; QClipboard's
+      // offer would die with the process.
+      QString clipboardError;
+      const bool copied = copyTextToClipboard(text, clipboardError);
       leaveVisualMode(first);
       emit statusRequested(
-          QStringLiteral("Text card · NORMAL · yanked %1 character%2 to "
-                         "clipboard · cursor returned to selection start")
-              .arg(text.size())
-              .arg(text.size() == 1 ? QString() : QStringLiteral("s")));
+          copied ? QStringLiteral("Text card · NORMAL · yanked %1 character%2 "
+                                  "to clipboard · cursor returned to "
+                                  "selection start")
+                       .arg(text.size())
+                       .arg(text.size() == 1 ? QString()
+                                             : QStringLiteral("s"))
+                 : clipboardError);
       return true;
     }
 
@@ -667,10 +675,12 @@ void TextCardEditor::yankLine() {
   const QTextCursor cursor = edit_->textCursor();
   yank_ = cursor.block().text() + QLatin1Char('\n');
   yankLinewise_ = true;
-  QGuiApplication::clipboard()->setText(yank_, QClipboard::Clipboard);
+  QString clipboardError;
+  const bool copied = copyTextToClipboard(yank_, clipboardError);
   emit statusRequested(
-      QStringLiteral("Text card · NORMAL · line yanked to clipboard · "
-                     "p below · P above"));
+      copied ? QStringLiteral("Text card · NORMAL · line yanked to "
+                              "clipboard · p below · P above")
+             : clipboardError);
 }
 
 void TextCardEditor::put(bool before) {
