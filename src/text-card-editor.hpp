@@ -59,6 +59,8 @@ private:
   [[nodiscard]] bool applyEndOperator(bool change);
   [[nodiscard]] bool applyWordOperator(bool change, bool around,
                                        bool fromCursor = false);
+  [[nodiscard]] int wordForwardStop(const QTextCursor &cursor) const;
+  void emitUnsupportedMotion(const QString &pending, const QString &command);
   void yankLine();
   void put(bool before);
 

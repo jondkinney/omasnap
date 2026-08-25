@@ -410,6 +410,18 @@ void TextCardEditor::joinLines() {
       QStringLiteral("Text card · NORMAL · joined lines · u undoes"));
 }
 
+// Next-word boundary for w operators, stopping at the line end like Vim's
+// dw instead of eating the newline.
+int TextCardEditor::wordForwardStop(const QTextCursor &cursor) const {
+  QTextCursor probe = cursor;
+  probe.movePosition(QTextCursor::NextWord);
+  const int blockEnd = cursor.block().position() +
+                       static_cast<int>(cursor.block().text().size());
+  if (probe.block() != cursor.block() || probe.position() > blockEnd)
+    return blockEnd;
+  return probe.position();
+}
+
 int TextCardEditor::wordEnd(int cursorPosition) const {
   const QString text = edit_->toPlainText();
   if (text.isEmpty())
@@ -521,6 +533,15 @@ bool TextCardEditor::applyWordOperator(bool change, bool around,
   deleteRange(range->first, range->second, change,
               QStringLiteral("word deleted"));
   return true;
+}
+
+void TextCardEditor::emitUnsupportedMotion(const QString &pending,
+                                           const QString &command) {
+  if (command.isEmpty())
+    return;
+  emit statusRequested(
+      QStringLiteral("Text card · NORMAL · %1%2 is not a supported motion")
+          .arg(pending, command));
 }
 
 void TextCardEditor::yankLine() {
@@ -661,6 +682,15 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     deleteRange(first, cursor.position(), true, {});
     return true;
   }
+  if (shifted && key->key() == Qt::Key_D) {
+    pendingCommand_.clear();
+    const int first = cursor.position();
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    if (cursor.position() > first)
+      deleteRange(first, cursor.position(), false,
+                  QStringLiteral("deleted to line end"));
+    return true;
+  }
   if (key->key() == Qt::Key_P) {
     pendingCommand_.clear();
     put(shifted);
@@ -710,14 +740,27 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     return true;
   }
   if (QStringList{QStringLiteral("di"), QStringLiteral("da"),
-                  QStringLiteral("ci"), QStringLiteral("ca")}
+                  QStringLiteral("ci"), QStringLiteral("ca"),
+                  QStringLiteral("yi"), QStringLiteral("ya")}
           .contains(pendingCommand_)) {
     const QString pending = pendingCommand_;
     pendingCommand_.clear();
-    if (command == QStringLiteral("w"))
-      static_cast<void>(applyWordOperator(
-          pending.startsWith(QLatin1Char('c')),
-          pending.endsWith(QLatin1Char('a'))));
+    if (command != QStringLiteral("w")) {
+      emitUnsupportedMotion(pending, command);
+      return true;
+    }
+    if (pending.startsWith(QLatin1Char('y'))) {
+      if (const auto range = wordRange(pending.endsWith(QLatin1Char('a')))) {
+        yank_ = edit_->toPlainText().mid(range->first,
+                                         range->second - range->first);
+        yankLinewise_ = false;
+        emit statusRequested(QStringLiteral(
+            "Text card · NORMAL · word yanked · p puts it after the cursor"));
+      }
+      return true;
+    }
+    static_cast<void>(applyWordOperator(pending.startsWith(QLatin1Char('c')),
+                                        pending.endsWith(QLatin1Char('a'))));
     return true;
   }
   if (pendingCommand_ == QStringLiteral("d") ||
@@ -730,6 +773,13 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     }
     if (pending == QStringLiteral("c") && command == QStringLiteral("w")) {
       static_cast<void>(applyWordOperator(true, false, true));
+      return true;
+    }
+    if (pending == QStringLiteral("d") && command == QStringLiteral("w")) {
+      const int stop = wordForwardStop(cursor);
+      if (stop > cursor.position())
+        deleteRange(cursor.position(), stop, false,
+                    QStringLiteral("deleted to next word"));
       return true;
     }
     if (command == QStringLiteral("e")) {
@@ -772,14 +822,44 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
       edit_->setTextCursor(cursor);
       setInsertMode(true);
       return true;
+    } else {
+      emitUnsupportedMotion(pending, command);
     }
     edit_->setTextCursor(cursor);
     return true;
   }
   if (pendingCommand_ == QStringLiteral("y")) {
     pendingCommand_.clear();
-    if (command == QStringLiteral("y"))
+    if (command == QStringLiteral("y")) {
       yankLine();
+      return true;
+    }
+    if (command == QStringLiteral("i") || command == QStringLiteral("a")) {
+      pendingCommand_ = QStringLiteral("y") + command;
+      return true;
+    }
+    if (command == QStringLiteral("w")) {
+      const int stop = wordForwardStop(cursor);
+      if (stop > cursor.position()) {
+        yank_ = edit_->toPlainText().mid(cursor.position(),
+                                         stop - cursor.position());
+        yankLinewise_ = false;
+        emit statusRequested(QStringLiteral(
+            "Text card · NORMAL · yanked to next word · p puts it back"));
+      }
+      return true;
+    }
+    if (command == QStringLiteral("e")) {
+      const int first = std::clamp(
+          cursor.position(), 0,
+          std::max(0, static_cast<int>(edit_->toPlainText().size()) - 1));
+      yank_ = edit_->toPlainText().mid(first, wordEnd(first) + 1 - first);
+      yankLinewise_ = false;
+      emit statusRequested(QStringLiteral(
+          "Text card · NORMAL · yanked through word end · p puts it back"));
+      return true;
+    }
+    emitUnsupportedMotion(QStringLiteral("y"), command);
     return true;
   }
 

@@ -452,6 +452,74 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card h wrapped across a line start");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const = \"hello\";\n"))) {
+    error = QStringLiteral("Clipboard-card dw did not delete to next word: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(20));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClicks(cardEditor, QStringLiteral("$"));
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const answer = \"hello\"\n# install"))) {
+    error = QStringLiteral("Clipboard-card dw at the line end joined lines");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_D, Qt::ShiftModifier);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const \n# install")) ||
+      !editor.statusForTest().contains(QStringLiteral("deleted to line end"))) {
+    error = QStringLiteral("Clipboard-card D did not delete to the line end");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_P, Qt::ShiftModifier);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const const answer"))) {
+    error = QStringLiteral("Clipboard-card yw then P did not duplicate a word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_P, Qt::ShiftModifier);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("cconstonst"))) {
+    error = QStringLiteral("Clipboard-card yiw did not yank the inner word: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(12));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  if (editor.clipboardTextCardTextForTest() != edited ||
+      !editor.statusForTest().contains(
+          QStringLiteral("not a supported motion"))) {
+    error = QStringLiteral(
+        "Clipboard-card unsupported operator motion gave no feedback");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);
