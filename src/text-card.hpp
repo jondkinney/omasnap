@@ -46,6 +46,7 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme);
                                                   const TextCardTheme &theme,
                                                   QString &error,
                                                   bool drawText = true,
-                                                  bool insertMode = false);
+                                                  const QString &mode =
+                                                      QStringLiteral("NORMAL"));
 /** Renders a shareable, syntax-colored clipboard snippet as an image. */
 [[nodiscard]] QImage renderTextCard(const QString &text, QString &error);

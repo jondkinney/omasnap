@@ -6,6 +6,7 @@
 #include "text-card.hpp"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -188,6 +189,56 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_U);
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral("Clipboard-card Normal-mode u did not restore dd");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_J, Qt::ShiftModifier);
+  const QString joined = QStringLiteral(
+      "const answer = \"hello\"; # install\nomasnap --version\n\techo "
+      "\"done\"");
+  if (editor.clipboardTextCardTextForTest() != joined) {
+    error = QStringLiteral("Clipboard-card Shift+J did not join lines: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card u did not undo Shift+J");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  if (cardEditor->textCursor().selectedText() != QStringLiteral("co") ||
+      !editor.statusForTest().contains(QStringLiteral("VISUAL"))) {
+    error = QStringLiteral("Clipboard-card v did not visually select text");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
+          QStringLiteral("co") ||
+      cardEditor->textCursor().position() != 0 ||
+      cardEditor->textCursor().hasSelection() ||
+      !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
+    error = QStringLiteral(
+        "Clipboard-card y did not copy or return to the selection start");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  const QString firstTwoLines =
+      QStringLiteral("const answer = \"hello\";\n# install\n");
+  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
+          firstTwoLines ||
+      cardEditor->textCursor().position() != 0) {
+    error = QStringLiteral(
+        "Clipboard-card V/y did not copy whole lines or restore the cursor");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);

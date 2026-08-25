@@ -221,7 +221,7 @@ QSyntaxHighlighter *installTextCardHighlighter(QTextDocument *document,
 
 TextCardRender renderTextCardLayout(const QString &text,
                                     const TextCardTheme &theme, QString &error,
-                                    bool drawText, bool insertMode) {
+                                    bool drawText, const QString &mode) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
@@ -306,16 +306,16 @@ TextCardRender renderTextCardLayout(const QString &text,
   const QRect status(panel.left(), panel.bottom() - kStatusHeight + 1,
                      panel.width(), kStatusHeight);
   painter.fillRect(status, theme.header);
-  const QString mode =
-      insertMode ? QStringLiteral(" INSERT ") : QStringLiteral(" NORMAL ");
-  const QRect modeRect(status.left(), status.top(), 104, status.height());
+  const QString modeText = QStringLiteral(" %1 ").arg(mode);
+  const int modeWidth = mode == QStringLiteral("VISUAL LINE") ? 142 : 104;
+  const QRect modeRect(status.left(), status.top(), modeWidth, status.height());
   painter.fillRect(modeRect, theme.outline);
   painter.setFont(headerFont);
   painter.setPen(theme.outline.lightness() > 130 ? theme.header
                                                  : theme.foreground);
-  painter.drawText(modeRect, Qt::AlignCenter, mode);
+  painter.drawText(modeRect, Qt::AlignCenter, modeText);
   painter.setPen(theme.foreground);
-  painter.drawText(status.adjusted(122, 0, -24, 0),
+  painter.drawText(status.adjusted(modeWidth + 18, 0, -24, 0),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    QStringLiteral("clipboard"));
   painter.setPen(theme.muted);

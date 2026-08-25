@@ -474,6 +474,12 @@ private:
   void cancelClipboardTextCard();
   void resetClipboardTextCardEditor();
   void setClipboardTextCardInsertMode(bool insertMode);
+  void startClipboardTextCardVisualMode(bool linewise);
+  void updateClipboardTextCardVisualSelection();
+  void leaveClipboardTextCardVisualMode(int cursorPosition);
+  [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
+  void joinClipboardTextCardLines();
+  [[nodiscard]] QString clipboardTextCardMode() const;
   [[nodiscard]] bool handleClipboardTextCardNormalKey(QKeyEvent *key);
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
@@ -748,6 +754,9 @@ private:
   QRect textCardSourceEditorRect_;
   bool clipboardTextCardEditing_ = false;
   bool textCardInsertMode_ = false;
+  bool textCardVisualLineMode_ = false;
+  int textCardVisualAnchor_ = -1;
+  int textCardVisualPosition_ = -1;
   QChar textCardPendingCommand_;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;

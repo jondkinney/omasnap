@@ -269,10 +269,11 @@ massaging a snippet without embedding a full editor:
 
 | Text-card input | Action |
 |---|---|
-| `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal mode |
+| `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal or Visual mode |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
-| `Esc` | Return from Insert to Normal mode |
-| `x`, `dd` | Delete a character or line in Normal mode |
+| `Esc` | Return from Insert or Visual to Normal mode |
+| `x`, `dd`, `Shift+J` | Delete a character, delete a line, or join it with the next line |
+| `v`, `V`, then movement; `y` | Select characters or whole lines, copy them, and return to the selection start |
 | `u`, `Ctrl+R` | Undo or redo |
 | `Tab`, `Shift+Tab` | Indent or outdent in Insert mode |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
