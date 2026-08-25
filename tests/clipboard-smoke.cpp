@@ -118,6 +118,17 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   const TextCardTheme theme = loadTextCardTheme();
+  if (theme.keyword != QColor(QStringLiteral("#112233")) ||
+      theme.command != QColor(QStringLiteral("#223344")) ||
+      theme.flag != QColor(QStringLiteral("#334455")) ||
+      theme.number != QColor(QStringLiteral("#445566")) ||
+      theme.string != QColor(QStringLiteral("#556677")) ||
+      theme.comment != QColor(QStringLiteral("#64748b"))) {
+    error = QStringLiteral(
+        "Clipboard text card did not import Omarchy's semantic syntax palette "
+        "with colors.toml fallbacks");
+    return false;
+  }
   int panelPixels = 0;
   int outlinePixels = 0;
   int keywordPixels = 0;
@@ -755,6 +766,27 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
     return false;
   }
   themeFile.close();
+
+  const QString codeThemePath =
+      QDir(directory.path()).filePath(QStringLiteral("vscode-theme.json"));
+  QFile codeThemeFile(codeThemePath);
+  const QByteArray codeTheme = QByteArrayLiteral(
+      "{\n"
+      "  \"semanticTokenColors\": {\n"
+      "    \"keyword\": \"#112233\",\n"
+      "    \"function\": { \"foreground\": \"#223344\" },\n"
+      "    \"property\": \"#334455\",\n"
+      "    \"number\": \"#445566\",\n"
+      "    \"string\": \"#556677\"\n"
+      "  }\n"
+      "}\n");
+  if (!codeThemeFile.open(QIODevice::WriteOnly) ||
+      codeThemeFile.write(codeTheme) != codeTheme.size()) {
+    error = QStringLiteral(
+        "Could not create the clipboard-card semantic test theme");
+    return false;
+  }
+  codeThemeFile.close();
 
   const bool pathWasSet = qEnvironmentVariableIsSet("PATH");
   const QByteArray oldPath = qgetenv("PATH");

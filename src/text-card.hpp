@@ -37,7 +37,7 @@ struct TextCardRender {
   QRect titleRect;
 };
 
-/** Reads the resolved active Omarchy palette, falling back to Nord colors. */
+/** Reads Omarchy's UI and semantic syntax palettes, falling back to Nord. */
 [[nodiscard]] TextCardTheme loadTextCardTheme();
 /** Detects the compact syntax profile shown in the card status line. */
 [[nodiscard]] QString detectTextCardLanguage(const QString &text,

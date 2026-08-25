@@ -12,6 +12,9 @@
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
@@ -222,6 +225,44 @@ QHash<QString, QColor> readOmarchyColors(const QString &path) {
       colors.insert(match.captured(1), color);
   }
   return colors;
+}
+
+QColor jsonThemeColor(const QJsonValue &value) {
+  const QString valueText =
+      value.isObject()
+          ? value.toObject().value(QStringLiteral("foreground")).toString()
+          : value.toString();
+  const QColor color(valueText);
+  return color.isValid() ? color : QColor{};
+}
+
+QHash<QString, QColor> readOmarchySyntaxColors(const QString &path) {
+  QHash<QString, QColor> colors;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    return colors;
+  const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+  if (!document.isObject())
+    return colors;
+  const QJsonObject semanticColors =
+      document.object().value(QStringLiteral("semanticTokenColors")).toObject();
+  for (auto color = semanticColors.constBegin();
+       color != semanticColors.constEnd(); ++color) {
+    const QColor parsed = jsonThemeColor(color.value());
+    if (parsed.isValid())
+      colors.insert(color.key(), parsed);
+  }
+  return colors;
+}
+
+QColor semanticColor(const QHash<QString, QColor> &colors,
+                     const QStringList &keys, const QColor &fallback) {
+  for (const QString &key : keys) {
+    const auto match = colors.constFind(key);
+    if (match != colors.cend() && match->isValid())
+      return *match;
+  }
+  return fallback;
 }
 
 QString currentThemeName() {
@@ -476,6 +517,8 @@ TextCardTheme loadTextCardTheme() {
                                               "current/theme/colors.toml")
           : override;
   const QHash<QString, QColor> colors = readOmarchyColors(path);
+  const QHash<QString, QColor> syntaxColors = readOmarchySyntaxColors(
+      QFileInfo(path).dir().filePath(QStringLiteral("vscode-theme.json")));
   const QColor background = readableColor(colors, QStringLiteral("background"),
                                           QColor(QStringLiteral("#2e3440")));
   const QColor panel = readableColor(colors, QStringLiteral("dark_background"),
@@ -485,6 +528,18 @@ TextCardTheme loadTextCardTheme() {
                     QColor(QStringLiteral("#191c23")));
   const QColor accent = readableColor(colors, QStringLiteral("accent"),
                                       QColor(QStringLiteral("#81a1c1")));
+  const QColor keyword = readableColor(colors, QStringLiteral("magenta"),
+                                       QColor(QStringLiteral("#b48ead")));
+  const QColor command = readableColor(colors, QStringLiteral("blue"), accent);
+  const QColor flag = readableColor(colors, QStringLiteral("cyan"),
+                                    QColor(QStringLiteral("#88c0d0")));
+  const QColor number = readableColor(colors, QStringLiteral("orange"),
+                                      QColor(QStringLiteral("#d5967a")));
+  const QColor string = readableColor(colors, QStringLiteral("yellow"),
+                                      QColor(QStringLiteral("#ebcb8b")));
+  const QColor comment =
+      readableColor(colors, QStringLiteral("dark_foreground"),
+                    QColor(QStringLiteral("#667080")));
   return {currentThemeName(),
           background,
           panel,
@@ -496,17 +551,17 @@ TextCardTheme loadTextCardTheme() {
                         QColor(QStringLiteral("#4c566a"))),
           readableColor(colors, QStringLiteral("selection"),
                         QColor(QStringLiteral("#434c5e"))),
-          readableColor(colors, QStringLiteral("magenta"),
-                        QColor(QStringLiteral("#b48ead"))),
-          readableColor(colors, QStringLiteral("blue"), accent),
-          readableColor(colors, QStringLiteral("cyan"),
-                        QColor(QStringLiteral("#88c0d0"))),
-          readableColor(colors, QStringLiteral("orange"),
-                        QColor(QStringLiteral("#d5967a"))),
-          readableColor(colors, QStringLiteral("yellow"),
-                        QColor(QStringLiteral("#ebcb8b"))),
-          readableColor(colors, QStringLiteral("dark_foreground"),
-                        QColor(QStringLiteral("#667080")))};
+          semanticColor(syntaxColors, {QStringLiteral("keyword")}, keyword),
+          semanticColor(syntaxColors,
+                        {QStringLiteral("function"), QStringLiteral("method")},
+                        command),
+          semanticColor(syntaxColors,
+                        {QStringLiteral("property"), QStringLiteral("macro"),
+                         QStringLiteral("operator")},
+                        flag),
+          semanticColor(syntaxColors, {QStringLiteral("number")}, number),
+          semanticColor(syntaxColors, {QStringLiteral("string")}, string),
+          semanticColor(syntaxColors, {QStringLiteral("comment")}, comment)};
 }
 
 QSyntaxHighlighter *installTextCardHighlighter(QTextDocument *document,
@@ -557,8 +612,6 @@ TextCardRender renderTextCardLayout(const QString &text,
   painter.fillRect(
       QRect(panel.left(), panel.top(), panel.width(), kHeaderHeight),
       theme.header);
-  painter.fillRect(QRect(panel.left(), panel.top(), 6, kHeaderHeight),
-                   theme.outline);
   painter.setPen(QPen(theme.muted, 1));
   painter.drawLine(panel.left(), panel.top() + kHeaderHeight, panel.right(),
                    panel.top() + kHeaderHeight);

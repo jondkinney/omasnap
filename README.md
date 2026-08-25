@@ -259,8 +259,9 @@ error instead of opening an empty editor.
 Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
 capture screen. Omasnap opens it in a square, Neovim-inspired JetBrains Mono
 editor using the active Omarchy theme's background, surface, outline, selection,
-foreground, and syntax colors. The filename starts from lightweight content
-detection, and its extension selects a language-specific syntax profile. Press
+foreground, and semantic code colors, with palette and Nord fallbacks for themes
+that do not provide them. The filename starts from lightweight content detection,
+and its extension selects a language-specific syntax profile. Press
 `F` or click the title to rename it inline; the status line shows the basename
 and detected language. Profiles cover Shell, C/C++, JavaScript/TypeScript,
 Python, Ruby, Rust, Go, QML, JSON, YAML, TOML, CSS/SCSS/Sass, Markdown, Lua,
