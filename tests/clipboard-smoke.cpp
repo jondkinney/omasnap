@@ -400,6 +400,39 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card Normal-mode u did not undo");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClicks(cardEditor, QStringLiteral("$"));
+  if (cardEditor->textCursor().position() != 22) {
+    error = QStringLiteral(
+        "Clipboard-card $ did not rest on the line's last character: %1")
+                .arg(cardEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const answer = \"hello\"\n"))) {
+    error = QStringLiteral("Clipboard-card $ then x did not delete in place");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("ocnst"))) {
+    error = QStringLiteral("Clipboard-card xp did not swap characters: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(8));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card xp did not undo cleanly");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);
   const QString deletedLastLine = QStringLiteral(

@@ -25,6 +25,12 @@ QString normalModeStatus() {
                         "Ctrl+Enter renders · q exits");
 }
 
+/// Normal mode rests ON a character, Vim-style, never past the line end.
+void clampToLastCharacter(QTextCursor &cursor) {
+  if (cursor.atBlockEnd() && !cursor.atBlockStart())
+    cursor.movePosition(QTextCursor::PreviousCharacter);
+}
+
 QString visualModeStatus(bool linewise) {
   return linewise
              ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
@@ -139,6 +145,11 @@ void TextCardEditor::setInsertMode(bool insertMode) {
   else if (!insertMode && insertMode_)
     endInsertEdit();
   insertMode_ = insertMode;
+  if (!insertMode) {
+    QTextCursor cursor = edit_->textCursor();
+    clampToLastCharacter(cursor);
+    edit_->setTextCursor(cursor);
+  }
   visualLineMode_ = false;
   visualAnchor_ = -1;
   visualPosition_ = -1;
@@ -350,7 +361,7 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
   } else if (command == QStringLiteral("g")) {
     pendingCommand_ = QStringLiteral("g");
     return true;
-  } else if (!applyMotion(motion, command, true)) {
+  } else if (!applyMotion(motion, command)) {
     pendingCommand_.clear();
     return true;
   }
@@ -559,8 +570,8 @@ void TextCardEditor::put(bool before) {
                                  : QStringLiteral("after")));
 }
 
-bool TextCardEditor::applyMotion(QTextCursor &cursor, const QString &command,
-                                 bool visual) const {
+bool TextCardEditor::applyMotion(QTextCursor &cursor,
+                                 const QString &command) const {
   if (command == QStringLiteral("h"))
     cursor.movePosition(QTextCursor::PreviousCharacter);
   else if (command == QStringLiteral("j"))
@@ -573,9 +584,7 @@ bool TextCardEditor::applyMotion(QTextCursor &cursor, const QString &command,
     cursor.movePosition(QTextCursor::StartOfBlock);
   else if (command == QStringLiteral("$")) {
     cursor.movePosition(QTextCursor::EndOfBlock);
-    // A visual block cursor sits ON the last character, Vim-style.
-    if (visual && !cursor.block().text().isEmpty())
-      cursor.movePosition(QTextCursor::PreviousCharacter);
+    clampToLastCharacter(cursor);
   } else if (command == QStringLiteral("w"))
     cursor.movePosition(QTextCursor::NextWord);
   else if (command == QStringLiteral("b"))
@@ -630,6 +639,7 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
   if (shifted && key->key() == Qt::Key_G) {
     pendingCommand_.clear();
     cursor.movePosition(QTextCursor::End);
+    clampToLastCharacter(cursor);
     edit_->setTextCursor(cursor);
     return true;
   }
@@ -763,18 +773,27 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     startVisualMode(shifted);
     return true;
   }
-  if (applyMotion(cursor, command, false)) {
+  if (applyMotion(cursor, command)) {
+    clampToLastCharacter(cursor);
     edit_->setTextCursor(cursor);
     return true;
   }
   if (command == QStringLiteral("x")) {
-    const int beforeLength = static_cast<int>(edit_->toPlainText().size());
+    // Vim's x: a no-op at a line break, fills the register, and steps back
+    // when the line's last character goes.
+    if (cursor.atBlockEnd())
+      return true;
+    QTextCursor deletion = cursor;
+    deletion.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+    yank_ = deletion.selectedText();
+    yankLinewise_ = false;
     const int first = cursor.position();
-    cursor.beginEditBlock();
-    cursor.deleteChar();
-    cursor.endEditBlock();
-    if (static_cast<int>(edit_->toPlainText().size()) < beforeLength)
-      recordUndoCursor(first);
+    deletion.beginEditBlock();
+    deletion.removeSelectedText();
+    deletion.endEditBlock();
+    recordUndoCursor(first);
+    clampToLastCharacter(deletion);
+    cursor = deletion;
   } else if (command == QStringLiteral("u")) {
     undo(false);
     return true;
