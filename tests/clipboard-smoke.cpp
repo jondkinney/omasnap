@@ -1269,6 +1269,43 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Reopened text card did not render consistently");
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_A);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+  QTest::mouseMove(&editor, QPoint(300, 300));
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(300, 300));
+  QApplication::processEvents();
+  if (editor.operationLog().isEmpty()) {
+    error = QStringLiteral("Arrow drag on the rendered card made no operation");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  if (editor.clipboardTextCardEditingForTest() ||
+      !editor.statusForTest().contains(QStringLiteral("Ctrl+E again"))) {
+    error = QStringLiteral("Ctrl+E discarded card annotations without asking");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardEditingForTest() ||
+      editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Second Ctrl+E did not reopen the card source");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardEditingForTest() ||
+      !editor.clipboardTextCardSourceRetainedForTest()) {
+    error = QStringLiteral("Card re-render after annotation discard failed");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Escape);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardSourceRetainedForTest()) {
+    error = QStringLiteral(
+        "Returning to select kept the stale card source armed");
+    return false;
+  }
   editor.close();
 
   CaptureData handoffCapture;

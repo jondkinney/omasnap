@@ -779,6 +779,7 @@ private:
   QString textCardOpenedText_;
   QString textCardOpenedFilename_;
   bool textCardDiscardArmed_ = false;
+  bool textCardReopenArmed_ = false;
   bool clipboardTextCardEditing_ = false;
   bool textCardRestoreEditing_ = false;
   TextCardEditor *textCardModal_ = nullptr;

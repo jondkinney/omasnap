@@ -3381,7 +3381,8 @@ void CaptureEditor::enterEdit(QString status) {
     commitCrop(selection_);
   else
     scheduleSnapshot();
-  if (windowedHandoffOnEdit_ && captureMode_ != CaptureMode::Scroll) {
+  if (windowedHandoffOnEdit_ && !suppressSnapshots_ &&
+      captureMode_ != CaptureMode::Scroll) {
     windowedHandoffOnEdit_ = false;
     handOffEditor(true);
   }
@@ -3996,11 +3997,21 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     event->accept();
     return;
   }
-  if (phase_ == Phase::Edit && event->key() == Qt::Key_E &&
-      event->modifiers().testFlag(Qt::ControlModifier) &&
-      !event->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
-                                      Qt::MetaModifier) &&
-      !textCardDocumentText_.isEmpty()) {
+  const bool reopenChord = phase_ == Phase::Edit &&
+                           isPlainControlChord(event, Qt::Key_E) &&
+                           !textCardDocumentText_.isEmpty();
+  if (!reopenChord)
+    textCardReopenArmed_ = false;
+  if (reopenChord) {
+    if (!ops_.isEmpty() && !textCardReopenArmed_) {
+      textCardReopenArmed_ = true;
+      setStatus(QStringLiteral(
+          "Ctrl+E again discards the annotations on this card and reopens "
+          "its source"));
+      event->accept();
+      return;
+    }
+    textCardReopenArmed_ = false;
     reopenClipboardTextCard();
     event->accept();
     return;
@@ -5945,6 +5956,10 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
     resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
                                       : QSize()));
   update();
+  if (windowedHandoffOnEdit_ && !suppressSnapshots_) {
+    windowedHandoffOnEdit_ = false;
+    handOffEditor(true);
+  }
 }
 
 void CaptureEditor::updateClipboardTextCardPreview() {
@@ -6231,6 +6246,10 @@ void CaptureEditor::returnToSelect(bool windowMode) {
   ops_.clear();
   opIndex_ = 0;
   replayLog();
+  // The retained card source belongs to the image being left behind; keeping
+  // it would arm Ctrl+E against a later, unrelated capture.
+  textCardDocumentText_.clear();
+  textCardDocumentFilename_.clear();
   if (handedImage_) {
     // A stitched result is not the screen; take the monitor again so the
     // frozen backdrop behind the next selection is current.
