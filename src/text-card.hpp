@@ -56,7 +56,9 @@ struct TextCardRender {
 [[nodiscard]] QSyntaxHighlighter *
 installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                            const QString &filename = {});
-/** Renders a card and reports the image-space rectangle used by its editor. */
+/** Renders a card and reports the image-space rectangle used by its editor.
+ * pixelRatio > 1 supersamples the image for crisp on-screen scaling; the
+ * reported rectangles stay in logical card coordinates. */
 [[nodiscard]] TextCardRender renderTextCardLayout(const QString &text,
                                                   const TextCardTheme &theme,
                                                   QString &error,
@@ -65,7 +67,8 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                                                       QStringLiteral("NORMAL"),
                                                   const QString &filename = {},
                                                   TextCardLayout layout =
-                                                      TextCardLayout::Share);
+                                                      TextCardLayout::Share,
+                                                  qreal pixelRatio = 1.0);
 /** Window size that hugs a compact live card plus its snippet-only toolbar. */
 [[nodiscard]] QSize textCardEditorWindowSize(const QSize &card,
                                              const QSize &available);

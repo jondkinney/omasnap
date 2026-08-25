@@ -221,6 +221,21 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
                 .arg(renderError);
     return false;
   }
+  QString crispError;
+  const TextCardRender base = renderTextCardLayout(
+      expected, theme, crispError, false, QStringLiteral("NORMAL"),
+      QStringLiteral("snippet.sh"));
+  const TextCardRender crisp = renderTextCardLayout(
+      expected, theme, crispError, false, QStringLiteral("NORMAL"),
+      QStringLiteral("snippet.sh"), TextCardLayout::Share, 2.0);
+  if (crisp.image.size() != base.image.size() * 2 ||
+      crisp.editorRect != base.editorRect ||
+      crisp.titleRect != base.titleRect) {
+    error = QStringLiteral(
+        "Supersampled card did not keep logical geometry: %1")
+                .arg(crispError);
+    return false;
+  }
   QString precedenceError;
   const QImage precedenceCard =
       renderTextCardLayout(

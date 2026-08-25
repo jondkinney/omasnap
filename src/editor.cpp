@@ -2497,6 +2497,8 @@ QString CaptureEditor::measurementText() const {
   if (capture_.source.isNull())
     return {};
   if (phase_ == Phase::Select) {
+    if (recentsOpen_)
+      return {};
     if (windowMode_) {
       if (hoveredWindow_ < 0 || hoveredWindow_ >= capture_.windows.size())
         return {};
@@ -6066,6 +6068,21 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   textCardSourceEditorRect_ = frame.editorRect;
   textCardSourceTitleRect_ = frame.titleRect;
   updateClipboardTextCardEditorGeometry();
+  // The state frame above stays at logical size; the painted copy is
+  // supersampled so the chrome survives being scaled to the screen.
+  textCardDisplayRatio_ = textCardIdealRatio();
+  if (textCardDisplayRatio_ > 1.02) {
+    QString displayError;
+    textCardDisplayFrame_ =
+        renderTextCardLayout(previewText, textCardTheme_, displayError, false,
+                             cardMode, textCardFilename_,
+                             windowedPresentation_ ? TextCardLayout::Compact
+                                                   : TextCardLayout::Share,
+                             textCardDisplayRatio_)
+            .image;
+  } else {
+    textCardDisplayFrame_ = {};
+  }
   update();
 }
 
@@ -6079,6 +6096,15 @@ void CaptureEditor::adoptTextCardSurface(QImage image) {
   canvasRect_ = selection_;
   redactionBaseStale_ = true;
   backdropKey_ = 0;
+}
+
+// Supersample factor that makes the painted card frame match the screen.
+qreal CaptureEditor::textCardIdealRatio() const {
+  const QRectF source = sourceFrameWidgetRect();
+  if (source.isEmpty() || capture_.previewSize.isEmpty())
+    return 1.0;
+  const qreal scale = source.width() / capture_.previewSize.width();
+  return std::clamp(scale * devicePixelRatioF(), 1.0, 3.0);
 }
 
 void CaptureEditor::updateClipboardTextCardEditorGeometry() {
@@ -6127,6 +6153,20 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
   filenameFont.setPixelSize(
       std::max(1, qRound(kTextCardHeaderPixelSize * scale)));
   textCardFilenameEditor_->setFont(filenameFont);
+
+  const qreal idealRatio = textCardIdealRatio();
+  if (!textCardPreviewPending_ &&
+      std::abs(idealRatio - textCardDisplayRatio_) >
+          0.1 * textCardDisplayRatio_) {
+    textCardPreviewPending_ = true;
+    QTimer::singleShot(0, this, [this] {
+      textCardPreviewPending_ = false;
+      if (!clipboardTextCardEditing_)
+        return;
+      textCardFrameKey_.clear();
+      updateClipboardTextCardPreview();
+    });
+  }
 }
 
 // The Normal-mode block cursor is painted, not inverted: Qt's inversion
@@ -6299,6 +6339,8 @@ void CaptureEditor::cancelClipboardTextCard() {
 void CaptureEditor::resetClipboardTextCardEditor(bool clearDocument) {
   textCardModal_->reset();
   clipboardTextCardEditing_ = false;
+  textCardDisplayFrame_ = {};
+  textCardDisplayRatio_ = 1.0;
   textCardEditor_->hide();
   textCardFilenameEditor_->hide();
   delete textCardHighlighter_;
@@ -6799,7 +6841,9 @@ void CaptureEditor::paintClipboardTextCardEditing(QPainter &painter) {
   painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
   const QRectF image = sourceFrameWidgetRect();
   if (!image.isEmpty())
-    painter.drawImage(image, capture_.source);
+    painter.drawImage(image, textCardDisplayFrame_.isNull()
+                                 ? capture_.source
+                                 : textCardDisplayFrame_);
   paintClipboardTextCardToolbar(painter);
   drawStatusPill(painter, rect(), status_);
 }

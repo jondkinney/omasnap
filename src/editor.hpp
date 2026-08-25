@@ -505,6 +505,7 @@ private:
   bool handOffLiveTextCard();
   void updateTextCardCaret();
   void applyTextCardRestoreState();
+  [[nodiscard]] qreal textCardIdealRatio() const;
   [[nodiscard]] OperationLog composeWorkingLog() const;
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
@@ -791,6 +792,9 @@ private:
   bool textCardDiscardArmed_ = false;
   bool textCardReopenArmed_ = false;
   QString textCardFrameKey_;
+  QImage textCardDisplayFrame_;
+  qreal textCardDisplayRatio_ = 1.0;
+  bool textCardPreviewPending_ = false;
   QString textCardHoveredAction_;
   bool textCardRepostingKey_ = false;
   int textCardDetectRevision_ = -1;

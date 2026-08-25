@@ -750,7 +750,7 @@ TextCardRender renderTextCardLayout(const QString &text,
                                     const TextCardTheme &theme, QString &error,
                                     bool drawText, const QString &mode,
                                     const QString &filename,
-                                    TextCardLayout layout) {
+                                    TextCardLayout layout, qreal pixelRatio) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
@@ -780,8 +780,10 @@ TextCardRender renderTextCardLayout(const QString &text,
                     kCompactPadding
               : std::max(kMinimumOutputHeight, panelHeight + 160);
 
-  QImage image(outputWidth, outputHeight,
+  QImage image(qRound(outputWidth * pixelRatio),
+               qRound(outputHeight * pixelRatio),
                QImage::Format_ARGB32_Premultiplied);
+  image.setDevicePixelRatio(pixelRatio);
   image.fill(theme.background);
   QPainter painter(&image);
   painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
