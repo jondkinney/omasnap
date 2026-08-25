@@ -11,6 +11,7 @@
 #include <QFontMetricsF>
 #include <QHash>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
@@ -32,6 +33,7 @@ constexpr int kGutterWidth = 54;
 constexpr int kTopTextPadding = 34;
 constexpr int kBottomTextPadding = 40;
 constexpr int kMinimumEditorHeight = 220;
+constexpr int kPowerlineAngle = 14;
 
 class TextCardHighlighter final : public QSyntaxHighlighter {
 public:
@@ -309,19 +311,56 @@ TextCardRender renderTextCardLayout(const QString &text,
   const QString modeText = QStringLiteral(" %1 ").arg(mode);
   const int modeWidth = mode == QStringLiteral("VISUAL LINE") ? 142 : 104;
   const QRect modeRect(status.left(), status.top(), modeWidth, status.height());
-  painter.fillRect(modeRect, theme.outline);
+  const qreal statusBottom = status.bottom() + 1.0;
+  QPainterPath modeSegment;
+  modeSegment.moveTo(status.left(), status.top());
+  modeSegment.lineTo(modeRect.right() + 1, status.top());
+  modeSegment.lineTo(modeRect.right() + 1 + kPowerlineAngle,
+                     status.center().y() + 0.5);
+  modeSegment.lineTo(modeRect.right() + 1, statusBottom);
+  modeSegment.lineTo(status.left(), statusBottom);
+  modeSegment.closeSubpath();
+  painter.fillPath(modeSegment, theme.outline);
   painter.setFont(headerFont);
   painter.setPen(theme.outline.lightness() > 130 ? theme.header
                                                  : theme.foreground);
   painter.drawText(modeRect, Qt::AlignCenter, modeText);
   painter.setPen(theme.foreground);
-  painter.drawText(status.adjusted(modeWidth + 18, 0, -24, 0),
+  painter.drawText(status.adjusted(modeWidth + kPowerlineAngle + 18, 0, -24,
+                                   0),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    QStringLiteral("clipboard"));
-  painter.setPen(theme.muted);
-  painter.drawText(status.adjusted(24, 0, -24, 0),
-                   Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("%1L  UTF-8  LF").arg(lineNumber - 1));
+
+  const int formatWidth = 116;
+  const int linesWidth = 64;
+  const int formatLeft = status.right() - formatWidth + 1;
+  const int linesLeft = formatLeft - linesWidth;
+  QPainterPath linesSegment;
+  linesSegment.moveTo(linesLeft - kPowerlineAngle,
+                      status.center().y() + 0.5);
+  linesSegment.lineTo(linesLeft, status.top());
+  linesSegment.lineTo(formatLeft, status.top());
+  linesSegment.lineTo(formatLeft, statusBottom);
+  linesSegment.lineTo(linesLeft, statusBottom);
+  linesSegment.closeSubpath();
+  painter.fillPath(linesSegment, theme.selection);
+  QPainterPath formatSegment;
+  formatSegment.moveTo(formatLeft - kPowerlineAngle,
+                       status.center().y() + 0.5);
+  formatSegment.lineTo(formatLeft, status.top());
+  formatSegment.lineTo(status.right() + 1, status.top());
+  formatSegment.lineTo(status.right() + 1, statusBottom);
+  formatSegment.lineTo(formatLeft, statusBottom);
+  formatSegment.closeSubpath();
+  painter.fillPath(formatSegment, theme.outline);
+  painter.setPen(theme.foreground);
+  painter.drawText(QRect(linesLeft, status.top(), linesWidth, status.height()),
+                   Qt::AlignCenter, QStringLiteral("%1L").arg(lineNumber - 1));
+  painter.setPen(theme.outline.lightness() > 130 ? theme.header
+                                                 : theme.foreground);
+  painter.drawText(
+      QRect(formatLeft, status.top(), formatWidth, status.height()),
+      Qt::AlignCenter, QStringLiteral("UTF-8  LF"));
   painter.setPen(QPen(theme.outline, 2));
   painter.setBrush(Qt::NoBrush);
   painter.drawRect(panel.adjusted(1, 1, -1, -1));

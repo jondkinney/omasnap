@@ -183,13 +183,31 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   }
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);
-  if (editor.clipboardTextCardTextForTest() == edited) {
+  const QString deletedLastLine = QStringLiteral(
+      "const answer = \"hello\";\n# install\nomasnap --version");
+  if (editor.clipboardTextCardTextForTest() != deletedLastLine) {
     error = QStringLiteral("Clipboard-card Normal-mode dd did not delete");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_U);
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral("Clipboard-card Normal-mode u did not restore dd");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_R, Qt::ControlModifier);
+  if (editor.clipboardTextCardTextForTest() != deletedLastLine) {
+    error = QStringLiteral("Clipboard-card Ctrl+R did not redo dd");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card dd did not populate the put register");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card dd/put operations did not undo");
     return false;
   }
 
@@ -325,6 +343,43 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral(
         "Clipboard-card Visual-line deletion was not individually undoable");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  const QString visualCharactersDeleted =
+      QStringLiteral("ct answer = \"hello\";\n# install\nomasnap --version\n"
+                     "\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != visualCharactersDeleted) {
+    error = QStringLiteral(
+        "Clipboard-card Visual x did not delete selected characters");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (editor.clipboardTextCardTextForTest() != visualCharactersDeleted) {
+    error = QStringLiteral(
+        "Clipboard-card Visual d did not delete selected characters");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_R, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral(
+        "Clipboard-card Visual-character delete did not undo and redo");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);

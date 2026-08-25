@@ -1138,9 +1138,9 @@ void CaptureEditor::startClipboardTextCardVisualMode(bool linewise) {
   updateClipboardTextCardVisualSelection();
   setStatus(linewise
                 ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                 "copies · d deletes · Esc Normal")
+                                 "copies · x/d delete · Esc Normal")
                 : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
-                                 "· d deletes · Esc Normal"));
+                                 "· x/d delete · Esc Normal"));
   updateClipboardTextCardPreview();
 }
 
@@ -1223,7 +1223,8 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     textCardPendingCommand_ = {};
     return true;
   }
-  if (command == QStringLiteral("y") || command == QStringLiteral("d")) {
+  if (command == QStringLiteral("y") || command == QStringLiteral("d") ||
+      command == QStringLiteral("x")) {
     const int first = textCardVisualSelectionStart_;
     const int last = textCardVisualSelectionEnd_;
     const QString source = textCardEditor_->toPlainText();
@@ -1264,9 +1265,9 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
       updateClipboardTextCardVisualSelection();
       setStatus(shifted
                     ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                     "copies · d deletes · Esc Normal")
+                                     "copies · x/d delete · Esc Normal")
                     : QStringLiteral("Text card · VISUAL · hjkl move · y "
-                                     "copies · d deletes · Esc Normal"));
+                                     "copies · x/d delete · Esc Normal"));
       updateClipboardTextCardPreview();
     }
     return true;
@@ -1466,6 +1467,8 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   if (textCardPendingCommand_ == QLatin1Char('d')) {
     textCardPendingCommand_ = {};
     if (command == QStringLiteral("d")) {
+      textCardYank_ = cursor.block().text() + QLatin1Char('\n');
+      textCardYankLinewise_ = true;
       cursor.movePosition(QTextCursor::StartOfBlock);
       const int start = cursor.position();
       cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
@@ -1477,6 +1480,8 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
         cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
       }
       cursor.removeSelectedText();
+      setStatus(QStringLiteral("Text card · NORMAL · line deleted · "
+                               "p puts it back · u undoes"));
     }
     textCardEditor_->setTextCursor(cursor);
     return true;
