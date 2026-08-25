@@ -109,6 +109,19 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
         "Clipboard-card added content detection was shadowed");
     return false;
   }
+  if (detectTextCardLanguage(
+          QStringLiteral("def f():\n    print(\"hi\", end=\"\")")) !=
+          QStringLiteral("Python") ||
+      detectTextCardLanguage(QStringLiteral("# My Notes\nplain words")) !=
+          QStringLiteral("Markdown") ||
+      detectTextCardLanguage(QStringLiteral("Note: remember the milk")) !=
+          QStringLiteral("Plain Text") ||
+      detectTextCardLanguage(QStringLiteral("region: us-east\nreplicas: 3")) !=
+          QStringLiteral("YAML")) {
+    error = QStringLiteral(
+        "Clipboard-card content detection mislabeled a lookalike");
+    return false;
+  }
 
   QString renderError;
   const QImage card = renderTextCard(text, renderError);

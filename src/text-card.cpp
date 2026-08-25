@@ -168,9 +168,8 @@ public:
               theme.number);
       addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
     } else {
-      addRule(QStringLiteral(
-                  R"(\b(?:class|const|def|else|false|for|function|if|import|let|null|return|struct|true|var|while)\b)"),
-              theme.keyword, QFont::DemiBold);
+      // Plain text gets no keyword rule: bolding English "if" and "for" in
+      // prose reads as a glitch, not highlighting.
       addRule(QStringLiteral(R"((?:^|\s)(?:#|//).*$)"), theme.comment,
               QFont::Normal, true);
     }
@@ -469,20 +468,30 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
           .hasMatch())
     return QStringLiteral("Go");
   if (QRegularExpression(QStringLiteral(
-          R"((?:^|\n)\s*(?:class|module|def)\s+\w+.*(?:\n|$)[\s\S]*\bend\b|(?:^|\n)\s*require(?:_relative)?\s+['"])"))
-          .match(text)
-          .hasMatch())
-    return QStringLiteral("Ruby");
-  if (QRegularExpression(QStringLiteral(
           R"((?:^|\n)\s*import\s+Qt\w+|(?:^|\n)\s*(?:ApplicationWindow|Item|Rectangle)\s*\{)"))
           .match(text)
           .hasMatch())
     return QStringLiteral("QML");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:def\s+\w+|from\s+\w+\s+import\b|import\s+\w+))"))
+  // A Python def always carries its colon; a Ruby def never does. Checking
+  // Python first keeps print(..., end="") away from the Ruby rule below.
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:def\s+\w+[^\n]*:|from\s+\w+\s+import\b|import\s+\w+))"))
           .match(text)
           .hasMatch())
     return QStringLiteral("Python");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:git|cd|curl|echo|make|omasnap|pacman|sudo)\b|(?:^|\n)\s*#\s+\w+)"))
+  // Two anchored probes instead of one [\s\S]* bridge: the single pattern
+  // backtracked quadratically on def-heavy text with no closing "end".
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*require(?:_relative)?\s+['"])"))
+          .match(text)
+          .hasMatch() ||
+      (QRegularExpression(
+           QStringLiteral(R"((?:^|\n)\s*(?:class|module|def)\s+\w+)"))
+           .match(text)
+           .hasMatch() &&
+       QRegularExpression(QStringLiteral(R"((?:^|\n)\s*end\b)"))
+           .match(text)
+           .hasMatch()))
+    return QStringLiteral("Ruby");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:git|cd|curl|echo|make|omasnap|pacman|sudo)\b)"))
           .match(text)
           .hasMatch())
     return QStringLiteral("Shell");
@@ -508,7 +517,10 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
           .match(text)
           .hasMatch())
     return QStringLiteral("CSS");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*[A-Za-z_][\w.-]*\s*:\s*\S)"))
+  // Two consecutive key: lines, like the TOML rule above, so a lone
+  // "Note: buy milk" prose line stays plain text.
+  if (QRegularExpression(QStringLiteral(
+          R"((?:^|\n)[ \t]*[A-Za-z_][\w.-]*[ \t]*:\s*\S[^\n]*\n[ \t]*[A-Za-z_][\w.-]*[ \t]*:)"))
           .match(text)
           .hasMatch())
     return QStringLiteral("YAML");
