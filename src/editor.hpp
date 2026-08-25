@@ -497,6 +497,7 @@ private:
   void resetClipboardTextCardEditor(bool clearDocument = true);
   void adoptTextCardSurface(QImage image);
   bool handOffLiveTextCard();
+  void updateTextCardCaret();
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -782,6 +783,7 @@ private:
   bool textCardDiscardArmed_ = false;
   bool textCardReopenArmed_ = false;
   QString textCardFrameKey_;
+  QString textCardHoveredAction_;
   int textCardDetectRevision_ = -1;
   QString textCardDetectFilename_;
   QString textCardDetectedLanguage_;

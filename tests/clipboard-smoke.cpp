@@ -331,7 +331,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard text card did not focus its editor");
     return false;
   }
-  if (cardEditor->cursorWidth() <= 2) {
+  if (cardEditor->extraSelections().isEmpty()) {
     error = QStringLiteral("Clipboard-card Normal mode lost its block cursor");
     return false;
   }

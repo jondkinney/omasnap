@@ -829,7 +829,10 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   connect(textCardModal_, &TextCardEditor::modeChanged, this, [this] {
     updateClipboardTextCardEditorGeometry();
     updateClipboardTextCardPreview();
+    updateTextCardCaret();
   });
+  connect(textCardEditor_, &QPlainTextEdit::cursorPositionChanged, this,
+          [this] { updateTextCardCaret(); });
   connect(textCardModal_, &TextCardEditor::cancelRequested, this,
           [this] { cancelClipboardTextCard(); });
   connect(textCardModal_, &TextCardEditor::filenameEditRequested, this,
@@ -3990,10 +3993,14 @@ void CaptureEditor::handleToolbar(const QString &action) {
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
   if (clipboardTextCardEditing_) {
-    if (textCardFilenameEditor_->isVisible())
-      textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
-    else
-      textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+    QWidget *target = textCardFilenameEditor_->isVisible()
+                          ? static_cast<QWidget *>(textCardFilenameEditor_)
+                          : textCardEditor_;
+    target->setFocus(Qt::ShortcutFocusReason);
+    QKeyEvent repost(QEvent::KeyPress, event->key(), event->modifiers(),
+                     event->text(), event->isAutoRepeat(),
+                     static_cast<quint16>(event->count()));
+    QCoreApplication::sendEvent(target, &repost);
     event->accept();
     return;
   }
@@ -4412,7 +4419,17 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
   if (clipboardTextCardEditing_) {
     cursor_ = event->position();
     updatePointerCursor();
-    update();
+    QString hovered;
+    for (const ToolbarButton &button : textCardToolbarButtons()) {
+      if (button.rect.contains(cursor_)) {
+        hovered = button.action;
+        break;
+      }
+    }
+    if (hovered != textCardHoveredAction_) {
+      textCardHoveredAction_ = hovered;
+      update();
+    }
     return;
   }
   if (panning_) {
@@ -5974,6 +5991,7 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardEditor_->raise();
   textCardEditor_->setFocus(Qt::ShortcutFocusReason);
   updateClipboardTextCardEditorGeometry();
+  updateTextCardCaret();
   if (windowedPresentation_)
     resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
                                       : QSize()));
@@ -6058,14 +6076,12 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
     textCardFilenameEditor_->setGeometry(titleGeometry);
 
   QFont font(annotationTextFontName(TextFont::JetBrainsMono));
-  font.setPixelSize(std::max(8, qRound(kTextCardCodePixelSize * scale)));
+  font.setPixelSize(std::max(1, qRound(kTextCardCodePixelSize * scale)));
   font.setStyleHint(QFont::Monospace);
   if (textCardEditor_->font() != font)
     textCardEditor_->setFont(font);
   textCardEditor_->setCursorWidth(
-      textCardModal_->insertMode()
-          ? std::max(1, qRound(2 * scale))
-          : std::max(2, QFontMetrics(font).horizontalAdvance(QLatin1Char('M'))));
+      textCardModal_->insertMode() ? std::max(1, qRound(2 * scale)) : 0);
   QTextOption option = textCardEditor_->document()->defaultTextOption();
   const qreal tabStop =
       QFontMetricsF(font).horizontalAdvance(' ') * kTextCardTabSpaces;
@@ -6078,8 +6094,32 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
 
   QFont filenameFont = font;
   filenameFont.setPixelSize(
-      std::max(8, qRound(kTextCardHeaderPixelSize * scale)));
+      std::max(1, qRound(kTextCardHeaderPixelSize * scale)));
   textCardFilenameEditor_->setFont(filenameFont);
+}
+
+// The Normal-mode block cursor is painted, not inverted: Qt's inversion
+// caret disappears on mid-tone panels.
+void CaptureEditor::updateTextCardCaret() {
+  if (!clipboardTextCardEditing_ || textCardModal_->insertMode() ||
+      textCardModal_->visualMode())
+    return;
+  QTextCursor caret = textCardEditor_->textCursor();
+  if (caret.atBlockEnd()) {
+    // An empty line has no character to paint under the block.
+    textCardEditor_->setCursorWidth(
+        std::max(2, QFontMetrics(textCardEditor_->font())
+                        .horizontalAdvance(QLatin1Char('M'))));
+    textCardEditor_->setExtraSelections({});
+    return;
+  }
+  textCardEditor_->setCursorWidth(0);
+  caret.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+  QTextEdit::ExtraSelection block;
+  block.cursor = caret;
+  block.format.setBackground(textCardTheme_.outline);
+  block.format.setForeground(textCardTheme_.panel);
+  textCardEditor_->setExtraSelections({block});
 }
 
 void CaptureEditor::beginClipboardTextCardFilenameEdit() {
