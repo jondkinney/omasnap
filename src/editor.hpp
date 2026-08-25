@@ -794,7 +794,13 @@ private:
   QString textCardOpenedText_;
   QString textCardOpenedFilename_;
   bool textCardDiscardArmed_ = false;
-  bool textCardReopenArmed_ = false;
+  /// Annotations stashed while the card source is re-edited, replayed onto
+  /// the next render; carried in the working log's otherwise-empty ops slot
+  /// across a presentation switch.
+  OperationLog textCardStashedLog_;
+  /// A reopened card gates q even when clean; only the initial paste exits
+  /// on a single q.
+  bool textCardReopened_ = false;
   QString textCardFrameKey_;
   QImage textCardDisplayFrame_;
   qreal textCardDisplayRatio_ = 1.0;

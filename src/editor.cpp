@@ -3239,6 +3239,14 @@ QImage CaptureEditor::renderCurrentOutput() const {
 OperationLog CaptureEditor::composeWorkingLog() const {
   OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
                    pristineLogicalSize_};
+  // A live card draft has no ops of its own; the slot carries the stashed
+  // card annotations across a presentation switch instead.
+  if (clipboardTextCardEditing_ && ops_.isEmpty()) {
+    log.ops = textCardStashedLog_.ops;
+    log.index = textCardStashedLog_.index;
+    log.nextId = textCardStashedLog_.nextId;
+    log.nextMarker = textCardStashedLog_.nextMarker;
+  }
   log.textCardText = clipboardTextCardEditing_
                          ? textCardEditor_->toPlainText()
                          : textCardDocumentText_;
@@ -4043,28 +4051,11 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   const bool reopenChord = phase_ == Phase::Edit &&
                            isPlainControlChord(event, Qt::Key_E) &&
                            !textCardDocumentText_.isEmpty();
-  const bool modifierOnly =
-      event->key() == Qt::Key_Shift || event->key() == Qt::Key_Control ||
-      event->key() == Qt::Key_Alt || event->key() == Qt::Key_Meta;
-  // A held Ctrl+E would arm the reopen and confirm it on the next repeat,
-  // silently discarding the annotations.
-  if (reopenChord && event->isAutoRepeat()) {
-    event->accept();
-    return;
-  }
-  if (!reopenChord && !modifierOnly)
-    textCardReopenArmed_ = false;
   if (reopenChord) {
-    if (!ops_.isEmpty() && !textCardReopenArmed_) {
-      textCardReopenArmed_ = true;
-      setStatus(QStringLiteral(
-          "Ctrl+E again discards the annotations on this card and reopens "
-          "its source"));
-      event->accept();
-      return;
-    }
-    textCardReopenArmed_ = false;
-    reopenClipboardTextCard();
+    // Annotations come back on the next render, so a single press suffices;
+    // a repeat would land inside the reopened card.
+    if (!event->isAutoRepeat())
+      reopenClipboardTextCard();
     event->accept();
     return;
   }
@@ -4818,7 +4809,6 @@ void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
 void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (busy_ || capturePending_)
     return;
-  textCardReopenArmed_ = false;
   if (clipboardTextCardEditing_) {
     cursor_ = event->position();
     if (event->button() == Qt::LeftButton) {
@@ -6011,6 +6001,8 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardOpenedText_ = text;
   textCardOpenedFilename_ = textCardFilename_;
   textCardDiscardArmed_ = false;
+  textCardStashedLog_ = {};
+  textCardReopened_ = false;
   textCardFrameKey_.clear();
   textCardDetectRevision_ = -1;
   clipboardTextCardEditing_ = true;
@@ -6323,11 +6315,20 @@ void CaptureEditor::finishClipboardTextCard() {
   resetClipboardTextCardEditor(false);
   adoptTextCardSurface(card);
   cuts_.clear();
-  ops_.clear();
-  opIndex_ = 0;
+  // Annotations stashed at reopen come back onto the new render; their
+  // coordinates are card-absolute, so they stay where they were drawn.
+  ops_ = std::move(textCardStashedLog_.ops);
+  opIndex_ = std::clamp(textCardStashedLog_.index, 0,
+                        static_cast<int>(ops_.size()));
+  nextAnnotationId_ = std::max<quint64>(textCardStashedLog_.nextId, 1);
+  nextMarker_ = std::max(textCardStashedLog_.nextMarker, 1);
+  textCardStashedLog_ = {};
+  textCardReopened_ = false;
   sourceWritten_ = false;
   redactionBaseStale_ = true;
   backdropKey_ = 0;
+  if (!ops_.isEmpty())
+    replayLog();
   setFocus(Qt::OtherFocusReason);
   setStatus(QStringLiteral("Text card rendered · Ctrl+E re-edits · annotate "
                            "normally · Ctrl+C copies · Enter copies + saves"));
@@ -6349,7 +6350,15 @@ void CaptureEditor::reopenClipboardTextCard() {
   }
   const QString text = textCardDocumentText_;
   const QString filename = textCardDocumentFilename_;
+  // Annotations drawn on the rendered card survive the trip back into its
+  // source: stashed here, replayed onto the next render.
+  OperationLog stash{ops_, opIndex_, nextAnnotationId_, nextMarker_,
+                     pristineLogicalSize_};
   beginClipboardTextCard(text, filename);
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardStashedLog_ = std::move(stash);
+  textCardReopened_ = true;
 }
 
 // Cursor and yank register carried through a presentation switch; the
@@ -6376,10 +6385,16 @@ void CaptureEditor::cancelClipboardTextCard() {
     return;
   const bool dirty = textCardEditor_->toPlainText() != textCardOpenedText_ ||
                      textCardFilename_ != textCardOpenedFilename_;
-  if (dirty && !textCardDiscardArmed_) {
+  // A reopened card always confirms: q here abandons the rendered card and
+  // its annotations, not just a pasted draft.
+  if ((dirty || textCardReopened_) && !textCardDiscardArmed_) {
     textCardDiscardArmed_ = true;
-    setStatus(QStringLiteral("Text card · unsaved edits · q again discards "
-                             "them · Ctrl+Enter renders instead"));
+    setStatus(dirty ? QStringLiteral("Text card · unsaved edits · q again "
+                                     "discards them · Ctrl+Enter renders "
+                                     "instead")
+                    : QStringLiteral("Text card · q again discards the "
+                                     "rendered card and its annotations · "
+                                     "Ctrl+Enter renders instead"));
     return;
   }
   resetClipboardTextCardEditor();

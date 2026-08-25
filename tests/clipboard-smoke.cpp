@@ -1709,28 +1709,11 @@ bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
-  if (editor.clipboardTextCardEditingForTest() ||
-      !editor.statusForTest().contains(QStringLiteral("Ctrl+E again"))) {
-    error = QStringLiteral("Ctrl+E discarded card annotations without asking");
-    return false;
-  }
-  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(220, 220));
-  QTest::mouseMove(&editor, QPoint(320, 320));
-  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
-                      QPoint(320, 320));
-  QApplication::processEvents();
-  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
-  if (editor.clipboardTextCardEditingForTest() ||
-      !editor.statusForTest().contains(QStringLiteral("Ctrl+E again"))) {
-    error = QStringLiteral(
-        "New mouse annotations did not re-arm the Ctrl+E confirmation");
-    return false;
-  }
-  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
   QApplication::processEvents();
   if (!editor.clipboardTextCardEditingForTest() ||
       editor.clipboardTextCardTextForTest() != edited) {
-    error = QStringLiteral("Second Ctrl+E did not reopen the card source");
+    error = QStringLiteral(
+        "Ctrl+E did not reopen an annotated card in one press");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_C);
@@ -1742,7 +1725,12 @@ bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
   QApplication::processEvents();
   if (editor.clipboardTextCardEditingForTest() ||
       !editor.clipboardTextCardSourceRetainedForTest()) {
-    error = QStringLiteral("Card re-render after annotation discard failed");
+    error = QStringLiteral("Card re-render after a reopen failed");
+    return false;
+  }
+  if (editor.annotationCountForTest() != 1) {
+    error = QStringLiteral(
+        "The card's annotations did not survive the re-render");
     return false;
   }
   QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
@@ -1885,6 +1873,49 @@ bool runTextCardHandoffCheck(const CaptureData &capture,
   return true;
 }
 
+/** q on a reopened card confirms even when the source is unchanged. */
+bool runTextCardReopenQuitGateCheck(const CaptureData &capture,
+                                    QString &error) {
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expectedCardText().toUtf8());
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+  editor.setSuppressSnapshots(true);
+  editor.resize(640, 480);
+  editor.show();
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_V,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::processEvents();
+  auto *cardEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!editor.clipboardTextCardEditingForTest() || !cardEditor) {
+    error = QStringLiteral("Reopen-quit-gate card did not open");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardEditingForTest()) {
+    error = QStringLiteral("Reopen-quit-gate Ctrl+E did not reopen");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Q);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardEditingForTest() ||
+      !editor.statusForTest().contains(QStringLiteral("q again"))) {
+    error =
+        QStringLiteral("q quit a reopened card without asking to confirm");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Q);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardEditingForTest() || editor.isVisible()) {
+    error = QStringLiteral("A confirmed q did not close the reopened card");
+    return false;
+  }
+  return true;
+}
+
 /** A compositor key repeat: identical to a press, with autorep set. */
 void sendAutoRepeatKey(QWidget *target, Qt::Key key,
                        Qt::KeyboardModifiers modifiers = Qt::NoModifier,
@@ -1997,6 +2028,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       !runTextCardVisualModeCheck(editor, cardEditor, outputRoot,
                                   error) ||
       !runTextCardRenderRoundTripCheck(editor, cardEditor, error) ||
+      !runTextCardReopenQuitGateCheck(capture, error) ||
       !runTextCardRepeatGuardCheck(capture, error))
     return false;
   return runTextCardHandoffCheck(capture, outputRoot, error);

@@ -273,8 +273,8 @@ compact normal compositor window, carrying the draft, filename, cursor, and
 yank register; the document undo history stays behind. The live view has a
 snippet-only toolbar for switching presentation and **Done → Omasnap**;
 annotation chrome appears only after rendering. `Ctrl+E` then reopens the
-retained source and filename for typo fixes, asking first when annotations
-drawn on the card would be discarded. From there, `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every
+retained source and filename for typo fixes; annotations drawn on the card
+come back on the next render. From there, `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every
 annotation and canvas control remains available after rendering.
 
 The intentionally small modal key set covers the motions and edits useful for
@@ -298,7 +298,7 @@ massaging a snippet without embedding a full editor:
 | `Tab` | Insert a literal tab in Insert mode |
 | `Ctrl+W` | Re-present the live source editor as a normal window or fullscreen overlay |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
-| `q` | Exit Omasnap from the live snippet editor; unsaved edits ask for a second `q` |
+| `q` | Exit Omasnap from the live snippet editor; unsaved edits or a reopened card ask for a second `q` |
 
 Counts, named registers, macros, and `f`/`t` motions are deliberately left
 out. Line and Visual-mode yanks persist through `wl-copy`, so they outlive
@@ -427,7 +427,7 @@ without reaching for the pointer.
 | `Shift+B` | Toggle the screenshot card's drop shadow; on by default |
 | `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Framed, Overflow, Image. Framed auto-grows with the normal frame; Overflow grows only the sides needed by annotations with no frame; Image clips at the original screenshot edge |
 | `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
-| `Ctrl+E` | Reopen retained source and filename when the current image is a rendered text card; asks first when annotations would be discarded |
+| `Ctrl+E` | Reopen retained source and filename when the current image is a rendered text card; annotations drawn on the card return on the next render |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: selected pen smoothing from 0–6, the next pen's smoothing when none is selected, rectangle corner radius, or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
