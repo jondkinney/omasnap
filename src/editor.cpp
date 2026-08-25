@@ -667,6 +667,13 @@ QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
   return end;
 }
 
+bool isPlainControlChord(const QKeyEvent *key, int keycode) {
+  return key->key() == keycode &&
+         key->modifiers().testFlag(Qt::ControlModifier) &&
+         !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
+                                        Qt::MetaModifier);
+}
+
 QPointF centeredCreationStart(CaptureEditor::Tool tool, const QPointF &center,
                               const QPointF &end) {
   if (!supportsCenteredCreation(tool))
@@ -1084,23 +1091,17 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
   if (watched == textCardFilenameEditor_ &&
       event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
-    if (key->key() == Qt::Key_W &&
-        key->modifiers().testFlag(Qt::ControlModifier) &&
-        !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
-                                      Qt::MetaModifier)) {
+    if (isPlainControlChord(key, Qt::Key_W)) {
       endClipboardTextCardFilenameEdit(true);
       handOffEditor(!windowedPresentation_);
-      return true;
-    }
-    if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
-      endClipboardTextCardFilenameEdit(true);
       return true;
     }
     if (key->key() == Qt::Key_Escape) {
       endClipboardTextCardFilenameEdit(false);
       return true;
     }
-    if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+    if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter ||
+        key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
       endClipboardTextCardFilenameEdit(true);
       return true;
     }
@@ -1113,10 +1114,7 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     });
   } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
-    if (key->key() == Qt::Key_W &&
-        key->modifiers().testFlag(Qt::ControlModifier) &&
-        !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
-                                      Qt::MetaModifier)) {
+    if (isPlainControlChord(key, Qt::Key_W)) {
       handOffEditor(!windowedPresentation_);
       return true;
     }
@@ -5909,18 +5907,18 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
     textCardEditor_->setPlainText(text);
   }
   reinstallClipboardTextCardHighlighter();
+  const auto cardInputStyle = [this](const QString &widget,
+                                     const QColor &background) {
+    return QStringLiteral("%1 { color: %2; background: %3; border: none; "
+                          "padding: 0; selection-color: %2; "
+                          "selection-background-color: %4; }")
+        .arg(widget, textCardTheme_.foreground.name(), background.name(),
+             textCardTheme_.selection.name());
+  };
   textCardEditor_->setStyleSheet(
-      QStringLiteral("QPlainTextEdit { color: %1; background: %2; border: "
-                     "none; padding: 0; selection-color: %1; "
-                     "selection-background-color: %3; }")
-          .arg(textCardTheme_.foreground.name(), textCardTheme_.panel.name(),
-               textCardTheme_.selection.name()));
+      cardInputStyle(QStringLiteral("QPlainTextEdit"), textCardTheme_.panel));
   textCardFilenameEditor_->setStyleSheet(
-      QStringLiteral("QLineEdit { color: %1; background: %2; border: none; "
-                     "padding: 0; selection-color: %1; "
-                     "selection-background-color: %3; }")
-          .arg(textCardTheme_.foreground.name(), textCardTheme_.header.name(),
-               textCardTheme_.selection.name()));
+      cardInputStyle(QStringLiteral("QLineEdit"), textCardTheme_.header));
   textCardFilenameEditor_->setText(textCardFilename_);
   textCardEditor_->show();
   textCardEditor_->raise();
@@ -5949,18 +5947,23 @@ void CaptureEditor::updateClipboardTextCardPreview() {
     setStatus(error);
     return;
   }
-  capture_.source = std::move(frame.image);
+  adoptTextCardSurface(std::move(frame.image));
+  textCardSourceEditorRect_ = frame.editorRect;
+  textCardSourceTitleRect_ = frame.titleRect;
+  updateClipboardTextCardEditorGeometry();
+  update();
+}
+
+// The rendered card becomes the whole working image, fully selected.
+void CaptureEditor::adoptTextCardSurface(QImage image) {
+  capture_.source = std::move(image);
   capture_.previewSize = capture_.source.size();
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   selection_ = QRectF(QPointF(), QSizeF(capture_.previewSize));
   canvasRect_ = selection_;
-  textCardSourceEditorRect_ = frame.editorRect;
-  textCardSourceTitleRect_ = frame.titleRect;
   redactionBaseStale_ = true;
   backdropKey_ = 0;
-  updateClipboardTextCardEditorGeometry();
-  update();
 }
 
 void CaptureEditor::updateClipboardTextCardEditorGeometry() {
@@ -6075,12 +6078,7 @@ void CaptureEditor::finishClipboardTextCard() {
   textCardDocumentText_ = sourceText;
   textCardDocumentFilename_ = sourceFilename;
   resetClipboardTextCardEditor(false);
-  capture_.source = card;
-  capture_.previewSize = card.size();
-  pristineSource_ = card;
-  pristineLogicalSize_ = card.size();
-  selection_ = QRectF(QPointF(), QSizeF(card.size()));
-  canvasRect_ = selection_;
+  adoptTextCardSurface(card);
   cuts_.clear();
   ops_.clear();
   opIndex_ = 0;
