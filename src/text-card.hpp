@@ -34,19 +34,27 @@ struct TextCardTheme {
 struct TextCardRender {
   QImage image;
   QRect editorRect;
+  QRect titleRect;
 };
 
 /** Reads the resolved active Omarchy palette, falling back to Nord colors. */
 [[nodiscard]] TextCardTheme loadTextCardTheme();
-/** Adds the card's generic code/command highlighter to an editable document. */
+/** Detects the compact syntax profile shown in the card status line. */
+[[nodiscard]] QString detectTextCardLanguage(const QString &text,
+                                             const QString &filename = {});
+/** Chooses a useful editable default name from the detected language. */
+[[nodiscard]] QString defaultTextCardFilename(const QString &text);
+/** Adds the detected filename/content syntax profile to an editable document. */
 [[nodiscard]] QSyntaxHighlighter *
-installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme);
+installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
+                           const QString &filename = {});
 /** Renders a card and reports the image-space rectangle used by its editor. */
 [[nodiscard]] TextCardRender renderTextCardLayout(const QString &text,
                                                   const TextCardTheme &theme,
                                                   QString &error,
                                                   bool drawText = true,
                                                   const QString &mode =
-                                                      QStringLiteral("NORMAL"));
+                                                      QStringLiteral("NORMAL"),
+                                                  const QString &filename = {});
 /** Renders a shareable, syntax-colored clipboard snippet as an image. */
 [[nodiscard]] QImage renderTextCard(const QString &text, QString &error);

@@ -19,6 +19,7 @@
 #include <optional>
 
 class QKeyEvent;
+class QLineEdit;
 class QMouseEvent;
 class QPaintEvent;
 class QWheelEvent;
@@ -318,6 +319,10 @@ public:
   [[nodiscard]] QString clipboardTextCardTextForTest() const {
     return textCardEditor_ ? textCardEditor_->toPlainText() : QString();
   }
+  /** Editable path shown in the clipboard card's Neovim title/status bars. */
+  [[nodiscard]] QString clipboardTextCardFilenameForTest() const {
+    return textCardFilename_;
+  }
   /// Text-height I-beam in annotation coordinates, or an empty rect when the
   /// Snap highlighter has no text row near the pointer. Test accessor.
   [[nodiscard]] QRectF highlighterPreviewRectForTest() const;
@@ -470,6 +475,9 @@ private:
   void openClipboardTextCard();
   void updateClipboardTextCardPreview();
   void updateClipboardTextCardEditorGeometry();
+  void beginClipboardTextCardFilenameEdit();
+  void endClipboardTextCardFilenameEdit(bool accept);
+  void reinstallClipboardTextCardHighlighter();
   void finishClipboardTextCard();
   void cancelClipboardTextCard();
   void resetClipboardTextCardEditor();
@@ -751,9 +759,13 @@ private:
       QStringLiteral("Drag to select an area · Space selects a window");
   InlineTextEdit *textEditor_ = nullptr;
   QPlainTextEdit *textCardEditor_ = nullptr;
+  QLineEdit *textCardFilenameEditor_ = nullptr;
   QSyntaxHighlighter *textCardHighlighter_ = nullptr;
   TextCardTheme textCardTheme_;
   QRect textCardSourceEditorRect_;
+  QRect textCardSourceTitleRect_;
+  QString textCardFilename_;
+  QString textCardFilenameBeforeEdit_;
   bool clipboardTextCardEditing_ = false;
   bool textCardInsertMode_ = false;
   bool textCardVisualLineMode_ = false;

@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QLineEdit>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
@@ -67,6 +68,15 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       error = QStringLiteral("Clipboard text was not preserved");
     return false;
   }
+  if (detectTextCardLanguage(QStringLiteral("echo hello"),
+                             QStringLiteral("main.py")) !=
+          QStringLiteral("Python") ||
+      detectTextCardLanguage(QStringLiteral("{\"ok\": true}")) !=
+          QStringLiteral("JSON") ||
+      !defaultTextCardFilename(expected).endsWith(QStringLiteral(".sh"))) {
+    error = QStringLiteral("Clipboard-card language detection failed");
+    return false;
+  }
 
   QString renderError;
   const QImage card = renderTextCard(text, renderError);
@@ -79,6 +89,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   int panelPixels = 0;
   int outlinePixels = 0;
   int keywordPixels = 0;
+  int commandPixels = 0;
   for (int y = 0; y < card.height(); ++y) {
     for (int x = 0; x < card.width(); ++x) {
       const QColor pixel = card.pixelColor(x, y);
@@ -88,11 +99,13 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
         ++outlinePixels;
       if (pixel == theme.keyword)
         ++keywordPixels;
+      if (pixel == theme.command)
+        ++commandPixels;
     }
   }
   if (card.width() != 1200 || card.height() < 675 ||
       card.pixelColor(0, 0) != theme.background || panelPixels < 10000 ||
-      outlinePixels < 1000 || keywordPixels < 3) {
+      outlinePixels < 1000 || keywordPixels + commandPixels < 3) {
     error = QStringLiteral("Clipboard text card lost its Omarchy background, "
                            "square outline, or syntax highlighting: %1")
                 .arg(renderError);
@@ -130,6 +143,48 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   }
   if (cardEditor->cursorWidth() <= 2) {
     error = QStringLiteral("Clipboard-card Normal mode lost its block cursor");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_F, Qt::ShiftModifier);
+  auto *filenameEditor =
+      qobject_cast<QLineEdit *>(QApplication::focusWidget());
+  if (!filenameEditor ||
+      editor.clipboardTextCardFilenameForTest() !=
+          QStringLiteral("~/clipboard/snippet.sh")) {
+    error = QStringLiteral("Clipboard-card F did not open filename editing");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClicks(filenameEditor, QStringLiteral("~/share/install.sh"));
+  QApplication::processEvents();
+  if (!editor.grab().save(
+          outputRoot + QStringLiteral("-clipboard-text-card-filename.png"),
+          "PNG")) {
+    error = QStringLiteral("Could not save the filename-editing fixture");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_Return);
+  QApplication::processEvents();
+  if (editor.clipboardTextCardFilenameForTest() !=
+          QStringLiteral("~/share/install.sh") ||
+      QApplication::focusWidget() != cardEditor ||
+      !editor.statusForTest().contains(QStringLiteral("Shell syntax"))) {
+    error = QStringLiteral(
+        "Clipboard-card filename edit did not update the title or language");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_F, Qt::ShiftModifier);
+  filenameEditor = qobject_cast<QLineEdit *>(QApplication::focusWidget());
+  if (!filenameEditor) {
+    error = QStringLiteral("Clipboard-card filename editor did not reopen");
+    return false;
+  }
+  QTest::keyClick(filenameEditor, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClicks(filenameEditor, QStringLiteral("cancelled.py"));
+  QTest::keyClick(filenameEditor, Qt::Key_Escape);
+  if (editor.clipboardTextCardFilenameForTest() !=
+      QStringLiteral("~/share/install.sh")) {
+    error = QStringLiteral("Clipboard-card filename Esc did not cancel");
     return false;
   }
   QApplication::processEvents();
@@ -385,7 +440,11 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
   QApplication::processEvents();
   QString editedRenderError;
-  const QImage editedCard = renderTextCard(edited, editedRenderError);
+  const QImage editedCard =
+      renderTextCardLayout(edited, loadTextCardTheme(), editedRenderError, true,
+                           QStringLiteral("NORMAL"),
+                           QStringLiteral("~/share/install.sh"))
+          .image;
   if (editor.clipboardTextCardEditingForTest() ||
       editor.captureData().source != editedCard ||
       editor.currentSelection() !=

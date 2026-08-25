@@ -7,7 +7,9 @@
 #include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFont>
+#include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QHash>
 #include <QPainter>
@@ -19,6 +21,7 @@
 #include <QTextCharFormat>
 #include <QTextDocument>
 #include <QTextOption>
+#include <QStringList>
 
 #include <algorithm>
 
@@ -37,25 +40,94 @@ constexpr int kPowerlineAngle = 14;
 
 class TextCardHighlighter final : public QSyntaxHighlighter {
 public:
-  TextCardHighlighter(QTextDocument *document, const TextCardTheme &theme)
+  TextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
+                      const QString &language)
       : QSyntaxHighlighter(document) {
-    addRule(
-        QStringLiteral(
-            R"(\b(?:alignas|auto|bool|break|case|catch|class|const|constexpr|continue|def|do|done|elif|else|enum|export|false|fi|final|finally|float|for|foreach|from|function|if|import|in|int|interface|let|namespace|new|null|nullptr|override|private|protected|public|return|static|string|struct|switch|then|throw|true|try|type|using|var|void|while|yield)\b)"),
-        theme.keyword, QFont::DemiBold);
-    addRule(
-        QStringLiteral(
-            R"((?:^|(?<=\s))(?:\$\s*)?(?:cd|cmake|curl|docker|echo|git|make|npm|omasnap|pacman|pnpm|python|sudo|tar|yarn)(?=\s|$))"),
-        theme.command, QFont::DemiBold);
-    addRule(QStringLiteral(R"((?<!\w)--?[A-Za-z][\w-]*)"), theme.flag);
-    addRule(QStringLiteral(R"(https?://[^\s)\]}>]+)"), theme.flag);
-    addRule(QStringLiteral(R"(\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b)"),
-            theme.number);
     addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)"),
             theme.string);
-    addRule(QStringLiteral(R"((?:^|\s)(?:#|//).*$)"), theme.comment,
-            QFont::Normal, true);
-    addRule(QStringLiteral(R"(^\s*```.*$)"), theme.comment);
+    addRule(QStringLiteral(R"(\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b)"),
+            theme.number);
+    addRule(QStringLiteral(R"(https?://[^\s)\]}>]+)"), theme.flag);
+
+    if (language == QStringLiteral("Shell")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:case|do|done|elif|else|esac|export|fi|for|function|if|in|select|then|time|until|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(
+                  R"((?:^|(?<=\s))(?:\$\s*)?(?:cd|cmake|curl|docker|echo|git|make|npm|omasnap|pacman|pnpm|python|sudo|tar|yarn)(?=\s|$))"),
+              theme.command, QFont::DemiBold);
+      addRule(QStringLiteral(R"(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"),
+              theme.number);
+      addRule(QStringLiteral(R"((?<!\w)--?[A-Za-z][\w-]*)"), theme.flag);
+      addRule(QStringLiteral(R"(^\s*#.*$)"), theme.comment, QFont::Normal,
+              true);
+    } else if (language == QStringLiteral("C++")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:alignas|auto|bool|break|case|catch|class|const|constexpr|continue|default|delete|do|double|else|enum|explicit|false|final|float|for|friend|if|inline|int|namespace|new|nullptr|operator|override|private|protected|public|return|sizeof|static|struct|switch|template|this|throw|true|try|typedef|typename|union|using|virtual|void|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(^\s*#\s*\w+.*$)"), theme.command);
+      addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
+              QFont::Normal, true);
+    } else if (language == QStringLiteral("JavaScript") ||
+               language == QStringLiteral("TypeScript")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|false|finally|for|from|function|if|implements|import|in|instanceof|interface|let|new|null|of|private|protected|public|return|static|super|switch|this|throw|true|try|type|typeof|undefined|var|void|while|yield)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
+              QFont::Normal, true);
+    } else if (language == QStringLiteral("Python")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|match|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(^\s*@[A-Za-z_][\w.]*)"), theme.command);
+      addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("Rust")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:as|async|await|break|const|continue|crate|dyn|else|enum|extern|false|fn|for|if|impl|in|let|loop|match|mod|move|mut|pub|ref|return|self|Self|static|struct|super|trait|true|type|unsafe|use|where|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(\b[A-Za-z_][A-Za-z0-9_]*!)"), theme.command);
+      addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
+              QFont::Normal, true);
+    } else if (language == QStringLiteral("Go")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:break|case|chan|const|continue|default|defer|else|fallthrough|for|func|go|goto|if|import|interface|map|package|range|return|select|struct|switch|type|var)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
+              QFont::Normal, true);
+    } else if (language == QStringLiteral("JSON")) {
+      addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"\s*(?=:))"),
+              theme.keyword);
+      addRule(QStringLiteral(R"(\b(?:false|null|true)\b)"), theme.keyword,
+              QFont::DemiBold);
+    } else if (language == QStringLiteral("YAML")) {
+      addRule(QStringLiteral(R"(^\s*[A-Za-z_][\w.-]*\s*(?=:))"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(^\s*-\s+)"), theme.command);
+      addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("Markdown")) {
+      addRule(QStringLiteral(R"(^\s{0,3}#{1,6}\s+.*$)"), theme.keyword,
+              QFont::DemiBold);
+      addRule(QStringLiteral(R"(`[^`]+`|^\s*```.*$)"), theme.command);
+      addRule(QStringLiteral(R"(\[[^\]]+\]\([^)]+\))"), theme.flag);
+    } else if (language == QStringLiteral("Lua")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:and|break|do|else|elseif|end|false|for|function|goto|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(--.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("CMake")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:add_executable|add_library|cmake_minimum_required|find_package|if|else|elseif|endif|function|endfunction|include|install|project|set|target_compile_features|target_include_directories|target_link_libraries)\b)"),
+              theme.command, QFont::DemiBold);
+      addRule(QStringLiteral(R"(\$\{[A-Za-z_][A-Za-z0-9_]*\})"),
+              theme.number);
+      addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else {
+      addRule(QStringLiteral(
+                  R"(\b(?:class|const|def|else|false|for|function|if|import|let|null|return|struct|true|var|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"((?:^|\s)(?:#|//).*$)"), theme.comment,
+              QFont::Normal, true);
+    }
   }
 
 protected:
@@ -128,6 +200,79 @@ QString currentThemeName() {
   return name.isEmpty() ? QStringLiteral("Omarchy") : name;
 }
 
+QString languageFromFilename(const QString &filename) {
+  const QFileInfo file(filename.trimmed());
+  const QString name = file.fileName().toLower();
+  const QString suffix = file.suffix().toLower();
+  if (name == QStringLiteral("cmakelists.txt") ||
+      suffix == QStringLiteral("cmake"))
+    return QStringLiteral("CMake");
+  if (name == QStringLiteral("dockerfile") ||
+      name == QStringLiteral("pkgbuild") ||
+      QStringList{QStringLiteral("sh"), QStringLiteral("bash"),
+                  QStringLiteral("zsh"), QStringLiteral("fish")}
+          .contains(suffix))
+    return QStringLiteral("Shell");
+  if (QStringList{QStringLiteral("c"), QStringLiteral("cc"),
+                  QStringLiteral("cpp"), QStringLiteral("cxx"),
+                  QStringLiteral("h"), QStringLiteral("hh"),
+                  QStringLiteral("hpp")}
+          .contains(suffix))
+    return QStringLiteral("C++");
+  if (QStringList{QStringLiteral("js"), QStringLiteral("jsx"),
+                  QStringLiteral("mjs"), QStringLiteral("cjs")}
+          .contains(suffix))
+    return QStringLiteral("JavaScript");
+  if (QStringList{QStringLiteral("ts"), QStringLiteral("tsx")}.contains(
+          suffix))
+    return QStringLiteral("TypeScript");
+  if (suffix == QStringLiteral("py"))
+    return QStringLiteral("Python");
+  if (suffix == QStringLiteral("rs"))
+    return QStringLiteral("Rust");
+  if (suffix == QStringLiteral("go"))
+    return QStringLiteral("Go");
+  if (suffix == QStringLiteral("json"))
+    return QStringLiteral("JSON");
+  if (QStringList{QStringLiteral("yaml"), QStringLiteral("yml")}.contains(
+          suffix))
+    return QStringLiteral("YAML");
+  if (QStringList{QStringLiteral("md"), QStringLiteral("markdown")}.contains(
+          suffix))
+    return QStringLiteral("Markdown");
+  if (suffix == QStringLiteral("lua"))
+    return QStringLiteral("Lua");
+  return {};
+}
+
+QString extensionForLanguage(const QString &language) {
+  if (language == QStringLiteral("Shell"))
+    return QStringLiteral("sh");
+  if (language == QStringLiteral("C++"))
+    return QStringLiteral("cpp");
+  if (language == QStringLiteral("JavaScript"))
+    return QStringLiteral("js");
+  if (language == QStringLiteral("TypeScript"))
+    return QStringLiteral("ts");
+  if (language == QStringLiteral("Python"))
+    return QStringLiteral("py");
+  if (language == QStringLiteral("Rust"))
+    return QStringLiteral("rs");
+  if (language == QStringLiteral("Go"))
+    return QStringLiteral("go");
+  if (language == QStringLiteral("JSON"))
+    return QStringLiteral("json");
+  if (language == QStringLiteral("YAML"))
+    return QStringLiteral("yaml");
+  if (language == QStringLiteral("Markdown"))
+    return QStringLiteral("md");
+  if (language == QStringLiteral("Lua"))
+    return QStringLiteral("lua");
+  if (language == QStringLiteral("CMake"))
+    return QStringLiteral("cmake");
+  return QStringLiteral("txt");
+}
+
 QString textCardSnippet(QString text, QString &error) {
   text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
   text.replace('\r', '\n');
@@ -158,7 +303,8 @@ QFont textCardCodeFont() {
 }
 
 void prepareTextDocument(QTextDocument &document, const QString &snippet,
-                         const TextCardTheme &theme, int textWidth) {
+                         const TextCardTheme &theme, int textWidth,
+                         const QString &language) {
   const QFont codeFont = textCardCodeFont();
   document.setDocumentMargin(0.0);
   document.setDefaultFont(codeFont);
@@ -169,10 +315,72 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
   document.setDefaultTextOption(option);
   document.setPlainText(snippet);
   document.setTextWidth(textWidth);
-  auto *highlighter = new TextCardHighlighter(&document, theme);
+  auto *highlighter = new TextCardHighlighter(&document, theme, language);
   highlighter->rehighlight();
 }
 } // namespace
+
+QString detectTextCardLanguage(const QString &text, const QString &filename) {
+  const QString fromFilename = languageFromFilename(filename);
+  if (!fromFilename.isEmpty())
+    return fromFilename;
+
+  const QString trimmed = text.trimmed();
+  if (trimmed.startsWith(QStringLiteral("#!"))) {
+    const QString firstLine = trimmed.section('\n', 0, 0).toLower();
+    if (firstLine.contains(QStringLiteral("python")))
+      return QStringLiteral("Python");
+    return QStringLiteral("Shell");
+  }
+  if ((trimmed.startsWith(QLatin1Char('{')) ||
+       trimmed.startsWith(QLatin1Char('['))) &&
+      QRegularExpression(QStringLiteral(R"("[^"\n]+"\s*:)"))
+          .match(trimmed)
+          .hasMatch())
+    return QStringLiteral("JSON");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:#include\b|using\s+namespace\b|std::))"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("C++");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:fn\s+main\b|let\s+mut\b|use\s+\w+::))"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Rust");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:package\s+main\b|func\s+\w+\s*\())"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Go");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:def\s+\w+|from\s+\w+\s+import\b|import\s+\w+))"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Python");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:git|cd|curl|echo|make|omasnap|pacman|sudo)\b|(?:^|\n)\s*#\s+\w+)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Shell");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:interface|type)\s+\w+\s*[={])"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("TypeScript");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:const|let|function|import|export)\b)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("JavaScript");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:```|#{1,6}\s+))"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Markdown");
+  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*[A-Za-z_][\w.-]*\s*:\s*\S)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("YAML");
+  return QStringLiteral("Plain Text");
+}
+
+QString defaultTextCardFilename(const QString &text) {
+  return QStringLiteral("~/clipboard/snippet.%1")
+      .arg(extensionForLanguage(detectTextCardLanguage(text)));
+}
 
 TextCardTheme loadTextCardTheme() {
   const QString override =
@@ -217,21 +425,31 @@ TextCardTheme loadTextCardTheme() {
 }
 
 QSyntaxHighlighter *installTextCardHighlighter(QTextDocument *document,
-                                               const TextCardTheme &theme) {
-  return new TextCardHighlighter(document, theme);
+                                               const TextCardTheme &theme,
+                                               const QString &filename) {
+  return new TextCardHighlighter(
+      document, theme,
+      detectTextCardLanguage(document->toPlainText(), filename));
 }
 
 TextCardRender renderTextCardLayout(const QString &text,
                                     const TextCardTheme &theme, QString &error,
-                                    bool drawText, const QString &mode) {
+                                    bool drawText, const QString &mode,
+                                    const QString &filename) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
     return {};
 
+  const QString displayFilename =
+      filename.trimmed().isEmpty() ? defaultTextCardFilename(snippet)
+                                   : filename.trimmed();
+  const QString language =
+      detectTextCardLanguage(snippet, displayFilename);
+
   const int textWidth = kPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth;
   QTextDocument document;
-  prepareTextDocument(document, snippet, theme, textWidth);
+  prepareTextDocument(document, snippet, theme, textWidth, language);
   const int documentHeight =
       std::max(1, qCeil(document.documentLayout()->documentSize().height()));
   const int editorHeight = std::max(kMinimumEditorHeight, documentHeight);
@@ -268,10 +486,12 @@ TextCardRender renderTextCardLayout(const QString &text,
                          kHeaderHeight);
   painter.drawText(headerText, Qt::AlignLeft | Qt::AlignVCenter,
                    QStringLiteral("NVIM"));
+  const QRect titleRect = headerText.adjusted(58, 0, -190, 0);
   painter.setPen(theme.foreground);
-  painter.drawText(headerText.adjusted(58, 0, 0, 0),
-                   Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("~/clipboard/snippet"));
+  painter.drawText(
+      titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+      QFontMetrics(headerFont).elidedText(displayFilename, Qt::ElideMiddle,
+                                          titleRect.width()));
   painter.setPen(theme.muted);
   painter.drawText(headerText, Qt::AlignRight | Qt::AlignVCenter,
                    theme.name.toUpper());
@@ -329,9 +549,9 @@ TextCardRender renderTextCardLayout(const QString &text,
   painter.drawText(status.adjusted(modeWidth + kPowerlineAngle + 18, 0, -24,
                                    0),
                    Qt::AlignLeft | Qt::AlignVCenter,
-                   QStringLiteral("clipboard"));
+                   QFileInfo(displayFilename).fileName());
 
-  const int formatWidth = 116;
+  const int formatWidth = 170;
   const int linesWidth = 64;
   const int formatLeft = status.right() - formatWidth + 1;
   const int linesLeft = formatLeft - linesWidth;
@@ -360,12 +580,13 @@ TextCardRender renderTextCardLayout(const QString &text,
                                                  : theme.foreground);
   painter.drawText(
       QRect(formatLeft, status.top(), formatWidth, status.height()),
-      Qt::AlignCenter, QStringLiteral("UTF-8  LF"));
+      Qt::AlignCenter,
+      QStringLiteral("%1  LF").arg(language.toUpper()));
   painter.setPen(QPen(theme.outline, 2));
   painter.setBrush(Qt::NoBrush);
   painter.drawRect(panel.adjusted(1, 1, -1, -1));
   painter.end();
-  return {std::move(image), editorRect};
+  return {std::move(image), editorRect, titleRect};
 }
 
 QImage renderTextCard(const QString &text, QString &error) {

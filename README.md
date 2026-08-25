@@ -259,8 +259,13 @@ error instead of opening an empty editor.
 Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
 capture screen. Omasnap opens it in a square, Neovim-inspired JetBrains Mono
 editor using the active Omarchy theme's background, surface, outline, selection,
-foreground, and syntax colors. It starts in Normal mode; `Ctrl+Enter` renders the
-text into the card and hands it to the normal annotation editor. From there,
+foreground, and syntax colors. The filename starts from lightweight content
+detection, and its extension selects a language-specific syntax profile. Press
+`F` or click the title to rename it inline; the status line shows the basename
+and detected language. Profiles cover Shell, C/C++, JavaScript/TypeScript,
+Python, Rust, Go, JSON, YAML, Markdown, Lua, and CMake, with a plain-text
+fallback. It starts in Normal mode; `Ctrl+Enter` renders the text
+into the card and hands it to the normal annotation editor. From there,
 `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every annotation and
 canvas control remains available after rendering.
 
@@ -272,6 +277,7 @@ massaging a snippet without embedding a full editor:
 | `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal or Visual mode |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
 | `Esc` | Return from Insert or Visual to Normal mode |
+| `F` or click the title | Edit the displayed filename; Enter accepts and Esc cancels |
 | `x`, `dd`, `Shift+J` | Delete a character, delete a line, or join it with the next line |
 | `v`, `V`, then movement; `y`, `d`, `x` | Select characters or whole lines, then copy or delete them |
 | `yy` | Copy the current line |
