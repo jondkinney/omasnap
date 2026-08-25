@@ -179,6 +179,37 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
                 .arg(renderError);
     return false;
   }
+  QString precedenceError;
+  const QImage precedenceCard =
+      renderTextCardLayout(
+          QStringLiteral("const url = \"https://example.com/path\"; // done"),
+          theme, precedenceError, true, QStringLiteral("NORMAL"),
+          QStringLiteral("test.js"))
+          .image;
+  int stringPixels = 0;
+  int commentPixels = 0;
+  int flagPixels = 0;
+  for (int y = 0; y < precedenceCard.height(); ++y) {
+    for (int x = 0; x < precedenceCard.width(); ++x) {
+      const QColor pixel = precedenceCard.pixelColor(x, y);
+      if (pixel == theme.string)
+        ++stringPixels;
+      if (pixel == theme.comment)
+        ++commentPixels;
+      if (pixel == theme.flag)
+        ++flagPixels;
+    }
+  }
+  if (stringPixels < 300 || commentPixels < 50 || flagPixels != 0) {
+    error = QStringLiteral(
+        "String literals lost precedence over comment/URL rules: "
+        "string=%1 comment=%2 flag=%3 %4")
+                .arg(stringPixels)
+                .arg(commentPixels)
+                .arg(flagPixels)
+                .arg(precedenceError);
+    return false;
+  }
 
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");

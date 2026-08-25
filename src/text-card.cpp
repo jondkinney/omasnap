@@ -51,8 +51,10 @@ public:
   TextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                       const QString &language)
       : QSyntaxHighlighter(document) {
+    // The string rule claims its spans first; every later rule skips them,
+    // so a "//" or keyword inside a literal keeps the string color.
     addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)"),
-            theme.string);
+            theme.string, QFont::Normal, false, RuleScope::ClaimsStrings);
     addRule(QStringLiteral(R"(\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b)"),
             theme.number);
     addRule(QStringLiteral(R"(https?://[^\s)\]}>]+)"), theme.flag);
@@ -121,8 +123,8 @@ public:
       addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
               QFont::Normal, true);
     } else if (language == QStringLiteral("JSON")) {
-      addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"\s*(?=:))"),
-              theme.keyword);
+      addRule(QStringLiteral(R"("(?:\\.|[^"\\])*"\s*(?=:))"), theme.keyword,
+              QFont::Normal, false, RuleScope::OverStrings);
       addRule(QStringLiteral(R"(\b(?:false|null|true)\b)"), theme.keyword,
               QFont::DemiBold);
     } else if (language == QStringLiteral("YAML")) {
@@ -177,30 +179,54 @@ public:
 
 protected:
   void highlightBlock(const QString &text) override {
+    QVector<QPair<int, int>> stringSpans;
     for (const Rule &rule : rules_) {
-      QRegularExpressionMatchIterator matches = rule.pattern.globalMatch(text);
-      while (matches.hasNext()) {
-        const QRegularExpressionMatch match = matches.next();
-        setFormat(match.capturedStart(), match.capturedLength(), rule.format);
+      int offset = 0;
+      while (offset <= text.size()) {
+        const QRegularExpressionMatch match = rule.pattern.match(text, offset);
+        if (!match.hasMatch())
+          break;
+        const int start = match.capturedStart();
+        const int length = std::max(1, static_cast<int>(match.capturedLength()));
+        if (rule.scope == RuleScope::SkipsStrings) {
+          const auto blocked =
+              std::find_if(stringSpans.cbegin(), stringSpans.cend(),
+                           [&](const QPair<int, int> &span) {
+                             return start < span.second &&
+                                    start + length > span.first;
+                           });
+          if (blocked != stringSpans.cend()) {
+            offset = blocked->second;
+            continue;
+          }
+        }
+        setFormat(start, length, rule.format);
+        if (rule.scope == RuleScope::ClaimsStrings)
+          stringSpans.append({start, start + length});
         if (rule.toEnd)
           break;
+        offset = start + length;
       }
     }
   }
 
 private:
+  enum class RuleScope { SkipsStrings, ClaimsStrings, OverStrings };
+
   struct Rule {
     QRegularExpression pattern;
     QTextCharFormat format;
     bool toEnd = false;
+    RuleScope scope = RuleScope::SkipsStrings;
   };
 
   void addRule(const QString &pattern, const QColor &color,
-               QFont::Weight weight = QFont::Normal, bool toEnd = false) {
+               QFont::Weight weight = QFont::Normal, bool toEnd = false,
+               RuleScope scope = RuleScope::SkipsStrings) {
     QTextCharFormat format;
     format.setForeground(color);
     format.setFontWeight(weight);
-    rules_.push_back({QRegularExpression(pattern), format, toEnd});
+    rules_.push_back({QRegularExpression(pattern), format, toEnd, scope});
   }
 
   QVector<Rule> rules_;
