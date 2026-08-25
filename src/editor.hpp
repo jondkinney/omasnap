@@ -334,6 +334,12 @@ public:
   [[nodiscard]] bool clipboardTextCardSourceRetainedForTest() const {
     return !textCardDocumentText_.isEmpty();
   }
+  /** Current card mode string (NORMAL/INSERT/VISUAL/...). Test accessor. */
+  [[nodiscard]] QString clipboardTextCardModeForTest() const;
+  /** The log a snapshot or handoff would persist right now. Test accessor. */
+  [[nodiscard]] OperationLog workingLogForTest() const {
+    return composeWorkingLog();
+  }
   /// Text-height I-beam in annotation coordinates, or an empty rect when the
   /// Snap highlighter has no text row near the pointer. Test accessor.
   [[nodiscard]] QRectF highlighterPreviewRectForTest() const;
@@ -499,6 +505,7 @@ private:
   bool handOffLiveTextCard();
   void updateTextCardCaret();
   void applyTextCardRestoreState();
+  [[nodiscard]] OperationLog composeWorkingLog() const;
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.

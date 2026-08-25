@@ -3227,12 +3227,7 @@ QImage CaptureEditor::renderCurrentOutput() const {
                        imageShadow_, canvasBoundaryMode_);
 }
 
-void CaptureEditor::startSnapshotRender() {
-  snapshotBusy_ = true;
-  snapshotDirty_ = false;
-  const QImage source = capture_.source;
-  const QString path = snapshotPath_;
-  const QString logPath = operationLogPath(path);
+OperationLog CaptureEditor::composeWorkingLog() const {
   OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
                    pristineLogicalSize_};
   log.textCardText = clipboardTextCardEditing_
@@ -3250,6 +3245,20 @@ void CaptureEditor::startSnapshotRender() {
       clipboardTextCardEditing_ ? textCardModal_->yankText() : QString();
   log.textCardYankLinewise =
       clipboardTextCardEditing_ && textCardModal_->yankLinewise();
+  return log;
+}
+
+QString CaptureEditor::clipboardTextCardModeForTest() const {
+  return textCardModal_->mode();
+}
+
+void CaptureEditor::startSnapshotRender() {
+  snapshotBusy_ = true;
+  snapshotDirty_ = false;
+  const QImage source = capture_.source;
+  const QString path = snapshotPath_;
+  const QString logPath = operationLogPath(path);
+  OperationLog log = composeWorkingLog();
   const bool writeSource = !sourceWritten_ || !QFile::exists(path);
   snapshotWatcher_.setFuture(QtConcurrent::run(
       [source, path, logPath, log, writeSource] {

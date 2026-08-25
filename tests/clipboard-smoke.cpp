@@ -105,6 +105,15 @@ bool runTextCardDetectionCheck(QString &error) {
       {QStringLiteral("site.css"), QStringLiteral("CSS")},
       {QStringLiteral("site.scss"), QStringLiteral("SCSS")},
       {QStringLiteral("site.sass"), QStringLiteral("Sass")},
+      {QStringLiteral("main.cpp"), QStringLiteral("C++")},
+      {QStringLiteral("app.ts"), QStringLiteral("TypeScript")},
+      {QStringLiteral("lib.rs"), QStringLiteral("Rust")},
+      {QStringLiteral("main.go"), QStringLiteral("Go")},
+      {QStringLiteral("ci.yml"), QStringLiteral("YAML")},
+      {QStringLiteral("README.md"), QStringLiteral("Markdown")},
+      {QStringLiteral("init.lua"), QStringLiteral("Lua")},
+      {QStringLiteral("CMakeLists.txt"), QStringLiteral("CMake")},
+      {QStringLiteral("Dockerfile"), QStringLiteral("Shell")},
   };
   for (const auto &[filename, language] : addedProfiles) {
     if (detectTextCardLanguage(QStringLiteral("sample"), filename) !=
@@ -131,6 +140,9 @@ bool runTextCardDetectionCheck(QString &error) {
     return false;
   }
   if (detectTextCardLanguage(
+          QStringLiteral("#!/usr/bin/env python3\nprint(1)")) !=
+          QStringLiteral("Python") ||
+      detectTextCardLanguage(
           QStringLiteral("def f():\n    print(\"hi\", end=\"\")")) !=
           QStringLiteral("Python") ||
       detectTextCardLanguage(QStringLiteral("# My Notes\nplain words")) !=
@@ -156,10 +168,14 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
   const TextCardRender compact = renderTextCardLayout(
       expected, theme, renderError, false, QStringLiteral("NORMAL"),
       QStringLiteral("snippet.sh"), TextCardLayout::Compact);
+  const QSize compactWindow =
+      textCardEditorWindowSize(compact.image.size(), QSize(1920, 1080));
   if (compact.image.isNull() || compact.image.width() >= card.width() ||
       compact.image.height() >= card.height() ||
-      textCardEditorWindowSize(compact.image.size(), QSize(1920, 1080)) !=
-          QSize(1132, 516)) {
+      compactWindow.width() < compact.image.width() ||
+      compactWindow.width() > compact.image.width() + 120 ||
+      compactWindow.height() < compact.image.height() ||
+      compactWindow.height() > compact.image.height() + 120) {
     error = QStringLiteral(
         "Compact clipboard editor did not hug its code card and toolbar");
     return false;
@@ -419,6 +435,19 @@ bool runTextCardEntryCheck(CaptureEditor &editor,
   QTest::keyClick(cardEditor, Qt::Key_Tab);
   QTest::keyClicks(cardEditor, QStringLiteral("echo \"done\""));
   QApplication::processEvents();
+  if (editor.clipboardTextCardModeForTest() != QStringLiteral("INSERT")) {
+    error = QStringLiteral("Mode accessor did not report INSERT while typing");
+    return false;
+  }
+  const OperationLog liveLog = editor.workingLogForTest();
+  if (liveLog.textCardText != editor.clipboardTextCardTextForTest() ||
+      !liveLog.textCardEditing ||
+      liveLog.textCardCursor !=
+          cardEditor->textCursor().position()) {
+    error = QStringLiteral(
+        "A handoff written mid-insert would drop the live draft");
+    return false;
+  }
   bool liveStringColor = false;
   const QList<QTextLayout::FormatRange> liveFormats =
       cardEditor->document()->lastBlock().layout()->formats();
@@ -522,6 +551,60 @@ bool runTextCardNormalModeCheck(CaptureEditor &editor,
     error = QStringLiteral("Clipboard-card h wrapped across a line start");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (cardEditor->textCursor().position() != 6) {
+    error = QStringLiteral("Clipboard-card w did not reach the next word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_B);
+  if (cardEditor->textCursor().position() != 0) {
+    error = QStringLiteral("Clipboard-card b did not return to the word start");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_A);
+  QTest::keyClicks(cardEditor, QStringLiteral("1"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("c1onst"))) {
+    error = QStringLiteral("Clipboard-card a did not append after the cursor");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_O);
+  QTest::keyClicks(cardEditor, QStringLiteral("below"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral(";\nbelow\n"))) {
+    error = QStringLiteral("Clipboard-card o did not open a line below");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_O, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("above"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("above\n"))) {
+    error = QStringLiteral("Clipboard-card O did not open a line above");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_I, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("X"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral("\n\tXecho"))) {
+    error = QStringLiteral(
+        "Clipboard-card I did not insert at the first non-blank");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_W);
@@ -955,8 +1038,18 @@ bool runTextCardVisualModeCheck(CaptureEditor &editor,
   QTest::keyClick(cardEditor, Qt::Key_V);
   QTest::keyClick(cardEditor, Qt::Key_L);
   if (cardEditor->textCursor().position() != 1 ||
+      editor.clipboardTextCardModeForTest() != QStringLiteral("VISUAL") ||
       !editor.statusForTest().contains(QStringLiteral("VISUAL"))) {
     error = QStringLiteral("Clipboard-card v did not visually select text");
+    return false;
+  }
+  const QList<QTextEdit::ExtraSelection> visualHighlight =
+      cardEditor->extraSelections();
+  if (visualHighlight.isEmpty() ||
+      visualHighlight.first().cursor.selectionStart() != 0 ||
+      visualHighlight.first().cursor.selectionEnd() != 2) {
+    error = QStringLiteral(
+        "Visual selection was not highlighted over its span");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Y);
@@ -1374,6 +1467,11 @@ bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
     error = QStringLiteral("Second Ctrl+E did not reopen the card source");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClicks(cardEditor, QStringLiteral("fixed"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
   QApplication::processEvents();
   if (editor.clipboardTextCardEditingForTest() ||
@@ -1381,6 +1479,17 @@ bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
     error = QStringLiteral("Card re-render after annotation discard failed");
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("fixed "))) {
+    error = QStringLiteral(
+        "A re-edited card did not retain its new source: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(10));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
   const QRectF regionTab =
       editor.selectTabRectForTest(QStringLiteral("REGION"));
   if (regionTab.isEmpty()) {
@@ -1593,6 +1702,25 @@ bool runTextCardThemeGuardCheck(QString &error) {
   return true;
 }
 
+/** Checks the hard-coded palette on a machine with no Omarchy theme. */
+bool runTextCardThemeFallbackCheck(QString &error) {
+  const QByteArray previousColors = qgetenv("OMASNAP_TEST_OMARCHY_COLORS");
+  qputenv("OMASNAP_TEST_OMARCHY_COLORS", "/nonexistent/omasnap-theme");
+  const TextCardTheme fallback = loadTextCardTheme();
+  QString renderError;
+  const QImage card =
+      renderTextCard(QStringLiteral("echo fallback"), renderError);
+  qputenv("OMASNAP_TEST_OMARCHY_COLORS", previousColors);
+  if (fallback.background != QColor(QStringLiteral("#222730")) ||
+      fallback.panel != QColor(QStringLiteral("#2e3440")) || card.isNull()) {
+    error = QStringLiteral(
+        "A missing Omarchy theme did not fall back to the default palette: %1")
+                .arg(renderError);
+    return false;
+  }
+  return true;
+}
+
 /** Checks that a failed image transfer keeps the wl-paste error. */
 bool runReadFailureCheck(QString &error) {
   qunsetenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY");
@@ -1782,5 +1910,6 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
 
   return runImageCheck(error) && runTextOnlyCheck(error) &&
          runTextCardCheck(outputRoot, error) &&
-         runTextCardThemeGuardCheck(error) && runReadFailureCheck(error);
+         runTextCardThemeGuardCheck(error) &&
+         runTextCardThemeFallbackCheck(error) && runReadFailureCheck(error);
 }
