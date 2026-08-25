@@ -19,6 +19,38 @@ int characterClass(QChar character) {
   return 2;
 }
 
+/// UTF-16 units one full character occupies at this position.
+int characterWidth(const QString &text, int position) {
+  return position + 1 < text.size() && text.at(position).isHighSurrogate() &&
+                 text.at(position + 1).isLowSurrogate()
+             ? 2
+             : 1;
+}
+
+int snapToCharacterStart(const QString &text, int position) {
+  if (position > 0 && position < text.size() &&
+      text.at(position).isLowSurrogate() &&
+      text.at(position - 1).isHighSurrogate())
+    --position;
+  return position;
+}
+
+/// characterClass over a full character, pairing surrogates first.
+int fullCharacterClass(const QString &text, int position) {
+  const QChar unit = text.at(position);
+  if (unit.isHighSurrogate() && position + 1 < text.size() &&
+      text.at(position + 1).isLowSurrogate()) {
+    const char32_t codepoint =
+        QChar::surrogateToUcs4(unit, text.at(position + 1));
+    if (QChar::isLetterOrNumber(codepoint))
+      return 0;
+    if (QChar::isSpace(codepoint))
+      return 1;
+    return 2;
+  }
+  return characterClass(unit);
+}
+
 QString normalModeStatus() {
   return QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
                         "v selects · F filename · Ctrl+W window · "
@@ -222,10 +254,14 @@ void TextCardEditor::updateVisualSelection() {
     return;
   }
 
-  visualAnchor_ = std::clamp(visualAnchor_, 0, textLength - 1);
-  visualPosition_ = std::clamp(visualPosition_, 0, textLength - 1);
+  const QString text = edit_->toPlainText();
+  visualAnchor_ = snapToCharacterStart(
+      text, std::clamp(visualAnchor_, 0, textLength - 1));
+  visualPosition_ = snapToCharacterStart(
+      text, std::clamp(visualPosition_, 0, textLength - 1));
   visualSelectionStart_ = std::min(visualAnchor_, visualPosition_);
-  visualSelectionEnd_ = std::max(visualAnchor_, visualPosition_) + 1;
+  const int activeEnd = std::max(visualAnchor_, visualPosition_);
+  visualSelectionEnd_ = activeEnd + characterWidth(text, activeEnd);
   if (visualLineMode_) {
     const QTextBlock anchorBlock =
         edit_->document()->findBlock(visualAnchor_);
@@ -444,23 +480,28 @@ int TextCardEditor::wordForwardStop(const QTextCursor &cursor) const {
   return probe.position();
 }
 
+// Returns the first UTF-16 unit of the word's final character; pair-aware
+// so the cursor and deletion ranges never land between surrogate halves.
 int TextCardEditor::wordEnd(int cursorPosition) const {
   const QString text = edit_->toPlainText();
   if (text.isEmpty())
     return 0;
 
-  const int original =
-      std::clamp(cursorPosition, 0, static_cast<int>(text.size()) - 1);
+  const int original = snapToCharacterStart(
+      text, std::clamp(cursorPosition, 0, static_cast<int>(text.size()) - 1));
   int position = original;
-  int selectedClass = characterClass(text.at(position));
+  int selectedClass = fullCharacterClass(text, position);
   if (selectedClass != 1) {
     int currentEnd = position;
-    while (currentEnd + 1 < text.size() &&
-           characterClass(text.at(currentEnd + 1)) == selectedClass)
-      ++currentEnd;
+    int probe = position + characterWidth(text, position);
+    while (probe < text.size() &&
+           fullCharacterClass(text, probe) == selectedClass) {
+      currentEnd = probe;
+      probe += characterWidth(text, probe);
+    }
     if (currentEnd > position)
       return currentEnd;
-    ++position;
+    position += characterWidth(text, position);
   }
 
   while (position < text.size() && text.at(position).isSpace())
@@ -468,11 +509,15 @@ int TextCardEditor::wordEnd(int cursorPosition) const {
   if (position >= text.size())
     return original;
 
-  selectedClass = characterClass(text.at(position));
-  while (position + 1 < text.size() &&
-         characterClass(text.at(position + 1)) == selectedClass)
-    ++position;
-  return position;
+  selectedClass = fullCharacterClass(text, position);
+  int currentEnd = position;
+  int probe = position + characterWidth(text, position);
+  while (probe < text.size() &&
+         fullCharacterClass(text, probe) == selectedClass) {
+    currentEnd = probe;
+    probe += characterWidth(text, probe);
+  }
+  return currentEnd;
 }
 
 std::optional<QPair<int, int>> TextCardEditor::wordRange(
@@ -487,6 +532,7 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
                             static_cast<int>(line.size()));
   if (position == line.size())
     --position;
+  position = snapToCharacterStart(line, position);
   const int selectedClass = characterClass(line.at(position));
   int first = position;
   int last = position + 1;
@@ -540,9 +586,11 @@ bool TextCardEditor::applyEndOperator(bool change) {
   const QString source = edit_->toPlainText();
   if (source.isEmpty())
     return false;
-  const int first = std::clamp(edit_->textCursor().position(), 0,
-                               static_cast<int>(source.size()) - 1);
-  deleteRange(first, wordEnd(first) + 1, change,
+  const int first = snapToCharacterStart(
+      source, std::clamp(edit_->textCursor().position(), 0,
+                         static_cast<int>(source.size()) - 1));
+  const int endIndex = wordEnd(first);
+  deleteRange(first, endIndex + characterWidth(source, endIndex), change,
               QStringLiteral("deleted through word end"));
   return true;
 }
@@ -877,10 +925,13 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
       return true;
     }
     if (command == QStringLiteral("e")) {
-      const int first = std::clamp(
-          cursor.position(), 0,
-          std::max(0, static_cast<int>(edit_->toPlainText().size()) - 1));
-      yank_ = edit_->toPlainText().mid(first, wordEnd(first) + 1 - first);
+      const QString source = edit_->toPlainText();
+      const int first = snapToCharacterStart(
+          source, std::clamp(cursor.position(), 0,
+                             std::max(0, static_cast<int>(source.size()) - 1)));
+      const int endIndex = wordEnd(first);
+      yank_ = source.mid(first,
+                         endIndex + characterWidth(source, endIndex) - first);
       yankLinewise_ = false;
       emit statusRequested(QStringLiteral(
           "Text card · NORMAL · yanked through word end · p puts it back"));

@@ -1012,6 +1012,31 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  cardEditor->setPlainText(QStringLiteral("🙂🙃 hi"));
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  if (cardEditor->textCursor().position() != 2) {
+    error = QStringLiteral(
+        "Clipboard-card e split a surrogate pair: cursor=%1")
+                .arg(cardEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_X);
+  if (editor.clipboardTextCardTextForTest() != QStringLiteral("🙂 hi")) {
+    error = QStringLiteral("Clipboard-card x left half an emoji behind");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  if (editor.clipboardTextCardTextForTest() != QStringLiteral(" hi")) {
+    error = QStringLiteral("Clipboard-card de split a surrogate pair: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  cardEditor->setPlainText(edited);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_V);
