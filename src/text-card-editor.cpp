@@ -9,6 +9,31 @@
 
 #include <algorithm>
 
+namespace {
+/// Vim word classes: 0 keyword, 1 whitespace, 2 punctuation run.
+int characterClass(QChar character) {
+  if (character.isLetterOrNumber() || character == QLatin1Char('_'))
+    return 0;
+  if (character.isSpace())
+    return 1;
+  return 2;
+}
+
+QString normalModeStatus() {
+  return QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
+                        "v selects · F filename · Ctrl+W window · "
+                        "Ctrl+Enter renders · q exits");
+}
+
+QString visualModeStatus(bool linewise) {
+  return linewise
+             ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
+                              "copies · x/d delete · c changes · Esc Normal")
+             : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
+                              "· x/d delete · c changes · Esc Normal");
+}
+} // namespace
+
 TextCardEditor::TextCardEditor(QPlainTextEdit *edit, QObject *parent)
     : QObject(parent), edit_(edit) {}
 
@@ -105,9 +130,7 @@ void TextCardEditor::setInsertMode(bool insertMode) {
   emit statusRequested(
       insertMode ? QStringLiteral("Text card · INSERT · Esc Normal · "
                                   "Ctrl+W window · Ctrl+Enter renders")
-                 : QStringLiteral("Text card · NORMAL · hjkl move · i/a/o "
-                                  "insert · F filename · Ctrl+W window · "
-                                  "Ctrl+Enter renders · q exits"));
+                 : normalModeStatus());
   emit modeChanged();
 }
 
@@ -131,11 +154,7 @@ void TextCardEditor::startVisualMode(bool linewise) {
   visualAnchor_ = position;
   visualPosition_ = position;
   updateVisualSelection();
-  emit statusRequested(
-      linewise ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                "copies · x/d delete · c changes · Esc Normal")
-               : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
-                                "· x/d delete · c changes · Esc Normal"));
+  emit statusRequested(visualModeStatus(linewise));
   emit modeChanged();
 }
 
@@ -196,10 +215,7 @@ void TextCardEditor::leaveVisualMode(int cursorPosition) {
   QTextCursor cursor(edit_->document());
   cursor.setPosition(std::clamp(cursorPosition, 0, textLength));
   edit_->setTextCursor(cursor);
-  emit statusRequested(
-      QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
-                     "v selects · F filename · Ctrl+W window · "
-                     "Ctrl+Enter renders · q exits"));
+  emit statusRequested(normalModeStatus());
   emit modeChanged();
 }
 
@@ -271,12 +287,7 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
     } else {
       visualLineMode_ = shifted;
       updateVisualSelection();
-      emit statusRequested(
-          shifted
-              ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                               "copies · x/d delete · c changes · Esc Normal")
-              : QStringLiteral("Text card · VISUAL · hjkl move · y "
-                               "copies · x/d delete · c changes · Esc Normal"));
+      emit statusRequested(visualModeStatus(shifted));
       emit modeChanged();
     }
     return true;
@@ -320,27 +331,7 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
   } else if (command == QStringLiteral("g")) {
     pendingCommand_ = QStringLiteral("g");
     return true;
-  } else if (command == QStringLiteral("h")) {
-    motion.movePosition(QTextCursor::PreviousCharacter);
-  } else if (command == QStringLiteral("j")) {
-    motion.movePosition(QTextCursor::Down);
-  } else if (command == QStringLiteral("k")) {
-    motion.movePosition(QTextCursor::Up);
-  } else if (command == QStringLiteral("l")) {
-    motion.movePosition(QTextCursor::NextCharacter);
-  } else if (command == QStringLiteral("0")) {
-    motion.movePosition(QTextCursor::StartOfBlock);
-  } else if (command == QStringLiteral("$")) {
-    motion.movePosition(QTextCursor::EndOfBlock);
-    if (!motion.block().text().isEmpty())
-      motion.movePosition(QTextCursor::PreviousCharacter);
-  } else if (command == QStringLiteral("w")) {
-    motion.movePosition(QTextCursor::NextWord);
-  } else if (command == QStringLiteral("b")) {
-    motion.movePosition(QTextCursor::PreviousWord);
-  } else if (command == QStringLiteral("e")) {
-    motion.setPosition(wordEnd(visualPosition_));
-  } else {
+  } else if (!applyMotion(motion, command, true)) {
     pendingCommand_.clear();
     return true;
   }
@@ -387,13 +378,6 @@ int TextCardEditor::wordEnd(int cursorPosition) const {
   if (text.isEmpty())
     return 0;
 
-  const auto characterClass = [](QChar character) {
-    if (character.isLetterOrNumber() || character == QLatin1Char('_'))
-      return 0;
-    if (character.isSpace())
-      return 1;
-    return 2;
-  };
   const int original =
       std::clamp(cursorPosition, 0, static_cast<int>(text.size()) - 1);
   int position = original;
@@ -432,13 +416,6 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
                             static_cast<int>(line.size()));
   if (position == line.size())
     --position;
-  const auto characterClass = [](QChar character) {
-    if (character.isLetterOrNumber() || character == QLatin1Char('_'))
-      return 0;
-    if (character.isSpace())
-      return 1;
-    return 2;
-  };
   const int selectedClass = characterClass(line.at(position));
   int first = position;
   int last = position + 1;
@@ -464,14 +441,9 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
   return QPair{block.position() + first, block.position() + last};
 }
 
-bool TextCardEditor::applyEndOperator(bool change) {
-  const QString source = edit_->toPlainText();
-  if (source.isEmpty())
-    return false;
-  const int first = std::clamp(edit_->textCursor().position(), 0,
-                               static_cast<int>(source.size()) - 1);
-  const int last = wordEnd(first) + 1;
-  yank_ = source.mid(first, last - first);
+void TextCardEditor::deleteRange(int first, int last, bool change,
+                                 const QString &deleted) {
+  yank_ = edit_->toPlainText().mid(first, last - first);
   yankLinewise_ = false;
   if (change)
     beginInsertEdit(first);
@@ -487,10 +459,20 @@ bool TextCardEditor::applyEndOperator(bool change) {
     setInsertMode(true);
   else {
     recordUndoCursor(first);
-    emit statusRequested(
-        QStringLiteral("Text card · NORMAL · deleted through word "
-                       "end · p puts it back · u undoes"));
+    emit statusRequested(QStringLiteral("Text card · NORMAL · %1 · "
+                                        "p puts it back · u undoes")
+                             .arg(deleted));
   }
+}
+
+bool TextCardEditor::applyEndOperator(bool change) {
+  const QString source = edit_->toPlainText();
+  if (source.isEmpty())
+    return false;
+  const int first = std::clamp(edit_->textCursor().position(), 0,
+                               static_cast<int>(source.size()) - 1);
+  deleteRange(first, wordEnd(first) + 1, change,
+              QStringLiteral("deleted through word end"));
   return true;
 }
 
@@ -499,29 +481,8 @@ bool TextCardEditor::applyWordOperator(bool change, bool around,
   const auto range = wordRange(around, fromCursor);
   if (!range)
     return false;
-  const int documentFirst = range->first;
-  const int documentLast = range->second;
-  yank_ = edit_->toPlainText().mid(documentFirst,
-                                   documentLast - documentFirst);
-  yankLinewise_ = false;
-  if (change)
-    beginInsertEdit(documentFirst);
-  QTextCursor edit(edit_->document());
-  edit.beginEditBlock();
-  edit.setPosition(documentFirst);
-  edit.setPosition(documentLast, QTextCursor::KeepAnchor);
-  edit.removeSelectedText();
-  edit.endEditBlock();
-  edit.setPosition(documentFirst);
-  edit_->setTextCursor(edit);
-  if (change)
-    setInsertMode(true);
-  else {
-    recordUndoCursor(documentFirst);
-    emit statusRequested(
-        QStringLiteral("Text card · NORMAL · word deleted · "
-                       "p puts it back · u undoes"));
-  }
+  deleteRange(range->first, range->second, change,
+              QStringLiteral("word deleted"));
   return true;
 }
 
@@ -579,6 +540,34 @@ void TextCardEditor::put(bool before) {
                                  : QStringLiteral("after")));
 }
 
+bool TextCardEditor::applyMotion(QTextCursor &cursor, const QString &command,
+                                 bool visual) const {
+  if (command == QStringLiteral("h"))
+    cursor.movePosition(QTextCursor::PreviousCharacter);
+  else if (command == QStringLiteral("j"))
+    cursor.movePosition(QTextCursor::Down);
+  else if (command == QStringLiteral("k"))
+    cursor.movePosition(QTextCursor::Up);
+  else if (command == QStringLiteral("l"))
+    cursor.movePosition(QTextCursor::NextCharacter);
+  else if (command == QStringLiteral("0"))
+    cursor.movePosition(QTextCursor::StartOfBlock);
+  else if (command == QStringLiteral("$")) {
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    // A visual block cursor sits ON the last character, Vim-style.
+    if (visual && !cursor.block().text().isEmpty())
+      cursor.movePosition(QTextCursor::PreviousCharacter);
+  } else if (command == QStringLiteral("w"))
+    cursor.movePosition(QTextCursor::NextWord);
+  else if (command == QStringLiteral("b"))
+    cursor.movePosition(QTextCursor::PreviousWord);
+  else if (command == QStringLiteral("e"))
+    cursor.setPosition(wordEnd(cursor.position()));
+  else
+    return false;
+  return true;
+}
+
 bool TextCardEditor::handleKey(QKeyEvent *key) {
   if (visualAnchor_ >= 0)
     return handleVisualKey(key);
@@ -610,18 +599,8 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
   if (shifted && key->key() == Qt::Key_C) {
     pendingCommand_.clear();
     const int first = cursor.position();
-    beginInsertEdit(first);
-    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
-    yank_ = cursor.selectedText();
-    yankLinewise_ = false;
-    if (cursor.hasSelection()) {
-      cursor.beginEditBlock();
-      cursor.removeSelectedText();
-      cursor.endEditBlock();
-    }
-    cursor.setPosition(first);
-    edit_->setTextCursor(cursor);
-    setInsertMode(true);
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    deleteRange(first, cursor.position(), true, {});
     return true;
   }
   if (key->key() == Qt::Key_P) {
@@ -765,25 +744,11 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     startVisualMode(shifted);
     return true;
   }
-  if (command == QStringLiteral("h"))
-    cursor.movePosition(QTextCursor::PreviousCharacter);
-  else if (command == QStringLiteral("j"))
-    cursor.movePosition(QTextCursor::Down);
-  else if (command == QStringLiteral("k"))
-    cursor.movePosition(QTextCursor::Up);
-  else if (command == QStringLiteral("l"))
-    cursor.movePosition(QTextCursor::NextCharacter);
-  else if (command == QStringLiteral("0"))
-    cursor.movePosition(QTextCursor::StartOfBlock);
-  else if (command == QStringLiteral("$"))
-    cursor.movePosition(QTextCursor::EndOfBlock);
-  else if (command == QStringLiteral("w"))
-    cursor.movePosition(QTextCursor::NextWord);
-  else if (command == QStringLiteral("b"))
-    cursor.movePosition(QTextCursor::PreviousWord);
-  else if (command == QStringLiteral("e"))
-    cursor.setPosition(wordEnd(cursor.position()));
-  else if (command == QStringLiteral("x")) {
+  if (applyMotion(cursor, command, false)) {
+    edit_->setTextCursor(cursor);
+    return true;
+  }
+  if (command == QStringLiteral("x")) {
     const int beforeLength = static_cast<int>(edit_->toPlainText().size());
     const int first = cursor.position();
     cursor.beginEditBlock();

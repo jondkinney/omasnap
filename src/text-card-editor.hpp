@@ -54,6 +54,9 @@ private:
   [[nodiscard]] int wordEnd(int cursorPosition) const;
   [[nodiscard]] std::optional<QPair<int, int>>
   wordRange(bool around, bool fromCursor = false) const;
+  [[nodiscard]] bool applyMotion(QTextCursor &cursor, const QString &command,
+                                 bool visual) const;
+  void deleteRange(int first, int last, bool change, const QString &deleted);
   [[nodiscard]] bool applyEndOperator(bool change);
   [[nodiscard]] bool applyWordOperator(bool change, bool around,
                                        bool fromCursor = false);
