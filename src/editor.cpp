@@ -6255,6 +6255,30 @@ void CaptureEditor::reinstallClipboardTextCardHighlighter() {
   textCardHighlighterUpdating_ = false;
 }
 
+// An in-process resize leaves a floating window where it grew, with its
+// bottom past the screen for a tall card; the compositor applies the size
+// and re-centers it. The launch path in main() does the same settling.
+void CaptureEditor::settleFloatingWindow(const QSize &size) {
+  if (!windowedPresentation_ || suppressSnapshots_)
+    return;
+  if (!qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE"))
+    return;
+  const QString selector = QStringLiteral("window = \"pid:%1\"")
+                               .arg(QCoreApplication::applicationPid());
+  QProcess::execute(
+      QStringLiteral("hyprctl"),
+      {QStringLiteral("dispatch"),
+       QStringLiteral(
+           "hl.dsp.window.resize({ x = %1, y = %2, relative = false, %3 })")
+           .arg(size.width())
+           .arg(size.height())
+           .arg(selector)});
+  QProcess::execute(
+      QStringLiteral("hyprctl"),
+      {QStringLiteral("dispatch"),
+       QStringLiteral("hl.dsp.window.center({ %1 })").arg(selector)});
+}
+
 void CaptureEditor::finishClipboardTextCard() {
   if (!clipboardTextCardEditing_)
     return;
@@ -6286,9 +6310,12 @@ void CaptureEditor::finishClipboardTextCard() {
                            "normally · Ctrl+C copies · Enter copies + saves"));
   scheduleSnapshot();
   updatePointerCursor();
-  if (windowedPresentation_)
-    resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
-                                      : QSize()));
+  if (windowedPresentation_) {
+    const QSize natural = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    resize(natural);
+    settleFloatingWindow(natural);
+  }
   update();
 }
 

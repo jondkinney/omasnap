@@ -503,6 +503,7 @@ private:
   void resetClipboardTextCardEditor(bool clearDocument = true);
   void adoptTextCardSurface(QImage image);
   bool handOffLiveTextCard();
+  void settleFloatingWindow(const QSize &size);
   void updateTextCardCaret();
   void applyTextCardRestoreState();
   [[nodiscard]] qreal textCardIdealRatio() const;

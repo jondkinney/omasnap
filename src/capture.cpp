@@ -1828,8 +1828,8 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
                          ? QSize(1728, 1080)
                          : QSize(qRound(available.width() * 0.9),
                                  qRound(available.height() * 0.9));
-  if (size.width() > room.width() || size.height() > room.height())
-    size.scale(room, Qt::KeepAspectRatio);
+  size = QSize(std::min(size.width(), room.width()),
+               std::min(size.height(), room.height()));
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
 }
 
