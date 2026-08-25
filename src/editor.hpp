@@ -266,9 +266,9 @@ public:
   /// The layer surface this editor lives on. The scroll state toggles its
   /// keyboard interactivity and input mask while the page underneath is live.
   /** The editor runs as a normal compositor window, not the overlay. */
-  void setWindowedPresentation(bool windowed) {
-    windowedPresentation_ = windowed;
-  }
+  void setWindowedPresentation(bool windowed);
+  /** Natural floating size for either a capture or the compact snippet UI. */
+  [[nodiscard]] QSize naturalWindowSize(const QSize &available) const;
   /** A windowed editor's backdrop: solid, or the overlay's see-through
    *  dim. Solid also drops the translucent surface: an alpha window shows
    *  the desktop through any repaint gap while resizing or zooming. */
@@ -316,6 +316,7 @@ public:
   [[nodiscard]] bool clipboardTextCardEditingForTest() const {
     return clipboardTextCardEditing_;
   }
+  [[nodiscard]] QRectF textCardDoneButtonRectForTest() const;
   /** Current unflattened clipboard-card source. */
   [[nodiscard]] QString clipboardTextCardTextForTest() const {
     return textCardEditor_ ? textCardEditor_->toPlainText() : QString();
@@ -439,6 +440,7 @@ private:
   [[nodiscard]] int windowAt(const QPointF &position) const;
   [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
+  [[nodiscard]] QVector<ToolbarButton> textCardToolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
   [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
   [[nodiscard]] QPointF
@@ -564,6 +566,7 @@ private:
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
   void paintClipboardTextCardEditing(QPainter &painter);
+  void paintClipboardTextCardToolbar(QPainter &painter);
   void paintSelect(QPainter &painter);
   void refreshBackdropCache();
   void refreshComposedCapture();
@@ -782,6 +785,7 @@ private:
   QString textCardDocumentText_;
   QString textCardDocumentFilename_;
   bool clipboardTextCardEditing_ = false;
+  bool textCardRestoreEditing_ = false;
   bool textCardInsertMode_ = false;
   bool textCardVisualLineMode_ = false;
   int textCardVisualAnchor_ = -1;

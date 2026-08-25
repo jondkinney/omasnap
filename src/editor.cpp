@@ -678,7 +678,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                              QWidget *parent)
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
-  const bool reopenTextCard =
+  textCardRestoreEditing_ =
       log.textCardEditing && !log.textCardText.isEmpty();
   textCardDocumentText_ = log.textCardText;
   textCardDocumentFilename_ = log.textCardFilename;
@@ -1011,8 +1011,14 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   if (mode != CaptureMode::File && quickOutputMode_ == QuickOutputMode::None)
     loadRecents();
   updatePointerCursor();
-  if (reopenTextCard)
-    QTimer::singleShot(0, this, [this] { reopenClipboardTextCard(); });
+  if (textCardRestoreEditing_) {
+    QTimer::singleShot(0, this, [this] {
+      if (!textCardRestoreEditing_)
+        return;
+      textCardRestoreEditing_ = false;
+      reopenClipboardTextCard();
+    });
+  }
 }
 
 CaptureEditor::~CaptureEditor() {
@@ -1029,6 +1035,32 @@ CaptureEditor::~CaptureEditor() {
   };
   removeWorking(snapshotPath_);
   removeWorking(workingLogPath());
+}
+
+void CaptureEditor::setWindowedPresentation(bool windowed) {
+  windowedPresentation_ = windowed;
+  // A text-card handoff reaches main as an image plus retained source. Restore
+  // it now, after the destination surface role is known, so a normal window
+  // can render the compact draft before main measures its natural size.
+  if (textCardRestoreEditing_) {
+    textCardRestoreEditing_ = false;
+    reopenClipboardTextCard();
+  } else if (clipboardTextCardEditing_) {
+    updateClipboardTextCardPreview();
+  }
+}
+
+QSize CaptureEditor::naturalWindowSize(const QSize &available) const {
+  const QSizeF selectionSize = currentSelection().size();
+  const QSize hugged = selectionSize.isEmpty() ? capture_.previewSize
+                                                : selectionSize.toSize();
+  if (clipboardTextCardEditing_)
+    return textCardEditorWindowSize(hugged, available);
+  const int legendHeight =
+      hotkeyLegendAnchoredSize(editorHotkeyEntries(),
+                               std::max(392, hugged.width() + 100))
+          .height();
+  return editorWindowSize(hugged, available, legendHeight);
 }
 
 bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
@@ -2796,6 +2828,23 @@ qreal CaptureEditor::contentBandTop() const {
 QRectF CaptureEditor::baseImageRect() const {
   if (selection_.isEmpty() || canvasRect_.isEmpty())
     return {};
+  if (clipboardTextCardEditing_ && windowedPresentation_) {
+    // The live snippet has its own two-button toolbar and a compact source;
+    // it does not reserve the annotation editor's guide and tool bands.
+    constexpr qreal side = 24.0;
+    constexpr qreal top = 64.0;
+    constexpr qreal bottom = 24.0;
+    const QRectF available(
+        side, top, std::max<qreal>(1, width() - 2 * side),
+        std::max<qreal>(1, height() - top - bottom));
+    const qreal scale =
+        std::min<qreal>({1.0, available.width() / canvasRect_.width(),
+                         available.height() / canvasRect_.height()});
+    const QSizeF shown = canvasRect_.size() * scale;
+    return {available.center().x() - shown.width() / 2.0,
+            available.center().y() - shown.height() / 2.0, shown.width(),
+            shown.height()};
+  }
   // A windowed editor stacks the key guide above the toolbar, so its top
   // band is as tall as the guide actually is at this width, plus the
   // toolbar, the row the color dropdown and its popover peers hang into,
@@ -3185,6 +3234,38 @@ QVector<QPair<QString, QString>> editorHotkeyEntries() {
        {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
        {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
        {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}};
+}
+
+QVector<CaptureEditor::ToolbarButton>
+CaptureEditor::textCardToolbarButtons() const {
+  constexpr qreal height = 36.0;
+  constexpr qreal gap = 8.0;
+  constexpr qreal presentationWidth = 152.0;
+  constexpr qreal doneWidth = 210.0;
+  const qreal total = presentationWidth + gap + doneWidth;
+  const qreal x = (width() - total) / 2.0;
+  constexpr qreal y = 14.0;
+  return {{{x, y, presentationWidth, height},
+           QStringLiteral("text-card-presentation"),
+           windowedPresentation_ ? QStringLiteral("OVERLAY  Ctrl+W")
+                                 : QStringLiteral("WINDOW  Ctrl+W"),
+           windowedPresentation_
+               ? QStringLiteral("Return the live snippet to the overlay")
+               : QStringLiteral("Edit the live snippet in a floating window"),
+           {}},
+          {{x + presentationWidth + gap, y, doneWidth, height},
+           QStringLiteral("text-card-done"),
+           QStringLiteral("DONE → OMASNAP  Ctrl+Enter"),
+           QStringLiteral("Render the snippet and open annotation tools"),
+           {}}};
+}
+
+QRectF CaptureEditor::textCardDoneButtonRectForTest() const {
+  for (const ToolbarButton &button : textCardToolbarButtons()) {
+    if (button.action == QStringLiteral("text-card-done"))
+      return button.rect;
+  }
+  return {};
 }
 
 QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
@@ -4971,6 +5052,8 @@ void CaptureEditor::leaveEvent(QEvent *event) {
 void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
   if (clipboardTextCardEditing_) {
     cursor_ = event->position();
+    updatePointerCursor();
+    update();
     return;
   }
   if (panning_) {
@@ -5309,6 +5392,21 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (busy_ || capturePending_)
     return;
   if (clipboardTextCardEditing_) {
+    cursor_ = event->position();
+    if (event->button() == Qt::LeftButton) {
+      for (const ToolbarButton &button : textCardToolbarButtons()) {
+        if (!button.rect.contains(cursor_))
+          continue;
+        if (textCardFilenameEditor_->isVisible())
+          endClipboardTextCardFilenameEdit(true);
+        if (button.action == QStringLiteral("text-card-done"))
+          finishClipboardTextCard();
+        else
+          handOffEditor(!windowedPresentation_);
+        event->accept();
+        return;
+      }
+    }
     if (event->button() == Qt::LeftButton &&
         textCardFilenameEditor_->geometry().contains(
             event->position().toPoint())) {
@@ -6157,6 +6255,16 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
 
 void CaptureEditor::updatePointerCursor() {
   highlighterPreview_.reset();
+  if (clipboardTextCardEditing_) {
+    for (const ToolbarButton &button : textCardToolbarButtons()) {
+      if (button.rect.contains(cursor_)) {
+        setCursor(Qt::PointingHandCursor);
+        return;
+      }
+    }
+    setCursor(Qt::ArrowCursor);
+    return;
+  }
   if (phase_ == Phase::Select) {
     setCursor(windowMode_ || selectTabAt(cursor_) >= 0 ||
                       (recentsOpen_ && recentAt(cursor_) >= 0)
@@ -6432,7 +6540,8 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
                           : filename;
   TextCardRender card = renderTextCardLayout(
       text, textCardTheme_, error, false, QStringLiteral("NORMAL"),
-      textCardFilename_);
+      textCardFilename_, windowedPresentation_ ? TextCardLayout::Compact
+                                               : TextCardLayout::Share);
   if (card.image.isNull()) {
     setStatus(error.isEmpty() ? QStringLiteral("Could not render text card")
                               : error);
@@ -6493,6 +6602,9 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardEditor_->raise();
   textCardEditor_->setFocus(Qt::ShortcutFocusReason);
   updateClipboardTextCardEditorGeometry();
+  if (windowedPresentation_)
+    resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
+                                      : QSize()));
   update();
 }
 
@@ -6507,7 +6619,8 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   QString error;
   TextCardRender frame = renderTextCardLayout(
       previewText, textCardTheme_, error, false, clipboardTextCardMode(),
-      textCardFilename_);
+      textCardFilename_, windowedPresentation_ ? TextCardLayout::Compact
+                                               : TextCardLayout::Share);
   if (frame.image.isNull()) {
     setStatus(error);
     return;
@@ -6643,6 +6756,9 @@ void CaptureEditor::finishClipboardTextCard() {
                            "normally · Ctrl+C copies · Enter copies + saves"));
   scheduleSnapshot();
   updatePointerCursor();
+  if (windowedPresentation_)
+    resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
+                                      : QSize()));
   update();
 }
 
@@ -7177,7 +7293,30 @@ void CaptureEditor::paintClipboardTextCardEditing(QPainter &painter) {
   const QRectF image = sourceFrameWidgetRect();
   if (!image.isEmpty())
     painter.drawImage(image, capture_.source);
-  drawStatusPill(painter, rect(), status_);
+  paintClipboardTextCardToolbar(painter);
+  if (!windowedPresentation_)
+    drawStatusPill(painter, rect(), status_);
+}
+
+void CaptureEditor::paintClipboardTextCardToolbar(QPainter &painter) {
+  QFont font(annotationTextFontName(TextFont::JetBrainsMono));
+  font.setPixelSize(11);
+  font.setBold(true);
+  painter.setFont(font);
+  for (const ToolbarButton &button : textCardToolbarButtons()) {
+    const bool hovered = button.rect.contains(cursor_);
+    const bool done = button.action == QStringLiteral("text-card-done");
+    painter.setPen(QPen(done ? textCardTheme_.outline : textCardTheme_.muted,
+                        hovered ? 2 : 1));
+    painter.setBrush(done ? textCardTheme_.outline
+                          : (hovered ? textCardTheme_.selection
+                                     : textCardTheme_.header));
+    painter.drawRect(button.rect);
+    painter.setPen(done && textCardTheme_.outline.lightness() > 130
+                       ? textCardTheme_.header
+                       : textCardTheme_.foreground);
+    painter.drawText(button.rect, Qt::AlignCenter, button.label);
+  }
 }
 
 void CaptureEditor::paintEdit(QPainter &painter) {

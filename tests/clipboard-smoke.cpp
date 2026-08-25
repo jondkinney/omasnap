@@ -112,12 +112,23 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
 
   QString renderError;
   const QImage card = renderTextCard(text, renderError);
+  const TextCardTheme theme = loadTextCardTheme();
+  const TextCardRender compact = renderTextCardLayout(
+      text, theme, renderError, false, QStringLiteral("NORMAL"),
+      QStringLiteral("snippet.sh"), TextCardLayout::Compact);
+  if (compact.image.isNull() || compact.image.width() >= card.width() ||
+      compact.image.height() >= card.height() ||
+      textCardEditorWindowSize(compact.image.size(), QSize(1920, 1080)) !=
+          QSize(1132, 516)) {
+    error = QStringLiteral(
+        "Compact clipboard editor did not hug its code card and toolbar");
+    return false;
+  }
   if (!card.save(outputRoot + QStringLiteral("-clipboard-text-card.png"),
                  "PNG")) {
     error = QStringLiteral("Could not save the clipboard text-card fixture");
     return false;
   }
-  const TextCardTheme theme = loadTextCardTheme();
   if (theme.panel != QColor(QStringLiteral("#667788")) ||
       theme.keyword != QColor(QStringLiteral("#112233")) ||
       theme.command != QColor(QStringLiteral("#223344")) ||
@@ -690,7 +701,13 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Reopened text card did not focus its source");
     return false;
   }
-  QTest::keyClick(reopenedEditor, Qt::Key_Return, Qt::ControlModifier);
+  const QRectF doneButton = editor.textCardDoneButtonRectForTest();
+  if (doneButton.isEmpty()) {
+    error = QStringLiteral("Live text card lost its Done toolbar action");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    doneButton.center().toPoint());
   QApplication::processEvents();
   if (editor.clipboardTextCardEditingForTest() ||
       editor.captureData().source != editedCard) {
@@ -712,15 +729,33 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
                           CaptureEditor::CaptureMode::File,
                           QuickOutputMode::None, std::move(handoffLog));
   handedOff.setSuppressSnapshots(true);
-  handedOff.resize(640, 480);
+  handedOff.setWindowedPresentation(true);
   handedOff.show();
   QApplication::processEvents();
+  QString compactError;
+  const QImage compactEdited =
+      renderTextCardLayout(edited, loadTextCardTheme(), compactError, false,
+                           QStringLiteral("NORMAL"),
+                           QStringLiteral("~/share/install.sh"),
+                           TextCardLayout::Compact)
+          .image;
   if (!handedOff.clipboardTextCardEditingForTest() ||
       handedOff.clipboardTextCardTextForTest() != edited ||
       handedOff.clipboardTextCardFilenameForTest() !=
-          QStringLiteral("~/share/install.sh")) {
+          QStringLiteral("~/share/install.sh") ||
+      handedOff.captureData().source != compactEdited ||
+      handedOff.naturalWindowSize(QSize(1920, 1080)) !=
+          textCardEditorWindowSize(compactEdited.size(), QSize(1920, 1080))) {
     error = QStringLiteral(
-        "Window handoff did not restore the live text-card document");
+        "Window handoff did not restore the compact live text-card document: "
+        "%1")
+                .arg(compactError);
+    return false;
+  }
+  if (!handedOff.grab().save(
+          outputRoot + QStringLiteral("-clipboard-text-card-window.png"),
+          "PNG")) {
+    error = QStringLiteral("Could not save the compact text-card fixture");
     return false;
   }
   handedOff.close();

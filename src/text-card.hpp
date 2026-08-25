@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QImage>
 #include <QRect>
+#include <QSize>
 #include <QString>
 
 class QSyntaxHighlighter;
@@ -11,6 +12,9 @@ class QTextDocument;
 
 inline constexpr int kTextCardCodePixelSize = 25;
 inline constexpr int kTextCardTabSpaces = 4;
+
+/** Share framing for export, or a tight canvas for the live floating editor. */
+enum class TextCardLayout { Share, Compact };
 
 /** Resolved Omarchy colors used by both the live editor and flattened card. */
 struct TextCardTheme {
@@ -55,6 +59,11 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                                                   bool drawText = true,
                                                   const QString &mode =
                                                       QStringLiteral("NORMAL"),
-                                                  const QString &filename = {});
+                                                  const QString &filename = {},
+                                                  TextCardLayout layout =
+                                                      TextCardLayout::Share);
+/** Window size that hugs a compact live card plus its snippet-only toolbar. */
+[[nodiscard]] QSize textCardEditorWindowSize(const QSize &card,
+                                             const QSize &available);
 /** Renders a shareable, syntax-colored clipboard snippet as an image. */
 [[nodiscard]] QImage renderTextCard(const QString &text, QString &error);

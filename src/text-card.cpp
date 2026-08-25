@@ -40,6 +40,11 @@ constexpr int kTopTextPadding = 34;
 constexpr int kBottomTextPadding = 40;
 constexpr int kMinimumEditorHeight = 220;
 constexpr int kPowerlineAngle = 14;
+constexpr int kCompactPadding = 16;
+constexpr int kPanelShadowOffset = 12;
+constexpr int kCompactWindowSide = 24;
+constexpr int kCompactWindowTop = 64;
+constexpr int kCompactWindowBottom = 24;
 
 class TextCardHighlighter final : public QSyntaxHighlighter {
 public:
@@ -586,7 +591,8 @@ QSyntaxHighlighter *installTextCardHighlighter(QTextDocument *document,
 TextCardRender renderTextCardLayout(const QString &text,
                                     const TextCardTheme &theme, QString &error,
                                     bool drawText, const QString &mode,
-                                    const QString &filename) {
+                                    const QString &filename,
+                                    TextCardLayout layout) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
@@ -606,19 +612,31 @@ TextCardRender renderTextCardLayout(const QString &text,
   const int editorHeight = std::max(kMinimumEditorHeight, documentHeight);
   const int panelHeight = kHeaderHeight + kTopTextPadding + editorHeight +
                           kBottomTextPadding + kStatusHeight;
-  const int outputHeight = std::max(kMinimumOutputHeight, panelHeight + 160);
+  const bool compact = layout == TextCardLayout::Compact;
+  const int outputWidth = compact
+                              ? kCompactPadding + kPanelWidth +
+                                    kPanelShadowOffset + kCompactPadding
+                              : kOutputWidth;
+  const int outputHeight =
+      compact ? kCompactPadding + panelHeight + kPanelShadowOffset +
+                    kCompactPadding
+              : std::max(kMinimumOutputHeight, panelHeight + 160);
 
-  QImage image(kOutputWidth, outputHeight, QImage::Format_ARGB32_Premultiplied);
+  QImage image(outputWidth, outputHeight,
+               QImage::Format_ARGB32_Premultiplied);
   image.fill(theme.background);
   QPainter painter(&image);
   painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
 
   // Hard-edged blocks and an offset frame echo Omarchy's terminal/window
   // chrome without borrowing macOS traffic lights or soft card corners.
-  const int panelX = (kOutputWidth - kPanelWidth) / 2;
-  const int panelY = (outputHeight - panelHeight) / 2;
+  const int panelX = compact ? kCompactPadding
+                             : (outputWidth - kPanelWidth) / 2;
+  const int panelY = compact ? kCompactPadding
+                             : (outputHeight - panelHeight) / 2;
   const QRect panel(panelX, panelY, kPanelWidth, panelHeight);
-  painter.fillRect(panel.translated(12, 12), theme.header);
+  painter.fillRect(panel.translated(kPanelShadowOffset, kPanelShadowOffset),
+                   theme.header);
   painter.fillRect(panel, theme.panel);
   painter.fillRect(
       QRect(panel.left(), panel.top(), panel.width(), kHeaderHeight),
@@ -736,6 +754,24 @@ TextCardRender renderTextCardLayout(const QString &text,
   painter.drawRect(panel.adjusted(1, 1, -1, -1));
   painter.end();
   return {std::move(image), editorRect, titleRect};
+}
+
+QSize textCardEditorWindowSize(const QSize &card, const QSize &available) {
+  const QSize room = available.isEmpty()
+                         ? QSize(1728, 1080)
+                         : QSize(qRound(available.width() * 0.9),
+                                 qRound(available.height() * 0.9));
+  const QSize cardRoom(std::max(1, room.width() - 2 * kCompactWindowSide),
+                       std::max(1, room.height() - kCompactWindowTop -
+                                       kCompactWindowBottom));
+  QSize shown = card;
+  if (shown.width() > cardRoom.width() || shown.height() > cardRoom.height())
+    shown.scale(cardRoom, Qt::KeepAspectRatio);
+  QSize result(shown.width() + 2 * kCompactWindowSide,
+               shown.height() + kCompactWindowTop + kCompactWindowBottom);
+  result.setWidth(std::min(room.width(), std::max(result.width(), 640)));
+  result.setHeight(std::min(room.height(), std::max(result.height(), 420)));
+  return result;
 }
 
 QImage renderTextCard(const QString &text, QString &error) {

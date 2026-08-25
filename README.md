@@ -268,10 +268,11 @@ Python, Ruby, Rust, Go, QML, JSON, YAML, TOML, CSS/SCSS/Sass, Markdown, Lua,
 and CMake, with a plain-text fallback. It starts in Normal mode; `Ctrl+Enter`
 renders the text into the card and hands it to the normal annotation editor.
 `Ctrl+W` moves the live source editor between the fullscreen overlay and a
-normal compositor window. After rendering, `Ctrl+E` reopens the retained source
-and filename for typo fixes. From there, `Ctrl+C` copies, `Ctrl+S` saves, and
-`Enter` does both. Every annotation and canvas control remains available after
-rendering.
+compact normal compositor window. The live view has a snippet-only toolbar for
+switching presentation and **Done → Omasnap**; annotation chrome appears only
+after rendering. `Ctrl+E` then reopens the retained source and filename for typo
+fixes. From there, `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every
+annotation and canvas control remains available after rendering.
 
 The intentionally small modal key set covers the motions and edits useful for
 massaging a snippet without embedding a full editor:
