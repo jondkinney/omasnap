@@ -520,6 +520,32 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
         "Clipboard-card unsupported operator motion gave no feedback");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_Right);
+  QTest::keyClick(cardEditor, Qt::Key_Down);
+  const int arrowTarget =
+      cardEditor->document()->findBlockByNumber(1).position() + 1;
+  if (cardEditor->textCursor().position() != arrowTarget) {
+    error = QStringLiteral("Clipboard-card arrows did not move in Normal mode");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_End);
+  QTest::keyClick(cardEditor, Qt::Key_Delete);
+  if (!editor.clipboardTextCardTextForTest().contains(
+          QStringLiteral("\n# instal\n"))) {
+    error = QStringLiteral(
+        "Clipboard-card End/Delete did not edit like $ and x");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (!editor.statusForTest().contains(QStringLiteral("q exits"))) {
+    error = QStringLiteral("Clipboard-card Esc did not flash the Normal hint");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);

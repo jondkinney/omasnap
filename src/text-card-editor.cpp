@@ -38,6 +38,28 @@ QString visualModeStatus(bool linewise) {
              : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
                               "· x/d delete · c changes · Esc Normal");
 }
+/// Editing keys a non-Vim user expects still work in the modal layer.
+QString modalCommand(const QKeyEvent *key) {
+  switch (key->key()) {
+  case Qt::Key_Left:
+  case Qt::Key_Backspace:
+    return QStringLiteral("h");
+  case Qt::Key_Right:
+    return QStringLiteral("l");
+  case Qt::Key_Down:
+    return QStringLiteral("j");
+  case Qt::Key_Up:
+    return QStringLiteral("k");
+  case Qt::Key_Home:
+    return QStringLiteral("0");
+  case Qt::Key_End:
+    return QStringLiteral("$");
+  case Qt::Key_Delete:
+    return QStringLiteral("x");
+  default:
+    return key->text();
+  }
+}
 } // namespace
 
 TextCardEditor::TextCardEditor(QPlainTextEdit *edit, QObject *parent)
@@ -252,7 +274,7 @@ void TextCardEditor::leaveVisualMode(int cursorPosition) {
 }
 
 bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
-  const QString command = key->text();
+  const QString command = modalCommand(key);
   const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
   if (command != QStringLiteral("j") && command != QStringLiteral("k")) {
     goalColumn_ = -1;
@@ -657,8 +679,13 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     return true;
   }
 
+  if (key->key() == Qt::Key_Escape) {
+    pendingCommand_.clear();
+    emit statusRequested(normalModeStatus());
+    return true;
+  }
   QTextCursor cursor = edit_->textCursor();
-  const QString command = key->text();
+  const QString command = modalCommand(key);
   const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
   if (command != QStringLiteral("j") && command != QStringLiteral("k")) {
     goalColumn_ = -1;
