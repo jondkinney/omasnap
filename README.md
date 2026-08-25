@@ -257,6 +257,20 @@ change where screenshots land or what they are called, create
 `~/.config/omasnap/omasnap.conf` (INI format); every key is optional:
 
 ```ini
+[editor]
+# overlay (default): the editor fills the screen as a fullscreen overlay.
+# window: the editor opens as a normal compositor window, tiled or floated
+# by the compositor, so a capture can be annotated next to another window.
+# W switches a live editor between the two either way, and --editor
+# window|overlay overrides this per invocation.
+mode = overlay
+# floating (default): a windowed editor asks the compositor to float it at
+# the capture's natural size. tiled: it joins the tiling layout instead.
+window = floating
+# opaque (default): a windowed editor paints a solid backdrop.
+# translucent: it keeps the overlay's see-through dim.
+backdrop = opaque
+
 [output]
 # Where saved screenshots go. Default: ~/Pictures/Screenshots
 directory = ~/Pictures/Captures
@@ -340,6 +354,7 @@ without reaching for the pointer.
 | `T` | Neucha text on a cream readability pill. Click for a one-line label, or drag a box to give it room for several lines: Enter moves to the next line while there is room and commits on the last one; `Shift+Enter` always adds a line; `Esc` commits too but keeps the label selected, so `Backspace` removes it; clicking away keeps the text; press T again to toggle the pill |
 | `O` | Recognize and copy all text in the current image |
 | `B` | Cycle backdrop |
+| `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
