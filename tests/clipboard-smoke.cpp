@@ -279,6 +279,54 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
                 .arg(blockCommentError);
     return false;
   }
+  QString spanGuardError;
+  const QImage spanGuardCard =
+      renderTextCardLayout(
+          QStringLiteral("const char *g = \"/*.cpp\";\nint alive = 1;"),
+          theme, spanGuardError, true, QStringLiteral("NORMAL"),
+          QStringLiteral("test.cpp"))
+          .image;
+  int spanCommentPixels = 0;
+  int spanKeywordPixels = 0;
+  for (int y = 0; y < spanGuardCard.height(); ++y) {
+    for (int x = 0; x < spanGuardCard.width(); ++x) {
+      const QColor pixel = spanGuardCard.pixelColor(x, y);
+      if (pixel == theme.comment)
+        ++spanCommentPixels;
+      if (pixel == theme.keyword)
+        ++spanKeywordPixels;
+    }
+  }
+  if (spanCommentPixels > 50 || spanKeywordPixels < 30) {
+    error = QStringLiteral(
+        "A block-comment opener inside a string opened a span: comment=%1 "
+        "keyword=%2 %3")
+                .arg(spanCommentPixels)
+                .arg(spanKeywordPixels)
+                .arg(spanGuardError);
+    return false;
+  }
+  QString quotedCommentError;
+  const QImage quotedCommentCard =
+      renderTextCardLayout(
+          QStringLiteral("int x = 1; // has \"quoted\" words"), theme,
+          quotedCommentError, true, QStringLiteral("NORMAL"),
+          QStringLiteral("test.cpp"))
+          .image;
+  int quotedCommentPixels = 0;
+  for (int y = 0; y < quotedCommentCard.height(); ++y) {
+    for (int x = 0; x < quotedCommentCard.width(); ++x) {
+      if (quotedCommentCard.pixelColor(x, y) == theme.comment)
+        ++quotedCommentPixels;
+    }
+  }
+  if (quotedCommentPixels < 300) {
+    error = QStringLiteral(
+        "A comment containing a quoted word lost its color: comment=%1 %2")
+                .arg(quotedCommentPixels)
+                .arg(quotedCommentError);
+    return false;
+  }
   QStringList gutterLines;
   for (int line = 1; line <= 105; ++line)
     gutterLines.append(QStringLiteral("line %1").arg(line));

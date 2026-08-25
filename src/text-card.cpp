@@ -199,6 +199,7 @@ public:
 protected:
   void highlightBlock(const QString &text) override {
     QVector<QPair<int, int>> stringSpans;
+    QVector<QPair<int, int>> claimedSpans;
     for (const Rule &rule : rules_) {
       int offset = 0;
       while (offset <= text.size()) {
@@ -208,11 +209,13 @@ protected:
         const int start = match.capturedStart();
         const int length = std::max(1, static_cast<int>(match.capturedLength()));
         if (rule.scope == RuleScope::SkipsStrings) {
+          // Only a match STARTING inside a literal is blocked; a comment
+          // that begins outside overpaints the literal, editor-style.
           const auto blocked =
               std::find_if(stringSpans.cbegin(), stringSpans.cend(),
                            [&](const QPair<int, int> &span) {
-                             return start < span.second &&
-                                    start + length > span.first;
+                             return start >= span.first &&
+                                    start < span.second;
                            });
           if (blocked != stringSpans.cend()) {
             offset = blocked->second;
@@ -220,16 +223,29 @@ protected:
           }
         }
         setFormat(start, length, rule.format);
-        if (rule.scope == RuleScope::ClaimsStrings)
+        if (rule.scope == RuleScope::ClaimsStrings) {
           stringSpans.append({start, start + length});
-        if (rule.toEnd)
+          claimedSpans.append({start, start + length});
+        }
+        if (rule.toEnd) {
+          claimedSpans.append({start, static_cast<int>(text.size())});
           break;
+        }
         offset = start + length;
       }
     }
 
     // Multi-line constructs carry across blocks: state index + 1 means this
-    // block starts inside blockSpans_[index].
+    // block starts inside blockSpans_[index]. An opener strictly inside a
+    // string literal or a line comment does not open a span (a co-starting
+    // claim is the opener's own quote run, e.g. Python's triple quote).
+    const auto claimedInside = [&](int position) {
+      return std::any_of(claimedSpans.cbegin(), claimedSpans.cend(),
+                         [&](const QPair<int, int> &span) {
+                           return position > span.first &&
+                                  position < span.second;
+                         });
+    };
     setCurrentBlockState(0);
     int active = previousBlockState() - 1;
     int searchFrom = 0;
@@ -238,7 +254,11 @@ protected:
       if (active < 0) {
         start = -1;
         for (int index = 0; index < blockSpans_.size(); ++index) {
-          const int found = text.indexOf(blockSpans_[index].open, searchFrom);
+          int found = text.indexOf(blockSpans_[index].open, searchFrom);
+          while (found >= 0 && claimedInside(found))
+            found = text.indexOf(blockSpans_[index].open,
+                                 found + static_cast<int>(
+                                             blockSpans_[index].open.size()));
           if (found >= 0 && (start < 0 || found < start)) {
             start = found;
             active = index;
