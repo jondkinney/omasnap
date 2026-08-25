@@ -413,101 +413,62 @@ QString currentThemeName() {
   return name.isEmpty() ? QStringLiteral("Omarchy") : name;
 }
 
+// The full language roster: filename detection and the card's default
+// extension both read from this one table.
+struct LanguageProfile {
+  const char *language;
+  const char *primaryExtension;
+  const char *extensions[8];
+  const char *filenames[4];
+};
+
+constexpr LanguageProfile kLanguageProfiles[] = {
+    {"CMake", "cmake", {"cmake"}, {"cmakelists.txt"}},
+    {"Shell", "sh", {"sh", "bash", "zsh", "fish"}, {"dockerfile", "pkgbuild"}},
+    {"C++", "cpp", {"c", "cc", "cpp", "cxx", "h", "hh", "hpp"}, {}},
+    {"JavaScript", "js", {"js", "jsx", "mjs", "cjs"}, {}},
+    {"TypeScript", "ts", {"ts", "tsx"}, {}},
+    {"Python", "py", {"py"}, {}},
+    {"Ruby", "rb", {"rb"}, {"gemfile", "rakefile"}},
+    {"QML", "qml", {"qml"}, {}},
+    {"Rust", "rs", {"rs"}, {}},
+    {"Go", "go", {"go"}, {}},
+    {"JSON", "json", {"json"}, {}},
+    {"YAML", "yaml", {"yaml", "yml"}, {}},
+    {"TOML", "toml", {"toml"}, {}},
+    {"CSS", "css", {"css"}, {}},
+    {"SCSS", "scss", {"scss"}, {}},
+    {"Sass", "sass", {"sass"}, {}},
+    {"Markdown", "md", {"md", "markdown"}, {}},
+    {"Lua", "lua", {"lua"}, {}},
+};
+
 QString languageFromFilename(const QString &filename) {
   const QFileInfo file(filename.trimmed());
   const QString name = file.fileName().toLower();
   const QString suffix = file.suffix().toLower();
-  if (name == QStringLiteral("cmakelists.txt") ||
-      suffix == QStringLiteral("cmake"))
-    return QStringLiteral("CMake");
-  if (name == QStringLiteral("dockerfile") ||
-      name == QStringLiteral("pkgbuild") ||
-      QStringList{QStringLiteral("sh"), QStringLiteral("bash"),
-                  QStringLiteral("zsh"), QStringLiteral("fish")}
-          .contains(suffix))
-    return QStringLiteral("Shell");
-  if (QStringList{QStringLiteral("c"), QStringLiteral("cc"),
-                  QStringLiteral("cpp"), QStringLiteral("cxx"),
-                  QStringLiteral("h"), QStringLiteral("hh"),
-                  QStringLiteral("hpp")}
-          .contains(suffix))
-    return QStringLiteral("C++");
-  if (QStringList{QStringLiteral("js"), QStringLiteral("jsx"),
-                  QStringLiteral("mjs"), QStringLiteral("cjs")}
-          .contains(suffix))
-    return QStringLiteral("JavaScript");
-  if (QStringList{QStringLiteral("ts"), QStringLiteral("tsx")}.contains(
-          suffix))
-    return QStringLiteral("TypeScript");
-  if (suffix == QStringLiteral("py"))
-    return QStringLiteral("Python");
-  if (suffix == QStringLiteral("rb") || name == QStringLiteral("gemfile") ||
-      name == QStringLiteral("rakefile"))
-    return QStringLiteral("Ruby");
-  if (suffix == QStringLiteral("qml"))
-    return QStringLiteral("QML");
-  if (suffix == QStringLiteral("rs"))
-    return QStringLiteral("Rust");
-  if (suffix == QStringLiteral("go"))
-    return QStringLiteral("Go");
-  if (suffix == QStringLiteral("json"))
-    return QStringLiteral("JSON");
-  if (QStringList{QStringLiteral("yaml"), QStringLiteral("yml")}.contains(
-          suffix))
-    return QStringLiteral("YAML");
-  if (suffix == QStringLiteral("toml"))
-    return QStringLiteral("TOML");
-  if (suffix == QStringLiteral("css"))
-    return QStringLiteral("CSS");
-  if (suffix == QStringLiteral("scss"))
-    return QStringLiteral("SCSS");
-  if (suffix == QStringLiteral("sass"))
-    return QStringLiteral("Sass");
-  if (QStringList{QStringLiteral("md"), QStringLiteral("markdown")}.contains(
-          suffix))
-    return QStringLiteral("Markdown");
-  if (suffix == QStringLiteral("lua"))
-    return QStringLiteral("Lua");
+  for (const LanguageProfile &profile : kLanguageProfiles) {
+    for (const char *special : profile.filenames) {
+      if (!special)
+        break;
+      if (name == QLatin1StringView(special))
+        return QString::fromLatin1(profile.language);
+    }
+    for (const char *extension : profile.extensions) {
+      if (!extension)
+        break;
+      if (suffix == QLatin1StringView(extension))
+        return QString::fromLatin1(profile.language);
+    }
+  }
   return {};
 }
 
 QString extensionForLanguage(const QString &language) {
-  if (language == QStringLiteral("Shell"))
-    return QStringLiteral("sh");
-  if (language == QStringLiteral("C++"))
-    return QStringLiteral("cpp");
-  if (language == QStringLiteral("JavaScript"))
-    return QStringLiteral("js");
-  if (language == QStringLiteral("TypeScript"))
-    return QStringLiteral("ts");
-  if (language == QStringLiteral("Python"))
-    return QStringLiteral("py");
-  if (language == QStringLiteral("Ruby"))
-    return QStringLiteral("rb");
-  if (language == QStringLiteral("QML"))
-    return QStringLiteral("qml");
-  if (language == QStringLiteral("Rust"))
-    return QStringLiteral("rs");
-  if (language == QStringLiteral("Go"))
-    return QStringLiteral("go");
-  if (language == QStringLiteral("JSON"))
-    return QStringLiteral("json");
-  if (language == QStringLiteral("YAML"))
-    return QStringLiteral("yaml");
-  if (language == QStringLiteral("TOML"))
-    return QStringLiteral("toml");
-  if (language == QStringLiteral("CSS"))
-    return QStringLiteral("css");
-  if (language == QStringLiteral("SCSS"))
-    return QStringLiteral("scss");
-  if (language == QStringLiteral("Sass"))
-    return QStringLiteral("sass");
-  if (language == QStringLiteral("Markdown"))
-    return QStringLiteral("md");
-  if (language == QStringLiteral("Lua"))
-    return QStringLiteral("lua");
-  if (language == QStringLiteral("CMake"))
-    return QStringLiteral("cmake");
+  for (const LanguageProfile &profile : kLanguageProfiles) {
+    if (language == QLatin1StringView(profile.language))
+      return QString::fromLatin1(profile.primaryExtension);
+  }
   return QStringLiteral("txt");
 }
 
