@@ -1500,6 +1500,18 @@ bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
     error = QStringLiteral("Ctrl+E discarded card annotations without asking");
     return false;
   }
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(220, 220));
+  QTest::mouseMove(&editor, QPoint(320, 320));
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(320, 320));
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+  if (editor.clipboardTextCardEditingForTest() ||
+      !editor.statusForTest().contains(QStringLiteral("Ctrl+E again"))) {
+    error = QStringLiteral(
+        "New mouse annotations did not re-arm the Ctrl+E confirmation");
+    return false;
+  }
   QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
   QApplication::processEvents();
   if (!editor.clipboardTextCardEditingForTest() ||

@@ -802,6 +802,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   textCardEditor_->setTabChangesFocus(false);
   textCardEditor_->setContentsMargins(0, 0, 0, 0);
   textCardEditor_->setContextMenuPolicy(Qt::NoContextMenu);
+  textCardEditor_->setAcceptDrops(false);
   textCardEditor_->document()->setDocumentMargin(0.0);
   textCardEditor_->installEventFilter(this);
   textCardEditor_->viewport()->installEventFilter(this);
@@ -822,6 +823,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
             if (!textCardFilenameEditor_->isVisible())
               return;
             textCardFilename_ = filename.trimmed();
+            textCardDiscardArmed_ = false;
             reinstallClipboardTextCardHighlighter();
             updateClipboardTextCardPreview();
           });
@@ -1125,6 +1127,11 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     });
   } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
+    const bool modifierOnly =
+        key->key() == Qt::Key_Shift || key->key() == Qt::Key_Control ||
+        key->key() == Qt::Key_Alt || key->key() == Qt::Key_Meta;
+    if (key->key() != Qt::Key_Q && !modifierOnly)
+      textCardDiscardArmed_ = false;
     if (isPlainControlChord(key, Qt::Key_W)) {
       handOffLiveTextCard();
       return true;
@@ -4785,6 +4792,7 @@ void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
 void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (busy_ || capturePending_)
     return;
+  textCardReopenArmed_ = false;
   if (clipboardTextCardEditing_) {
     cursor_ = event->position();
     if (event->button() == Qt::LeftButton) {
@@ -6036,10 +6044,11 @@ void CaptureEditor::updateClipboardTextCardPreview() {
                                ? QStringLiteral("FILENAME")
                                : textCardModal_->mode();
   const QString frameKey =
-      QStringLiteral("%1\n%2\n%3\n%4\n%5")
-          .arg(cardMode, textCardFilename_, textCardSyntaxLanguage_)
-          .arg(wrappedLines)
-          .arg(windowedPresentation_ ? 1 : 0);
+      QStringList{cardMode, textCardFilename_, textCardSyntaxLanguage_,
+                  QString::number(wrappedLines),
+                  QString::number(textCardEditor_->document()->blockCount()),
+                  QString::number(windowedPresentation_ ? 1 : 0)}
+          .join(QLatin1Char('\x1f'));
   if (frameKey == textCardFrameKey_)
     return;
   QString error;
@@ -6100,8 +6109,10 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
   font.setStyleHint(QFont::Monospace);
   if (textCardEditor_->font() != font)
     textCardEditor_->setFont(font);
-  textCardEditor_->setCursorWidth(
-      textCardModal_->insertMode() ? std::max(1, qRound(2 * scale)) : 0);
+  if (textCardModal_->insertMode())
+    textCardEditor_->setCursorWidth(std::max(1, qRound(2 * scale)));
+  else
+    updateTextCardCaret();
   QTextOption option = textCardEditor_->document()->defaultTextOption();
   const qreal tabStop =
       QFontMetricsF(font).horizontalAdvance(' ') * kTextCardTabSpaces;
@@ -6121,9 +6132,12 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
 // The Normal-mode block cursor is painted, not inverted: Qt's inversion
 // caret disappears on mid-tone panels.
 void CaptureEditor::updateTextCardCaret() {
-  if (!clipboardTextCardEditing_ || textCardModal_->insertMode() ||
-      textCardModal_->visualMode())
+  if (!clipboardTextCardEditing_ || textCardModal_->insertMode())
     return;
+  if (textCardModal_->visualMode()) {
+    textCardEditor_->setCursorWidth(0);
+    return;
+  }
   QTextCursor caret = textCardEditor_->textCursor();
   if (caret.atBlockEnd()) {
     // An empty line has no character to paint under the block.
