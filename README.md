@@ -280,11 +280,11 @@ massaging a snippet without embedding a full editor:
 | `Esc` | Return from Insert or Visual to Normal mode |
 | `F`, `Shift+Tab`, or click the title | Edit the displayed filename; Enter or Tab accepts and Esc cancels |
 | `x`, `dd`, `diw`, `daw`, `Shift+J` | Delete a character, line, inner/around word, or join with the next line |
-| `C`, `cc`, `ciw`, `caw` | Change to end of line, a whole line, or the inner/around word |
+| `C`, `cc`, `cw`, `ciw`, `caw` | Change to end of line, a whole line, from the cursor through word end, or the inner/around word |
 | `v`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters or whole lines, then copy, delete, or change them |
 | `yy` | Copy the current line |
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line |
-| `u`, `Ctrl+R` | Undo or redo |
+| `u`, `Ctrl+R` | Undo or redo; the cursor returns to the start of that change |
 | `Tab` | Indent in Insert mode |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
 | `q` | Cancel from Normal mode and return to capture selection |

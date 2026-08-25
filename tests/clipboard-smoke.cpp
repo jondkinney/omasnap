@@ -338,6 +338,61 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_U);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  const int secondWordStart = cardEditor->textCursor().position();
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClicks(cardEditor, QStringLiteral("value"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  const QString wordChanged = QStringLiteral(
+      "const value = \"hello\";\n# install\nomasnap --version\n\techo "
+      "\"done\"");
+  if (editor.clipboardTextCardTextForTest() != wordChanged) {
+    error = QStringLiteral("Clipboard-card cw did not replace the word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited ||
+      cardEditor->textCursor().position() != secondWordStart) {
+    error = QStringLiteral(
+        "Clipboard-card cw was not one undo at the change start");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_R, Qt::ControlModifier);
+  if (editor.clipboardTextCardTextForTest() != wordChanged ||
+      cardEditor->textCursor().position() != secondWordStart) {
+    error = QStringLiteral("Clipboard-card cw redo failed: text=%1 cursor=%2/%3")
+                .arg(editor.clipboardTextCardTextForTest())
+                .arg(cardEditor->textCursor().position())
+                .arg(secondWordStart);
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  const int middleOfWord = cardEditor->textCursor().position();
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClicks(cardEditor, QStringLiteral("X"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  const QString wordSuffixChanged = QStringLiteral(
+      "coX answer = \"hello\";\n# install\nomasnap --version\n\techo "
+      "\"done\"");
+  if (editor.clipboardTextCardTextForTest() != wordSuffixChanged) {
+    error = QStringLiteral("Clipboard-card cw did not change from the cursor");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited ||
+      cardEditor->textCursor().position() != middleOfWord) {
+    error = QStringLiteral(
+        "Clipboard-card mid-word cw undo lost the change start");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_C);
   QTest::keyClick(cardEditor, Qt::Key_A);
   QTest::keyClick(cardEditor, Qt::Key_W);

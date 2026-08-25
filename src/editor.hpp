@@ -13,6 +13,7 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QLineF>
+#include <QTextCursor>
 #include <QTimer>
 #include <QWidget>
 
@@ -482,13 +483,17 @@ private:
   void cancelClipboardTextCard();
   void resetClipboardTextCardEditor();
   void setClipboardTextCardInsertMode(bool insertMode);
+  void beginClipboardTextCardInsertEdit(int cursorPosition);
+  void endClipboardTextCardInsertEdit();
+  void recordClipboardTextCardUndoCursor(int cursorPosition);
+  void undoClipboardTextCard(bool redo);
   void startClipboardTextCardVisualMode(bool linewise);
   void updateClipboardTextCardVisualSelection();
   void leaveClipboardTextCardVisualMode(int cursorPosition);
   [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
   void joinClipboardTextCardLines();
-  [[nodiscard]] bool applyClipboardTextCardWordOperator(bool change,
-                                                        bool around);
+  [[nodiscard]] bool applyClipboardTextCardWordOperator(
+      bool change, bool around, bool fromCursor = false);
   void yankClipboardTextCardLine();
   void putClipboardTextCard(bool before);
   [[nodiscard]] QString clipboardTextCardMode() const;
@@ -778,6 +783,12 @@ private:
   QString textCardYank_;
   bool textCardYankLinewise_ = false;
   QString textCardPendingCommand_;
+  QTextCursor textCardInsertEditCursor_;
+  bool textCardInsertEditActive_ = false;
+  int textCardInsertEditStart_ = -1;
+  int textCardInsertEditUndoSteps_ = 0;
+  QVector<int> textCardUndoCursorStack_;
+  QVector<int> textCardRedoCursorStack_;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

@@ -1116,9 +1116,68 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
   return QWidget::eventFilter(watched, event);
 }
 
+void CaptureEditor::beginClipboardTextCardInsertEdit(int cursorPosition) {
+  if (textCardInsertEditActive_)
+    return;
+  textCardInsertEditCursor_ = QTextCursor(textCardEditor_->document());
+  textCardInsertEditCursor_.beginEditBlock();
+  textCardInsertEditActive_ = true;
+  textCardInsertEditStart_ = std::clamp(
+      cursorPosition, 0, static_cast<int>(textCardEditor_->toPlainText().size()));
+  textCardInsertEditUndoSteps_ =
+      textCardEditor_->document()->availableUndoSteps();
+}
+
+void CaptureEditor::endClipboardTextCardInsertEdit() {
+  if (!textCardInsertEditActive_)
+    return;
+  textCardInsertEditCursor_.endEditBlock();
+  textCardInsertEditActive_ = false;
+  if (textCardEditor_->document()->availableUndoSteps() >
+      textCardInsertEditUndoSteps_)
+    recordClipboardTextCardUndoCursor(textCardInsertEditStart_);
+  textCardInsertEditStart_ = -1;
+}
+
+void CaptureEditor::recordClipboardTextCardUndoCursor(int cursorPosition) {
+  textCardUndoCursorStack_.push_back(std::clamp(
+      cursorPosition, 0,
+      static_cast<int>(textCardEditor_->toPlainText().size())));
+  textCardRedoCursorStack_.clear();
+}
+
+void CaptureEditor::undoClipboardTextCard(bool redo) {
+  QTextDocument *document = textCardEditor_->document();
+  if ((redo && !document->isRedoAvailable()) ||
+      (!redo && !document->isUndoAvailable()))
+    return;
+  int cursorPosition = textCardEditor_->textCursor().position();
+  if (redo) {
+    if (!textCardRedoCursorStack_.isEmpty()) {
+      cursorPosition = textCardRedoCursorStack_.takeLast();
+      textCardUndoCursorStack_.push_back(cursorPosition);
+    }
+    textCardEditor_->redo();
+  } else {
+    if (!textCardUndoCursorStack_.isEmpty()) {
+      cursorPosition = textCardUndoCursorStack_.takeLast();
+      textCardRedoCursorStack_.push_back(cursorPosition);
+    }
+    textCardEditor_->undo();
+  }
+  QTextCursor cursor(textCardEditor_->document());
+  cursor.setPosition(std::clamp(
+      cursorPosition, 0, static_cast<int>(textCardEditor_->toPlainText().size())));
+  textCardEditor_->setTextCursor(cursor);
+}
+
 void CaptureEditor::setClipboardTextCardInsertMode(bool insertMode) {
   if (!clipboardTextCardEditing_)
     return;
+  if (insertMode && !textCardInsertMode_)
+    beginClipboardTextCardInsertEdit(textCardEditor_->textCursor().position());
+  else if (!insertMode && textCardInsertMode_)
+    endClipboardTextCardInsertEdit();
   textCardInsertMode_ = insertMode;
   textCardVisualLineMode_ = false;
   textCardVisualAnchor_ = -1;
@@ -1268,6 +1327,8 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     QTextCursor deletion(textCardEditor_->document());
     int deletionStart = first;
     const bool linewise = textCardVisualLineMode_;
+    if (changeSelection)
+      beginClipboardTextCardInsertEdit(first);
     if (linewise && !changeSelection && last == source.size() && first > 0)
       deletionStart = first - 1;
     deletion.beginEditBlock();
@@ -1287,6 +1348,7 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
       setClipboardTextCardInsertMode(true);
       return true;
     }
+    recordClipboardTextCardUndoCursor(std::min(first, remainingLength));
     setStatus(QStringLiteral("Text card · NORMAL · selection deleted · "
                              "p puts it back · u undoes"));
     return true;
@@ -1374,11 +1436,13 @@ void CaptureEditor::joinClipboardTextCardLines() {
   cursor.endEditBlock();
   cursor.setPosition(joinPosition);
   textCardEditor_->setTextCursor(cursor);
+  recordClipboardTextCardUndoCursor(joinPosition);
   setStatus(QStringLiteral("Text card · NORMAL · joined lines · u undoes"));
 }
 
 bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
-                                                       bool around) {
+                                                       bool around,
+                                                       bool fromCursor) {
   const QTextCursor current = textCardEditor_->textCursor();
   const QTextBlock block = current.block();
   const QString line = block.text();
@@ -1399,9 +1463,11 @@ bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
   const int selectedClass = characterClass(line.at(position));
   int first = position;
   int last = position + 1;
-  while (first > 0 &&
-         characterClass(line.at(first - 1)) == selectedClass)
-    --first;
+  if (!fromCursor) {
+    while (first > 0 &&
+           characterClass(line.at(first - 1)) == selectedClass)
+      --first;
+  }
   while (last < line.size() &&
          characterClass(line.at(last)) == selectedClass)
     ++last;
@@ -1421,6 +1487,8 @@ bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
   textCardYank_ = textCardEditor_->toPlainText().mid(
       documentFirst, documentLast - documentFirst);
   textCardYankLinewise_ = false;
+  if (change)
+    beginClipboardTextCardInsertEdit(documentFirst);
   QTextCursor edit(textCardEditor_->document());
   edit.beginEditBlock();
   edit.setPosition(documentFirst);
@@ -1431,9 +1499,11 @@ bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
   textCardEditor_->setTextCursor(edit);
   if (change)
     setClipboardTextCardInsertMode(true);
-  else
+  else {
+    recordClipboardTextCardUndoCursor(documentFirst);
     setStatus(QStringLiteral("Text card · NORMAL · word deleted · "
                              "p puts it back · u undoes"));
+  }
   return true;
 }
 
@@ -1480,6 +1550,7 @@ void CaptureEditor::putClipboardTextCard(bool before) {
   cursor.endEditBlock();
   cursor.setPosition(placedAt);
   textCardEditor_->setTextCursor(cursor);
+  recordClipboardTextCardUndoCursor(placedAt);
   setStatus(linewise
                 ? QStringLiteral("Text card · NORMAL · put %1 current line")
                       .arg(before ? QStringLiteral("above")
@@ -1494,7 +1565,7 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     return handleClipboardTextCardVisualKey(key);
   if (key->modifiers().testFlag(Qt::ControlModifier) &&
       key->key() == Qt::Key_R) {
-    textCardEditor_->redo();
+    undoClipboardTextCard(true);
     textCardPendingCommand_ = {};
     return true;
   }
@@ -1520,6 +1591,7 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   if (shifted && key->key() == Qt::Key_C) {
     textCardPendingCommand_ = {};
     const int first = cursor.position();
+    beginClipboardTextCardInsertEdit(first);
     cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     textCardYank_ = cursor.selectedText();
     textCardYankLinewise_ = false;
@@ -1566,6 +1638,7 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     textCardPendingCommand_ = {};
     cursor.movePosition(QTextCursor::StartOfBlock);
     const int blankLine = cursor.position();
+    beginClipboardTextCardInsertEdit(blankLine);
     cursor.insertText(QStringLiteral("\n"));
     cursor.setPosition(blankLine);
     textCardEditor_->setTextCursor(cursor);
@@ -1598,6 +1671,11 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
       textCardPendingCommand_ = pending + command;
       return true;
     }
+    if (pending == QStringLiteral("c") && command == QStringLiteral("w")) {
+      static_cast<void>(
+          applyClipboardTextCardWordOperator(true, false, true));
+      return true;
+    }
     if (pending == QStringLiteral("d") && command == QStringLiteral("d")) {
       textCardYank_ = cursor.block().text() + QLatin1Char('\n');
       textCardYankLinewise_ = true;
@@ -1611,7 +1689,12 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
         cursor.setPosition(start - 1);
         cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
       }
+      cursor.beginEditBlock();
       cursor.removeSelectedText();
+      cursor.endEditBlock();
+      recordClipboardTextCardUndoCursor(
+          std::min(start,
+                   static_cast<int>(textCardEditor_->toPlainText().size())));
       setStatus(QStringLiteral("Text card · NORMAL · line deleted · "
                                "p puts it back · u undoes"));
     } else if (pending == QStringLiteral("c") &&
@@ -1620,6 +1703,7 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
       textCardYankLinewise_ = true;
       cursor.movePosition(QTextCursor::StartOfBlock);
       const int first = cursor.position();
+      beginClipboardTextCardInsertEdit(first);
       cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
       cursor.beginEditBlock();
       cursor.removeSelectedText();
@@ -1675,10 +1759,17 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     cursor.movePosition(QTextCursor::NextWord);
   else if (command == QStringLiteral("b"))
     cursor.movePosition(QTextCursor::PreviousWord);
-  else if (command == QStringLiteral("x"))
+  else if (command == QStringLiteral("x")) {
+    const int beforeLength =
+        static_cast<int>(textCardEditor_->toPlainText().size());
+    const int first = cursor.position();
+    cursor.beginEditBlock();
     cursor.deleteChar();
-  else if (command == QStringLiteral("u")) {
-    textCardEditor_->undo();
+    cursor.endEditBlock();
+    if (static_cast<int>(textCardEditor_->toPlainText().size()) < beforeLength)
+      recordClipboardTextCardUndoCursor(first);
+  } else if (command == QStringLiteral("u")) {
+    undoClipboardTextCard(false);
     return true;
   } else if (command == QStringLiteral("i")) {
     setClipboardTextCardInsertMode(true);
@@ -1690,6 +1781,7 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     return true;
   } else if (command == QStringLiteral("o")) {
     cursor.movePosition(QTextCursor::EndOfBlock);
+    beginClipboardTextCardInsertEdit(cursor.position());
     cursor.insertText(QStringLiteral("\n"));
     textCardEditor_->setTextCursor(cursor);
     setClipboardTextCardInsertMode(true);
@@ -6318,6 +6410,11 @@ void CaptureEditor::openClipboardTextCard() {
   textCardVisualSelectionEnd_ = -1;
   textCardYank_.clear();
   textCardYankLinewise_ = false;
+  textCardInsertEditActive_ = false;
+  textCardInsertEditStart_ = -1;
+  textCardInsertEditUndoSteps_ = 0;
+  textCardUndoCursorStack_.clear();
+  textCardRedoCursorStack_.clear();
   textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   textCardSourceEditorRect_ = card.editorRect;
@@ -6461,6 +6558,7 @@ void CaptureEditor::reinstallClipboardTextCardHighlighter() {
 void CaptureEditor::finishClipboardTextCard() {
   if (!clipboardTextCardEditing_)
     return;
+  endClipboardTextCardInsertEdit();
   QString error;
   const QImage card = renderTextCardLayout(
                           textCardEditor_->toPlainText(), textCardTheme_, error,
@@ -6501,6 +6599,7 @@ void CaptureEditor::cancelClipboardTextCard() {
 }
 
 void CaptureEditor::resetClipboardTextCardEditor() {
+  endClipboardTextCardInsertEdit();
   clipboardTextCardEditing_ = false;
   textCardInsertMode_ = false;
   textCardVisualLineMode_ = false;
@@ -6510,6 +6609,10 @@ void CaptureEditor::resetClipboardTextCardEditor() {
   textCardVisualSelectionEnd_ = -1;
   textCardYank_.clear();
   textCardYankLinewise_ = false;
+  textCardInsertEditStart_ = -1;
+  textCardInsertEditUndoSteps_ = 0;
+  textCardUndoCursorStack_.clear();
+  textCardRedoCursorStack_.clear();
   textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   textCardEditor_->hide();
