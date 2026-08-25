@@ -16,6 +16,8 @@
 #include <QTest>
 #include <QTextBlock>
 
+#include <cstdlib>
+
 namespace {
 /** Writes an executable fake command. */
 bool writeExecutable(const QString &path, const QByteArray &contents) {
@@ -142,12 +144,12 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Could not save the clipboard text-card fixture");
     return false;
   }
-  if (theme.panel != QColor(QStringLiteral("#667788")) ||
-      theme.keyword != QColor(QStringLiteral("#112233")) ||
-      theme.command != QColor(QStringLiteral("#223344")) ||
-      theme.flag != QColor(QStringLiteral("#334455")) ||
-      theme.number != QColor(QStringLiteral("#445566")) ||
-      theme.string != QColor(QStringLiteral("#556677")) ||
+  if (theme.panel != QColor(QStringLiteral("#1b2433")) ||
+      theme.keyword != QColor(QStringLiteral("#d0b4fc")) ||
+      theme.command != QColor(QStringLiteral("#9ac0fa")) ||
+      theme.flag != QColor(QStringLiteral("#86e0f0")) ||
+      theme.number != QColor(QStringLiteral("#f0a468")) ||
+      theme.string != QColor(QStringLiteral("#f2d878")) ||
       theme.comment != QColor(QStringLiteral("#64748b"))) {
     error = QStringLiteral(
         "Clipboard text card did not import Omarchy's semantic syntax palette "
@@ -998,6 +1000,57 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   return true;
 }
 
+/** Checks that illegible theme pairings are corrected on load. */
+bool runTextCardThemeGuardCheck(QString &error) {
+  QTemporaryDir directory;
+  if (!directory.isValid()) {
+    error = QStringLiteral("Could not create theme-guard directory");
+    return false;
+  }
+  const QString colorsPath =
+      QDir(directory.path()).filePath(QStringLiteral("colors.toml"));
+  QFile colorsFile(colorsPath);
+  const QByteArray colors = QByteArrayLiteral(
+      "background = \"#101820\"\n"
+      "foreground = \"#697a8b\"\n"
+      "dark_foreground = \"#667788\"\n");
+  if (!colorsFile.open(QIODevice::WriteOnly) ||
+      colorsFile.write(colors) != colors.size()) {
+    error = QStringLiteral("Could not write the theme-guard palette");
+    return false;
+  }
+  colorsFile.close();
+  const QString vscodePath =
+      QDir(directory.path()).filePath(QStringLiteral("vscode-theme.json"));
+  QFile vscodeFile(vscodePath);
+  const QByteArray vscode = QByteArrayLiteral(
+      "{\n"
+      "  \"semanticTokenColors\": { \"string\": \"#667788\" },\n"
+      "  \"colors\": { \"editor.background\": \"#667788\" }\n"
+      "}\n");
+  if (!vscodeFile.open(QIODevice::WriteOnly) ||
+      vscodeFile.write(vscode) != vscode.size()) {
+    error = QStringLiteral("Could not write the theme-guard code theme");
+    return false;
+  }
+  vscodeFile.close();
+
+  const QByteArray previousColors = qgetenv("OMASNAP_TEST_OMARCHY_COLORS");
+  qputenv("OMASNAP_TEST_OMARCHY_COLORS", colorsPath.toUtf8());
+  const TextCardTheme guarded = loadTextCardTheme();
+  qputenv("OMASNAP_TEST_OMARCHY_COLORS", previousColors);
+  const auto readable = [&](const QColor &color) {
+    return std::abs(color.lightness() - guarded.panel.lightness()) >= 40;
+  };
+  if (guarded.string == guarded.panel || !readable(guarded.string) ||
+      !readable(guarded.comment) || !readable(guarded.foreground)) {
+    error = QStringLiteral(
+        "Theme loader kept text colors that vanish into the panel");
+    return false;
+  }
+  return true;
+}
+
 /** Checks that a failed image transfer keeps the wl-paste error. */
 bool runReadFailureCheck(QString &error) {
   qunsetenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY");
@@ -1095,13 +1148,13 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
   const QByteArray codeTheme = QByteArrayLiteral(
       "{\n"
       "  \"semanticTokenColors\": {\n"
-      "    \"keyword\": \"#112233\",\n"
-      "    \"function\": { \"foreground\": \"#223344\" },\n"
-      "    \"property\": \"#334455\",\n"
-      "    \"number\": \"#445566\",\n"
-      "    \"string\": \"#556677\"\n"
+      "    \"keyword\": \"#d0b4fc\",\n"
+      "    \"function\": { \"foreground\": \"#9ac0fa\" },\n"
+      "    \"property\": \"#86e0f0\",\n"
+      "    \"number\": \"#f0a468\",\n"
+      "    \"string\": \"#f2d878\"\n"
       "  },\n"
-      "  \"colors\": { \"editor.background\": \"#667788\" }\n"
+      "  \"colors\": { \"editor.background\": \"#1b2433\" }\n"
       "}\n");
   if (!codeThemeFile.open(QIODevice::WriteOnly) ||
       codeThemeFile.write(codeTheme) != codeTheme.size()) {
@@ -1163,5 +1216,5 @@ bool runClipboardSmoke(const QString &outputRoot, QString &error) {
 
   return runImageCheck(error) && runTextOnlyCheck(error) &&
          runTextCardCheck(outputRoot, error) &&
-         runReadFailureCheck(error);
+         runTextCardThemeGuardCheck(error) && runReadFailureCheck(error);
 }

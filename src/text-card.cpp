@@ -27,6 +27,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr int kOutputWidth = 1200;
@@ -358,6 +359,36 @@ QHash<QString, QColor> readOmarchySyntaxColors(const QString &path) {
   return colors;
 }
 
+double relativeLuminance(const QColor &color) {
+  const auto linear = [](double channel) {
+    return channel <= 0.03928 ? channel / 12.92
+                              : std::pow((channel + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF()) +
+         0.0722 * linear(color.blueF());
+}
+
+double contrastRatio(const QColor &first, const QColor &second) {
+  const double one = relativeLuminance(first);
+  const double two = relativeLuminance(second);
+  return (std::max(one, two) + 0.05) / (std::min(one, two) + 0.05);
+}
+
+/** Nudges a text color toward the panel's opposite pole until it reads.
+ * Omarchy mixes colors.toml text colors with vscode-theme.json's
+ * editor.background, and nothing guarantees the pairing is legible. */
+QColor readableOn(QColor color, const QColor &panel) {
+  constexpr double kMinimumContrast = 2.5;
+  const QColor pole = relativeLuminance(panel) < 0.18 ? QColor(Qt::white)
+                                                      : QColor(Qt::black);
+  for (int step = 0;
+       step < 20 && contrastRatio(color, panel) < kMinimumContrast; ++step)
+    color = QColor::fromRgbF(color.redF() * 0.9 + pole.redF() * 0.1,
+                             color.greenF() * 0.9 + pole.greenF() * 0.1,
+                             color.blueF() * 0.9 + pole.blueF() * 0.1);
+  return color;
+}
+
 QColor semanticColor(const QHash<QString, QColor> &colors,
                      const QStringList &keys, const QColor &fallback) {
   for (const QString &key : keys) {
@@ -660,28 +691,38 @@ TextCardTheme loadTextCardTheme() {
   const QColor comment =
       readableColor(colors, QStringLiteral("dark_foreground"),
                     QColor(QStringLiteral("#667080")));
-  return {currentThemeName(),
-          background,
-          panel,
-          header,
-          accent,
-          readableColor(colors, QStringLiteral("foreground"),
-                        QColor(QStringLiteral("#d8dee9"))),
-          readableColor(colors, QStringLiteral("muted"),
-                        QColor(QStringLiteral("#4c566a"))),
-          readableColor(colors, QStringLiteral("selection"),
-                        QColor(QStringLiteral("#434c5e"))),
-          semanticColor(syntaxColors, {QStringLiteral("keyword")}, keyword),
-          semanticColor(syntaxColors,
-                        {QStringLiteral("function"), QStringLiteral("method")},
-                        command),
-          semanticColor(syntaxColors,
-                        {QStringLiteral("property"), QStringLiteral("macro"),
-                         QStringLiteral("operator")},
-                        flag),
-          semanticColor(syntaxColors, {QStringLiteral("number")}, number),
-          semanticColor(syntaxColors, {QStringLiteral("string")}, string),
-          semanticColor(syntaxColors, {QStringLiteral("comment")}, comment)};
+  TextCardTheme theme{
+      currentThemeName(),
+      background,
+      panel,
+      header,
+      accent,
+      readableColor(colors, QStringLiteral("foreground"),
+                    QColor(QStringLiteral("#d8dee9"))),
+      readableColor(colors, QStringLiteral("muted"),
+                    QColor(QStringLiteral("#4c566a"))),
+      readableColor(colors, QStringLiteral("selection"),
+                    QColor(QStringLiteral("#434c5e"))),
+      semanticColor(syntaxColors, {QStringLiteral("keyword")}, keyword),
+      semanticColor(syntaxColors,
+                    {QStringLiteral("function"), QStringLiteral("method")},
+                    command),
+      semanticColor(syntaxColors,
+                    {QStringLiteral("property"), QStringLiteral("macro"),
+                     QStringLiteral("operator")},
+                    flag),
+      semanticColor(syntaxColors, {QStringLiteral("number")}, number),
+      semanticColor(syntaxColors, {QStringLiteral("string")}, string),
+      semanticColor(syntaxColors, {QStringLiteral("comment")}, comment)};
+  theme.foreground = readableOn(theme.foreground, theme.panel);
+  theme.muted = readableOn(theme.muted, theme.panel);
+  theme.keyword = readableOn(theme.keyword, theme.panel);
+  theme.command = readableOn(theme.command, theme.panel);
+  theme.flag = readableOn(theme.flag, theme.panel);
+  theme.number = readableOn(theme.number, theme.panel);
+  theme.string = readableOn(theme.string, theme.panel);
+  theme.comment = readableOn(theme.comment, theme.panel);
+  return theme;
 }
 
 QSyntaxHighlighter *installTextCardHighlighter(QTextDocument *document,
