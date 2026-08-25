@@ -564,6 +564,52 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->lastBlock().position() + 1) {
+    error = QStringLiteral(
+        "Clipboard-card G did not land on the first non-blank column");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->lastBlock().position()) {
+    error = QStringLiteral(
+        "Clipboard-card dd did not land on the next line's first non-blank");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (cardEditor->textCursor().position() != 6) {
+    error = QStringLiteral(
+        "Clipboard-card charwise p did not rest on the last pasted "
+        "character: %1")
+                .arg(cardEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->findBlockByNumber(1).position() + 1) {
+    error = QStringLiteral(
+        "Clipboard-card linewise p did not land on the first non-blank");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card put placement tests did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);
   const QString deletedLastLine = QStringLiteral(
@@ -1044,6 +1090,23 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_D);
   if (!editor.clipboardTextCardTextForTest().isEmpty()) {
     error = QStringLiteral("Clipboard-card Visual delete did not empty source");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral(
+        "Clipboard-card dd on an empty card left a phantom undo mark");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (!editor.clipboardTextCardTextForTest().isEmpty()) {
+    error = QStringLiteral("Clipboard-card could not re-empty its source");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Tab, Qt::ShiftModifier);

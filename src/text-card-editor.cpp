@@ -27,6 +27,15 @@ int characterWidth(const QString &text, int position) {
              : 1;
 }
 
+/// Vim lands line jumps and linewise puts on the first non-blank column.
+void moveToFirstNonBlank(QTextCursor &cursor) {
+  const QString line = cursor.block().text();
+  int first = 0;
+  while (first < line.size() && line.at(first).isSpace())
+    ++first;
+  cursor.setPosition(cursor.block().position() + first);
+}
+
 int snapToCharacterStart(const QString &text, int position) {
   if (position > 0 && position < text.size() &&
       text.at(position).isLowSurrogate() &&
@@ -657,6 +666,11 @@ void TextCardEditor::put(bool before) {
   }
   cursor.endEditBlock();
   cursor.setPosition(placedAt);
+  if (linewise)
+    moveToFirstNonBlank(cursor);
+  else
+    cursor.setPosition(
+        std::max(placedAt, placedAt + static_cast<int>(text.size()) - 1));
   edit_->setTextCursor(cursor);
   recordUndoCursor(placedAt);
   emit statusRequested(
@@ -774,7 +788,7 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
   if (shifted && key->key() == Qt::Key_G) {
     pendingCommand_.clear();
     cursor.movePosition(QTextCursor::End);
-    clampToLastCharacter(cursor);
+    moveToFirstNonBlank(cursor);
     edit_->setTextCursor(cursor);
     return true;
   }
@@ -809,8 +823,10 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
   }
   if (pendingCommand_ == QStringLiteral("g")) {
     pendingCommand_.clear();
-    if (command == QStringLiteral("g"))
+    if (command == QStringLiteral("g")) {
       cursor.movePosition(QTextCursor::Start);
+      moveToFirstNonBlank(cursor);
+    }
     edit_->setTextCursor(cursor);
     return true;
   }
@@ -862,6 +878,8 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
       return true;
     }
     if (pending == QStringLiteral("d") && command == QStringLiteral("d")) {
+      if (edit_->toPlainText().isEmpty())
+        return true;
       yank_ = cursor.block().text() + QLatin1Char('\n');
       yankLinewise_ = true;
       cursor.movePosition(QTextCursor::StartOfBlock);
@@ -879,6 +897,9 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
       cursor.endEditBlock();
       recordUndoCursor(
           std::min(start, static_cast<int>(edit_->toPlainText().size())));
+      cursor.setPosition(
+          std::min(start, static_cast<int>(edit_->toPlainText().size())));
+      moveToFirstNonBlank(cursor);
       emit statusRequested(
           QStringLiteral("Text card · NORMAL · line deleted · "
                          "p puts it back · u undoes"));
