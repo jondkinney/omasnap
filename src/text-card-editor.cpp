@@ -50,8 +50,8 @@ void TextCardEditor::reset() {
   pendingCommand_.clear();
   insertEditStart_ = -1;
   insertEditUndoSteps_ = 0;
-  undoCursorStack_.clear();
-  redoCursorStack_.clear();
+  undoMarks_.clear();
+  redoMarks_.clear();
   edit_->setExtraSelections({});
 }
 
@@ -62,11 +62,12 @@ void TextCardEditor::exitToNormal() {
     setInsertMode(false);
 }
 
+// An insert session is grouped by undo-step marks, not one held edit block:
+// Qt defers textChanged and re-highlighting while a block is open, which
+// froze the live card for the whole session.
 void TextCardEditor::beginInsertEdit(int cursorPosition) {
   if (insertEditActive_)
     return;
-  insertEditCursor_ = QTextCursor(edit_->document());
-  insertEditCursor_.beginEditBlock();
   insertEditActive_ = true;
   insertEditStart_ = std::clamp(
       cursorPosition, 0, static_cast<int>(edit_->toPlainText().size()));
@@ -76,17 +77,25 @@ void TextCardEditor::beginInsertEdit(int cursorPosition) {
 void TextCardEditor::endInsertEdit() {
   if (!insertEditActive_)
     return;
-  insertEditCursor_.endEditBlock();
   insertEditActive_ = false;
-  if (edit_->document()->availableUndoSteps() > insertEditUndoSteps_)
-    recordUndoCursor(insertEditStart_);
+  const int after = edit_->document()->availableUndoSteps();
+  if (after > insertEditUndoSteps_) {
+    undoMarks_.push_back({std::clamp(insertEditStart_, 0,
+                                     static_cast<int>(
+                                         edit_->toPlainText().size())),
+                          insertEditUndoSteps_, after});
+    redoMarks_.clear();
+  }
   insertEditStart_ = -1;
 }
 
 void TextCardEditor::recordUndoCursor(int cursorPosition) {
-  undoCursorStack_.push_back(std::clamp(
-      cursorPosition, 0, static_cast<int>(edit_->toPlainText().size())));
-  redoCursorStack_.clear();
+  const int after = edit_->document()->availableUndoSteps();
+  undoMarks_.push_back(
+      {std::clamp(cursorPosition, 0,
+                  static_cast<int>(edit_->toPlainText().size())),
+       after - 1, after});
+  redoMarks_.clear();
 }
 
 void TextCardEditor::undo(bool redo) {
@@ -96,17 +105,27 @@ void TextCardEditor::undo(bool redo) {
     return;
   int cursorPosition = edit_->textCursor().position();
   if (redo) {
-    if (!redoCursorStack_.isEmpty()) {
-      cursorPosition = redoCursorStack_.takeLast();
-      undoCursorStack_.push_back(cursorPosition);
+    if (!redoMarks_.isEmpty()) {
+      const UndoMark mark = redoMarks_.takeLast();
+      while (document->availableUndoSteps() < mark.stepsAfter &&
+             document->isRedoAvailable())
+        edit_->redo();
+      undoMarks_.push_back(mark);
+      cursorPosition = mark.position;
+    } else {
+      edit_->redo();
     }
-    edit_->redo();
   } else {
-    if (!undoCursorStack_.isEmpty()) {
-      cursorPosition = undoCursorStack_.takeLast();
-      redoCursorStack_.push_back(cursorPosition);
+    if (!undoMarks_.isEmpty()) {
+      const UndoMark mark = undoMarks_.takeLast();
+      while (document->availableUndoSteps() > mark.stepsBefore &&
+             document->isUndoAvailable())
+        edit_->undo();
+      redoMarks_.push_back(mark);
+      cursorPosition = mark.position;
+    } else {
+      edit_->undo();
     }
-    edit_->undo();
   }
   QTextCursor cursor(edit_->document());
   cursor.setPosition(std::clamp(

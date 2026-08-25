@@ -15,6 +15,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
+#include <QTextLayout>
 
 #include <cstdlib>
 
@@ -355,6 +356,18 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_Tab);
   QTest::keyClicks(cardEditor, QStringLiteral("echo \"done\""));
   QApplication::processEvents();
+  bool liveStringColor = false;
+  const QList<QTextLayout::FormatRange> liveFormats =
+      cardEditor->document()->lastBlock().layout()->formats();
+  for (const QTextLayout::FormatRange &range : liveFormats) {
+    if (range.format.foreground().color() == theme.string)
+      liveStringColor = true;
+  }
+  if (!liveStringColor) {
+    error = QStringLiteral(
+        "Insert-mode typing was not syntax-highlighted live");
+    return false;
+  }
   if (!editor.grab().save(
           outputRoot + QStringLiteral("-clipboard-text-card-editing.png"),
           "PNG")) {

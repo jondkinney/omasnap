@@ -71,13 +71,20 @@ private:
   int visualPosition_ = -1;
   int visualSelectionStart_ = -1;
   int visualSelectionEnd_ = -1;
+  /** One edit for `u`: [stepsBefore, stepsAfter) on the document's undo
+   * stack, with the cursor position both undo and redo restore. */
+  struct UndoMark {
+    int position = 0;
+    int stepsBefore = 0;
+    int stepsAfter = 0;
+  };
+
   QString yank_;
   bool yankLinewise_ = false;
   QString pendingCommand_;
-  QTextCursor insertEditCursor_;
   bool insertEditActive_ = false;
   int insertEditStart_ = -1;
   int insertEditUndoSteps_ = 0;
-  QVector<int> undoCursorStack_;
-  QVector<int> redoCursorStack_;
+  QVector<UndoMark> undoMarks_;
+  QVector<UndoMark> redoMarks_;
 };
