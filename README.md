@@ -274,6 +274,8 @@ massaging a snippet without embedding a full editor:
 | `Esc` | Return from Insert or Visual to Normal mode |
 | `x`, `dd`, `Shift+J` | Delete a character, delete a line, or join it with the next line |
 | `v`, `V`, then movement; `y` | Select characters or whole lines, copy them, and return to the selection start |
+| `yy` | Copy the current line |
+| `p`, `Shift+P` | Put after/below or before/above the cursor/current line |
 | `u`, `Ctrl+R` | Undo or redo |
 | `Tab`, `Shift+Tab` | Indent or outdent in Insert mode |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |

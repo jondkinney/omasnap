@@ -479,6 +479,8 @@ private:
   void leaveClipboardTextCardVisualMode(int cursorPosition);
   [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
   void joinClipboardTextCardLines();
+  void yankClipboardTextCardLine();
+  void putClipboardTextCard(bool before);
   [[nodiscard]] QString clipboardTextCardMode() const;
   [[nodiscard]] bool handleClipboardTextCardNormalKey(QKeyEvent *key);
   /// The editor's other mode of working: not a region of the frozen screen
@@ -757,6 +759,10 @@ private:
   bool textCardVisualLineMode_ = false;
   int textCardVisualAnchor_ = -1;
   int textCardVisualPosition_ = -1;
+  int textCardVisualSelectionStart_ = -1;
+  int textCardVisualSelectionEnd_ = -1;
+  QString textCardYank_;
+  bool textCardYankLinewise_ = false;
   QChar textCardPendingCommand_;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;

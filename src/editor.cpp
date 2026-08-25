@@ -41,6 +41,7 @@
 #include <QTextCursor>
 #include <QTextLayout>
 #include <QTextDocument>
+#include <QTextEdit>
 #include <QThread>
 #include <QTimer>
 #include <QWheelEvent>
@@ -1101,6 +1102,9 @@ void CaptureEditor::setClipboardTextCardInsertMode(bool insertMode) {
   textCardVisualLineMode_ = false;
   textCardVisualAnchor_ = -1;
   textCardVisualPosition_ = -1;
+  textCardVisualSelectionStart_ = -1;
+  textCardVisualSelectionEnd_ = -1;
+  textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   updateClipboardTextCardEditorGeometry();
   setStatus(insertMode
@@ -1142,9 +1146,11 @@ void CaptureEditor::startClipboardTextCardVisualMode(bool linewise) {
 
 void CaptureEditor::updateClipboardTextCardVisualSelection() {
   const int textLength = textCardEditor_->toPlainText().size();
-  QTextCursor selection(textCardEditor_->document());
   if (textLength <= 0) {
-    textCardEditor_->setTextCursor(selection);
+    textCardVisualSelectionStart_ = 0;
+    textCardVisualSelectionEnd_ = 0;
+    textCardEditor_->setExtraSelections({});
+    textCardEditor_->setTextCursor(QTextCursor(textCardEditor_->document()));
     return;
   }
 
@@ -1152,8 +1158,10 @@ void CaptureEditor::updateClipboardTextCardVisualSelection() {
       std::clamp(textCardVisualAnchor_, 0, textLength - 1);
   textCardVisualPosition_ =
       std::clamp(textCardVisualPosition_, 0, textLength - 1);
-  int start = std::min(textCardVisualAnchor_, textCardVisualPosition_);
-  int end = std::max(textCardVisualAnchor_, textCardVisualPosition_) + 1;
+  textCardVisualSelectionStart_ =
+      std::min(textCardVisualAnchor_, textCardVisualPosition_);
+  textCardVisualSelectionEnd_ =
+      std::max(textCardVisualAnchor_, textCardVisualPosition_) + 1;
   if (textCardVisualLineMode_) {
     const QTextBlock anchorBlock =
         textCardEditor_->document()->findBlock(textCardVisualAnchor_);
@@ -1165,12 +1173,25 @@ void CaptureEditor::updateClipboardTextCardVisualSelection() {
     const QTextBlock last = anchorBlock.position() <= activeBlock.position()
                                 ? activeBlock
                                 : anchorBlock;
-    start = first.position();
-    end = std::min(textLength, last.position() + last.length());
+    textCardVisualSelectionStart_ = first.position();
+    textCardVisualSelectionEnd_ =
+        std::min(textLength, last.position() + last.length());
   }
-  selection.setPosition(start);
-  selection.setPosition(end, QTextCursor::KeepAnchor);
-  textCardEditor_->setTextCursor(selection);
+  QTextEdit::ExtraSelection highlight;
+  highlight.cursor = QTextCursor(textCardEditor_->document());
+  highlight.cursor.setPosition(textCardVisualSelectionStart_);
+  highlight.cursor.setPosition(textCardVisualSelectionEnd_,
+                               QTextCursor::KeepAnchor);
+  highlight.format.setBackground(textCardTheme_.selection);
+  if (textCardVisualLineMode_)
+    highlight.format.setProperty(QTextFormat::FullWidthSelection, true);
+  textCardEditor_->setExtraSelections({highlight});
+
+  // The highlight covers complete lines, but this real cursor remains at its
+  // motion column so j/k feels like Vim instead of jumping to a line edge.
+  QTextCursor active(textCardEditor_->document());
+  active.setPosition(textCardVisualPosition_);
+  textCardEditor_->setTextCursor(active);
 }
 
 void CaptureEditor::leaveClipboardTextCardVisualMode(int cursorPosition) {
@@ -1178,6 +1199,9 @@ void CaptureEditor::leaveClipboardTextCardVisualMode(int cursorPosition) {
   textCardVisualLineMode_ = false;
   textCardVisualAnchor_ = -1;
   textCardVisualPosition_ = -1;
+  textCardVisualSelectionStart_ = -1;
+  textCardVisualSelectionEnd_ = -1;
+  textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   QTextCursor cursor(textCardEditor_->document());
   cursor.setPosition(std::clamp(cursorPosition, 0, textLength));
@@ -1200,10 +1224,11 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     return true;
   }
   if (command == QStringLiteral("y")) {
-    const QTextCursor selection = textCardEditor_->textCursor();
-    const int first = selection.selectionStart();
+    const int first = textCardVisualSelectionStart_;
     const QString text = textCardEditor_->toPlainText().mid(
-        first, selection.selectionEnd() - first);
+        first, textCardVisualSelectionEnd_ - first);
+    textCardYank_ = text;
+    textCardYankLinewise_ = textCardVisualLineMode_;
     QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
     leaveClipboardTextCardVisualMode(first);
     setStatus(QStringLiteral("Text card · NORMAL · yanked %1 character%2 to "
@@ -1298,6 +1323,58 @@ void CaptureEditor::joinClipboardTextCardLines() {
   setStatus(QStringLiteral("Text card · NORMAL · joined lines · u undoes"));
 }
 
+void CaptureEditor::yankClipboardTextCardLine() {
+  const QTextCursor cursor = textCardEditor_->textCursor();
+  textCardYank_ = cursor.block().text() + QLatin1Char('\n');
+  textCardYankLinewise_ = true;
+  QGuiApplication::clipboard()->setText(textCardYank_, QClipboard::Clipboard);
+  setStatus(QStringLiteral("Text card · NORMAL · line yanked to clipboard · "
+                           "p below · P above"));
+}
+
+void CaptureEditor::putClipboardTextCard(bool before) {
+  QString text = textCardYank_;
+  bool linewise = textCardYankLinewise_;
+  if (text.isEmpty()) {
+    text = QGuiApplication::clipboard()->text(QClipboard::Clipboard);
+    linewise = false;
+  }
+  if (text.isEmpty())
+    return;
+
+  QTextCursor cursor = textCardEditor_->textCursor();
+  cursor.beginEditBlock();
+  int placedAt = cursor.position();
+  if (linewise) {
+    if (text.endsWith(QLatin1Char('\n')))
+      text.chop(1);
+    if (before) {
+      cursor.movePosition(QTextCursor::StartOfBlock);
+      placedAt = cursor.position();
+      cursor.insertText(text + QLatin1Char('\n'));
+    } else {
+      cursor.movePosition(QTextCursor::EndOfBlock);
+      placedAt = cursor.position() + 1;
+      cursor.insertText(QLatin1Char('\n') + text);
+    }
+  } else {
+    if (!before)
+      cursor.movePosition(QTextCursor::NextCharacter);
+    placedAt = cursor.position();
+    cursor.insertText(text);
+  }
+  cursor.endEditBlock();
+  cursor.setPosition(placedAt);
+  textCardEditor_->setTextCursor(cursor);
+  setStatus(linewise
+                ? QStringLiteral("Text card · NORMAL · put %1 current line")
+                      .arg(before ? QStringLiteral("above")
+                                  : QStringLiteral("below"))
+                : QStringLiteral("Text card · NORMAL · text put %1 cursor")
+                      .arg(before ? QStringLiteral("before")
+                                  : QStringLiteral("after")));
+}
+
 bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   if (textCardVisualAnchor_ >= 0)
     return handleClipboardTextCardVisualKey(key);
@@ -1319,6 +1396,11 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   if (shifted && key->key() == Qt::Key_J) {
     textCardPendingCommand_ = {};
     joinClipboardTextCardLines();
+    return true;
+  }
+  if (key->key() == Qt::Key_P) {
+    textCardPendingCommand_ = {};
+    putClipboardTextCard(shifted);
     return true;
   }
   if (shifted && key->key() == Qt::Key_G) {
@@ -1380,6 +1462,12 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     textCardEditor_->setTextCursor(cursor);
     return true;
   }
+  if (textCardPendingCommand_ == QLatin1Char('y')) {
+    textCardPendingCommand_ = {};
+    if (command == QStringLiteral("y"))
+      yankClipboardTextCardLine();
+    return true;
+  }
 
   if (command == QStringLiteral("g")) {
     textCardPendingCommand_ = QLatin1Char('g');
@@ -1387,6 +1475,10 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   }
   if (command == QStringLiteral("d")) {
     textCardPendingCommand_ = QLatin1Char('d');
+    return true;
+  }
+  if (command == QStringLiteral("y")) {
+    textCardPendingCommand_ = QLatin1Char('y');
     return true;
   }
   if (key->key() == Qt::Key_V) {
@@ -6035,6 +6127,11 @@ void CaptureEditor::openClipboardTextCard() {
   textCardVisualLineMode_ = false;
   textCardVisualAnchor_ = -1;
   textCardVisualPosition_ = -1;
+  textCardVisualSelectionStart_ = -1;
+  textCardVisualSelectionEnd_ = -1;
+  textCardYank_.clear();
+  textCardYankLinewise_ = false;
+  textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   textCardSourceEditorRect_ = card.editorRect;
   delete textCardHighlighter_;
@@ -6161,6 +6258,11 @@ void CaptureEditor::resetClipboardTextCardEditor() {
   textCardVisualLineMode_ = false;
   textCardVisualAnchor_ = -1;
   textCardVisualPosition_ = -1;
+  textCardVisualSelectionStart_ = -1;
+  textCardVisualSelectionEnd_ = -1;
+  textCardYank_.clear();
+  textCardYankLinewise_ = false;
+  textCardEditor_->setExtraSelections({});
   textCardPendingCommand_ = {};
   textCardEditor_->hide();
   delete textCardHighlighter_;

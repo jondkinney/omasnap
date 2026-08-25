@@ -13,6 +13,7 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
 
 namespace {
 /** Writes an executable fake command. */
@@ -213,7 +214,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_V);
   QTest::keyClick(cardEditor, Qt::Key_L);
-  if (cardEditor->textCursor().selectedText() != QStringLiteral("co") ||
+  if (cardEditor->textCursor().position() != 1 ||
       !editor.statusForTest().contains(QStringLiteral("VISUAL"))) {
     error = QStringLiteral("Clipboard-card v did not visually select text");
     return false;
@@ -229,8 +230,24 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
   QTest::keyClick(cardEditor, Qt::Key_V, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_J);
+  const int secondLineColumnTwo =
+      cardEditor->document()->findBlockByNumber(1).position() + 2;
+  if (cardEditor->textCursor().position() != secondLineColumnTwo) {
+    error = QStringLiteral(
+        "Clipboard-card V movement did not retain the active column");
+    return false;
+  }
+  QApplication::processEvents();
+  if (!editor.grab().save(
+          outputRoot + QStringLiteral("-clipboard-text-card-visual-line.png"),
+          "PNG")) {
+    error = QStringLiteral("Could not save the Visual-line text-card fixture");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_Y);
   const QString firstTwoLines =
       QStringLiteral("const answer = \"hello\";\n# install\n");
@@ -239,6 +256,47 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       cardEditor->textCursor().position() != 0) {
     error = QStringLiteral(
         "Clipboard-card V/y did not copy whole lines or restore the cursor");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  const QString putBelow = QStringLiteral(
+      "const answer = \"hello\";\nconst answer = \"hello\";\n# install\n"
+      "# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != putBelow) {
+    error = QStringLiteral("Clipboard-card V/y/p did not put below the line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_P, Qt::ShiftModifier);
+  const QString putAbove = QStringLiteral(
+      "const answer = \"hello\";\n# install\nconst answer = \"hello\";\n"
+      "# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != putAbove) {
+    error = QStringLiteral("Clipboard-card V/y/P did not put above the line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  const QString duplicatedLine = QStringLiteral(
+      "const answer = \"hello\";\nconst answer = \"hello\";\n# install\n"
+      "omasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != duplicatedLine ||
+      QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
+          QStringLiteral("const answer = \"hello\";\n")) {
+    error = QStringLiteral("Clipboard-card yyp did not duplicate the line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card puts were not individually undoable");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
