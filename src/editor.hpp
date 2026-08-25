@@ -776,6 +776,9 @@ private:
   QString textCardFilenameBeforeEdit_;
   QString textCardDocumentText_;
   QString textCardDocumentFilename_;
+  QString textCardOpenedText_;
+  QString textCardOpenedFilename_;
+  bool textCardDiscardArmed_ = false;
   bool clipboardTextCardEditing_ = false;
   bool textCardRestoreEditing_ = false;
   TextCardEditor *textCardModal_ = nullptr;

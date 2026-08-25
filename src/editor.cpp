@@ -804,6 +804,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   textCardEditor_->viewport()->installEventFilter(this);
   connect(textCardEditor_, &QPlainTextEdit::textChanged, this,
           [this] {
+            textCardDiscardArmed_ = false;
             reinstallClipboardTextCardHighlighter();
             updateClipboardTextCardPreview();
           });
@@ -5907,6 +5908,9 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
 
   textCardDocumentText_ = text;
   textCardDocumentFilename_ = textCardFilename_;
+  textCardOpenedText_ = text;
+  textCardOpenedFilename_ = textCardFilename_;
+  textCardDiscardArmed_ = false;
   clipboardTextCardEditing_ = true;
   textCardModal_->reset();
   textCardModal_->setSelectionColor(textCardTheme_.selection);
@@ -6122,6 +6126,14 @@ void CaptureEditor::reopenClipboardTextCard() {
 void CaptureEditor::cancelClipboardTextCard() {
   if (!clipboardTextCardEditing_)
     return;
+  const bool dirty = textCardEditor_->toPlainText() != textCardOpenedText_ ||
+                     textCardFilename_ != textCardOpenedFilename_;
+  if (dirty && !textCardDiscardArmed_) {
+    textCardDiscardArmed_ = true;
+    setStatus(QStringLiteral("Text card · unsaved edits · q again discards "
+                             "them · Ctrl+Enter renders instead"));
+    return;
+  }
   resetClipboardTextCardEditor();
   setFocus(Qt::OtherFocusReason);
   close();

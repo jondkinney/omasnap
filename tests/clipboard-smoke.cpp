@@ -609,6 +609,13 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card put placement tests did not undo");
     return false;
   }
+  QTest::keyClick(cardEditor, Qt::Key_Q);
+  if (!editor.clipboardTextCardEditingForTest() ||
+      !editor.statusForTest().contains(QStringLiteral("q again"))) {
+    error = QStringLiteral(
+        "Clipboard-card q discarded unsaved edits without asking");
+    return false;
+  }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_D);
@@ -1307,6 +1314,15 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
   if (!compactEditor) {
     error = QStringLiteral("Compact text card did not focus its editor");
+    return false;
+  }
+  QTest::keyClick(compactEditor, Qt::Key_X);
+  QTest::keyClick(compactEditor, Qt::Key_Q);
+  QApplication::processEvents();
+  if (!handedOff.isVisible() ||
+      !handedOff.statusForTest().contains(QStringLiteral("q again"))) {
+    error = QStringLiteral(
+        "Clipboard-card q dropped edits in the compact window without asking");
     return false;
   }
   QTest::keyClick(compactEditor, Qt::Key_Q);
