@@ -1037,6 +1037,10 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
       endClipboardTextCardFilenameEdit(false);
       return true;
     }
+    if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+      endClipboardTextCardFilenameEdit(true);
+      return true;
+    }
   } else if (watched == textCardFilenameEditor_ &&
              event->type() == QEvent::FocusOut) {
     QTimer::singleShot(0, this, [this] {
@@ -1046,6 +1050,18 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     });
   } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
+    const bool editFilename =
+        key->key() == Qt::Key_Backtab ||
+        (key->key() == Qt::Key_Tab &&
+         key->modifiers().testFlag(Qt::ShiftModifier));
+    if (editFilename) {
+      if (textCardVisualAnchor_ >= 0)
+        leaveClipboardTextCardVisualMode(textCardVisualPosition_);
+      if (textCardInsertMode_)
+        setClipboardTextCardInsertMode(false);
+      beginClipboardTextCardFilenameEdit();
+      return true;
+    }
     if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
         key->modifiers().testFlag(Qt::ControlModifier)) {
       finishClipboardTextCard();
@@ -1057,36 +1073,9 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
       setClipboardTextCardInsertMode(false);
       return true;
     }
-    if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+    if (key->key() == Qt::Key_Tab) {
       QTextCursor cursor = textCardEditor_->textCursor();
-      const bool outdent = key->key() == Qt::Key_Backtab ||
-                           key->modifiers().testFlag(Qt::ShiftModifier);
-      if (!outdent) {
-        cursor.insertText(QStringLiteral("\t"));
-      } else if (!cursor.hasSelection()) {
-        const int original = cursor.position();
-        const int lineStart = cursor.block().position();
-        int remove = 0;
-        while (remove < kTextCardTabSpaces && original - remove > lineStart) {
-          cursor.setPosition(original - remove - 1);
-          cursor.setPosition(original - remove, QTextCursor::KeepAnchor);
-          const QString previous = cursor.selectedText();
-          if (previous == QStringLiteral("\t")) {
-            remove = 1;
-            break;
-          }
-          if (previous != QStringLiteral(" ")) {
-            remove = 0;
-            break;
-          }
-          ++remove;
-        }
-        if (remove > 0) {
-          cursor.setPosition(original - remove);
-          cursor.setPosition(original, QTextCursor::KeepAnchor);
-          cursor.removeSelectedText();
-        }
-      }
+      cursor.insertText(QStringLiteral("\t"));
       return true;
     }
   } else if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
@@ -1171,9 +1160,9 @@ void CaptureEditor::startClipboardTextCardVisualMode(bool linewise) {
   updateClipboardTextCardVisualSelection();
   setStatus(linewise
                 ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                 "copies · x/d delete · Esc Normal")
+                                 "copies · x/d delete · c changes · Esc Normal")
                 : QStringLiteral("Text card · VISUAL · hjkl move · y copies "
-                                 "· x/d delete · Esc Normal"));
+                                 "· x/d delete · c changes · Esc Normal"));
   updateClipboardTextCardPreview();
 }
 
@@ -1257,8 +1246,9 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     textCardPendingCommand_ = {};
     return true;
   }
+  const bool changeSelection = key->key() == Qt::Key_C;
   if (command == QStringLiteral("y") || command == QStringLiteral("d") ||
-      command == QStringLiteral("x")) {
+      command == QStringLiteral("x") || changeSelection) {
     const int first = textCardVisualSelectionStart_;
     const int last = textCardVisualSelectionEnd_;
     const QString source = textCardEditor_->toPlainText();
@@ -1277,16 +1267,26 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
 
     QTextCursor deletion(textCardEditor_->document());
     int deletionStart = first;
-    if (textCardVisualLineMode_ && last == source.size() && first > 0)
+    const bool linewise = textCardVisualLineMode_;
+    if (linewise && !changeSelection && last == source.size() && first > 0)
       deletionStart = first - 1;
     deletion.beginEditBlock();
     deletion.setPosition(deletionStart);
     deletion.setPosition(last, QTextCursor::KeepAnchor);
     deletion.removeSelectedText();
+    if (changeSelection && linewise &&
+        first < textCardEditor_->toPlainText().size()) {
+      deletion.setPosition(first);
+      deletion.insertText(QStringLiteral("\n"));
+    }
     deletion.endEditBlock();
     const int remainingLength =
         static_cast<int>(textCardEditor_->toPlainText().size());
     leaveClipboardTextCardVisualMode(std::min(first, remainingLength));
+    if (changeSelection) {
+      setClipboardTextCardInsertMode(true);
+      return true;
+    }
     setStatus(QStringLiteral("Text card · NORMAL · selection deleted · "
                              "p puts it back · u undoes"));
     return true;
@@ -1299,9 +1299,9 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
       updateClipboardTextCardVisualSelection();
       setStatus(shifted
                     ? QStringLiteral("Text card · VISUAL LINE · hjkl move · y "
-                                     "copies · x/d delete · Esc Normal")
+                                     "copies · x/d delete · c changes · Esc Normal")
                     : QStringLiteral("Text card · VISUAL · hjkl move · y "
-                                     "copies · x/d delete · Esc Normal"));
+                                     "copies · x/d delete · c changes · Esc Normal"));
       updateClipboardTextCardPreview();
     }
     return true;
@@ -1309,14 +1309,14 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
 
   QTextCursor motion(textCardEditor_->document());
   motion.setPosition(textCardVisualPosition_);
-  if (textCardPendingCommand_ == QLatin1Char('g')) {
+  if (textCardPendingCommand_ == QStringLiteral("g")) {
     textCardPendingCommand_ = {};
     if (command == QStringLiteral("g"))
       motion.movePosition(QTextCursor::Start);
     else
       return true;
   } else if (command == QStringLiteral("g")) {
-    textCardPendingCommand_ = QLatin1Char('g');
+    textCardPendingCommand_ = QStringLiteral("g");
     return true;
   } else if (shifted && key->key() == Qt::Key_G) {
     motion.movePosition(QTextCursor::End);
@@ -1375,6 +1375,66 @@ void CaptureEditor::joinClipboardTextCardLines() {
   cursor.setPosition(joinPosition);
   textCardEditor_->setTextCursor(cursor);
   setStatus(QStringLiteral("Text card · NORMAL · joined lines · u undoes"));
+}
+
+bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
+                                                       bool around) {
+  const QTextCursor current = textCardEditor_->textCursor();
+  const QTextBlock block = current.block();
+  const QString line = block.text();
+  if (line.isEmpty())
+    return false;
+
+  int position = std::clamp(current.position() - block.position(), 0,
+                            static_cast<int>(line.size()));
+  if (position == line.size())
+    --position;
+  const auto characterClass = [](QChar character) {
+    if (character.isLetterOrNumber() || character == QLatin1Char('_'))
+      return 0;
+    if (character.isSpace())
+      return 1;
+    return 2;
+  };
+  const int selectedClass = characterClass(line.at(position));
+  int first = position;
+  int last = position + 1;
+  while (first > 0 &&
+         characterClass(line.at(first - 1)) == selectedClass)
+    --first;
+  while (last < line.size() &&
+         characterClass(line.at(last)) == selectedClass)
+    ++last;
+
+  if (around && selectedClass != 1) {
+    const int contentLast = last;
+    while (last < line.size() && line.at(last).isSpace())
+      ++last;
+    if (last == contentLast) {
+      while (first > 0 && line.at(first - 1).isSpace())
+        --first;
+    }
+  }
+
+  const int documentFirst = block.position() + first;
+  const int documentLast = block.position() + last;
+  textCardYank_ = textCardEditor_->toPlainText().mid(
+      documentFirst, documentLast - documentFirst);
+  textCardYankLinewise_ = false;
+  QTextCursor edit(textCardEditor_->document());
+  edit.beginEditBlock();
+  edit.setPosition(documentFirst);
+  edit.setPosition(documentLast, QTextCursor::KeepAnchor);
+  edit.removeSelectedText();
+  edit.endEditBlock();
+  edit.setPosition(documentFirst);
+  textCardEditor_->setTextCursor(edit);
+  if (change)
+    setClipboardTextCardInsertMode(true);
+  else
+    setStatus(QStringLiteral("Text card · NORMAL · word deleted · "
+                             "p puts it back · u undoes"));
+  return true;
 }
 
 void CaptureEditor::yankClipboardTextCardLine() {
@@ -1457,6 +1517,22 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     beginClipboardTextCardFilenameEdit();
     return true;
   }
+  if (shifted && key->key() == Qt::Key_C) {
+    textCardPendingCommand_ = {};
+    const int first = cursor.position();
+    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    textCardYank_ = cursor.selectedText();
+    textCardYankLinewise_ = false;
+    if (cursor.hasSelection()) {
+      cursor.beginEditBlock();
+      cursor.removeSelectedText();
+      cursor.endEditBlock();
+    }
+    cursor.setPosition(first);
+    textCardEditor_->setTextCursor(cursor);
+    setClipboardTextCardInsertMode(true);
+    return true;
+  }
   if (key->key() == Qt::Key_P) {
     textCardPendingCommand_ = {};
     putClipboardTextCard(shifted);
@@ -1496,16 +1572,33 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     setClipboardTextCardInsertMode(true);
     return true;
   }
-  if (textCardPendingCommand_ == QLatin1Char('g')) {
+  if (textCardPendingCommand_ == QStringLiteral("g")) {
     textCardPendingCommand_ = {};
     if (command == QStringLiteral("g"))
       cursor.movePosition(QTextCursor::Start);
     textCardEditor_->setTextCursor(cursor);
     return true;
   }
-  if (textCardPendingCommand_ == QLatin1Char('d')) {
+  if (QStringList{QStringLiteral("di"), QStringLiteral("da"),
+                  QStringLiteral("ci"), QStringLiteral("ca")}
+          .contains(textCardPendingCommand_)) {
+    const QString pending = textCardPendingCommand_;
     textCardPendingCommand_ = {};
-    if (command == QStringLiteral("d")) {
+    if (command == QStringLiteral("w"))
+      static_cast<void>(applyClipboardTextCardWordOperator(
+          pending.startsWith(QLatin1Char('c')),
+          pending.endsWith(QLatin1Char('a'))));
+    return true;
+  }
+  if (textCardPendingCommand_ == QStringLiteral("d") ||
+      textCardPendingCommand_ == QStringLiteral("c")) {
+    const QString pending = textCardPendingCommand_;
+    textCardPendingCommand_ = {};
+    if (command == QStringLiteral("i") || command == QStringLiteral("a")) {
+      textCardPendingCommand_ = pending + command;
+      return true;
+    }
+    if (pending == QStringLiteral("d") && command == QStringLiteral("d")) {
       textCardYank_ = cursor.block().text() + QLatin1Char('\n');
       textCardYankLinewise_ = true;
       cursor.movePosition(QTextCursor::StartOfBlock);
@@ -1521,11 +1614,25 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
       cursor.removeSelectedText();
       setStatus(QStringLiteral("Text card · NORMAL · line deleted · "
                                "p puts it back · u undoes"));
+    } else if (pending == QStringLiteral("c") &&
+               command == QStringLiteral("c")) {
+      textCardYank_ = cursor.block().text() + QLatin1Char('\n');
+      textCardYankLinewise_ = true;
+      cursor.movePosition(QTextCursor::StartOfBlock);
+      const int first = cursor.position();
+      cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+      cursor.beginEditBlock();
+      cursor.removeSelectedText();
+      cursor.endEditBlock();
+      cursor.setPosition(first);
+      textCardEditor_->setTextCursor(cursor);
+      setClipboardTextCardInsertMode(true);
+      return true;
     }
     textCardEditor_->setTextCursor(cursor);
     return true;
   }
-  if (textCardPendingCommand_ == QLatin1Char('y')) {
+  if (textCardPendingCommand_ == QStringLiteral("y")) {
     textCardPendingCommand_ = {};
     if (command == QStringLiteral("y"))
       yankClipboardTextCardLine();
@@ -1533,15 +1640,19 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
   }
 
   if (command == QStringLiteral("g")) {
-    textCardPendingCommand_ = QLatin1Char('g');
+    textCardPendingCommand_ = QStringLiteral("g");
     return true;
   }
   if (command == QStringLiteral("d")) {
-    textCardPendingCommand_ = QLatin1Char('d');
+    textCardPendingCommand_ = QStringLiteral("d");
+    return true;
+  }
+  if (command == QStringLiteral("c")) {
+    textCardPendingCommand_ = QStringLiteral("c");
     return true;
   }
   if (command == QStringLiteral("y")) {
-    textCardPendingCommand_ = QLatin1Char('y');
+    textCardPendingCommand_ = QStringLiteral("y");
     return true;
   }
   if (key->key() == Qt::Key_V) {
@@ -6318,7 +6429,7 @@ void CaptureEditor::beginClipboardTextCardFilenameEdit() {
   textCardFilenameEditor_->raise();
   textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
   setStatus(QStringLiteral("Text card · FILENAME · type a path or name · "
-                           "Enter accepts · Esc cancels"));
+                           "Enter/Tab accepts · Esc cancels"));
 }
 
 void CaptureEditor::endClipboardTextCardFilenameEdit(bool accept) {

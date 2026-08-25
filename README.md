@@ -263,8 +263,9 @@ foreground, and syntax colors. The filename starts from lightweight content
 detection, and its extension selects a language-specific syntax profile. Press
 `F` or click the title to rename it inline; the status line shows the basename
 and detected language. Profiles cover Shell, C/C++, JavaScript/TypeScript,
-Python, Rust, Go, JSON, YAML, Markdown, Lua, and CMake, with a plain-text
-fallback. It starts in Normal mode; `Ctrl+Enter` renders the text
+Python, Ruby, Rust, Go, QML, JSON, YAML, TOML, CSS/SCSS/Sass, Markdown, Lua,
+and CMake, with a plain-text fallback. It starts in Normal mode; `Ctrl+Enter`
+renders the text
 into the card and hands it to the normal annotation editor. From there,
 `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every annotation and
 canvas control remains available after rendering.
@@ -277,13 +278,14 @@ massaging a snippet without embedding a full editor:
 | `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal or Visual mode |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
 | `Esc` | Return from Insert or Visual to Normal mode |
-| `F` or click the title | Edit the displayed filename; Enter accepts and Esc cancels |
-| `x`, `dd`, `Shift+J` | Delete a character, delete a line, or join it with the next line |
-| `v`, `V`, then movement; `y`, `d`, `x` | Select characters or whole lines, then copy or delete them |
+| `F`, `Shift+Tab`, or click the title | Edit the displayed filename; Enter or Tab accepts and Esc cancels |
+| `x`, `dd`, `diw`, `daw`, `Shift+J` | Delete a character, line, inner/around word, or join with the next line |
+| `C`, `cc`, `ciw`, `caw` | Change to end of line, a whole line, or the inner/around word |
+| `v`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters or whole lines, then copy, delete, or change them |
 | `yy` | Copy the current line |
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line |
 | `u`, `Ctrl+R` | Undo or redo |
-| `Tab`, `Shift+Tab` | Indent or outdent in Insert mode |
+| `Tab` | Indent in Insert mode |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
 | `q` | Cancel from Normal mode and return to capture selection |
 

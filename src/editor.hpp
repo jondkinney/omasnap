@@ -487,6 +487,8 @@ private:
   void leaveClipboardTextCardVisualMode(int cursorPosition);
   [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
   void joinClipboardTextCardLines();
+  [[nodiscard]] bool applyClipboardTextCardWordOperator(bool change,
+                                                        bool around);
   void yankClipboardTextCardLine();
   void putClipboardTextCard(bool before);
   [[nodiscard]] QString clipboardTextCardMode() const;
@@ -775,7 +777,7 @@ private:
   int textCardVisualSelectionEnd_ = -1;
   QString textCardYank_;
   bool textCardYankLinewise_ = false;
-  QChar textCardPendingCommand_;
+  QString textCardPendingCommand_;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

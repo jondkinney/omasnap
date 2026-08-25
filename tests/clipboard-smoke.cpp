@@ -77,6 +77,38 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card language detection failed");
     return false;
   }
+  const QVector<QPair<QString, QString>> addedProfiles{
+      {QStringLiteral("snippet.rb"), QStringLiteral("Ruby")},
+      {QStringLiteral("Main.qml"), QStringLiteral("QML")},
+      {QStringLiteral("theme.toml"), QStringLiteral("TOML")},
+      {QStringLiteral("site.css"), QStringLiteral("CSS")},
+      {QStringLiteral("site.scss"), QStringLiteral("SCSS")},
+      {QStringLiteral("site.sass"), QStringLiteral("Sass")},
+  };
+  for (const auto &[filename, language] : addedProfiles) {
+    if (detectTextCardLanguage(QStringLiteral("sample"), filename) !=
+        language) {
+      error = QStringLiteral("Clipboard-card did not detect %1 syntax")
+                  .arg(language);
+      return false;
+    }
+  }
+  if (detectTextCardLanguage(
+          QStringLiteral("def greet\n  puts 'hello'\nend")) !=
+          QStringLiteral("Ruby") ||
+      detectTextCardLanguage(
+          QStringLiteral("import QtQuick\nRectangle { width: 100 }")) !=
+          QStringLiteral("QML") ||
+      detectTextCardLanguage(
+          QStringLiteral("[package]\nname = \"omasnap\"")) !=
+          QStringLiteral("TOML") ||
+      detectTextCardLanguage(
+          QStringLiteral(".card {\n  color: #fff;\n}")) !=
+          QStringLiteral("CSS")) {
+    error = QStringLiteral(
+        "Clipboard-card added content detection was shadowed");
+    return false;
+  }
 
   QString renderError;
   const QImage card = renderTextCard(text, renderError);
@@ -173,10 +205,12 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
         "Clipboard-card filename edit did not update the title or language");
     return false;
   }
-  QTest::keyClick(cardEditor, Qt::Key_F, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_Tab, Qt::ShiftModifier);
   filenameEditor = qobject_cast<QLineEdit *>(QApplication::focusWidget());
   if (!filenameEditor) {
-    error = QStringLiteral("Clipboard-card filename editor did not reopen");
+    error = QStringLiteral(
+        "Clipboard-card Shift+Tab did not focus the filename editor");
     return false;
   }
   QTest::keyClick(filenameEditor, Qt::Key_A, Qt::ControlModifier);
@@ -263,6 +297,85 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_U);
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral("Clipboard-card dd/put operations did not undo");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  const QString innerWordDeleted = QStringLiteral(
+      " answer = \"hello\";\n# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != innerWordDeleted) {
+    error = QStringLiteral("Clipboard-card diw did not delete the inner word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_A);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  const QString aroundWordDeleted = QStringLiteral(
+      "answer = \"hello\";\n# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != aroundWordDeleted) {
+    error = QStringLiteral("Clipboard-card daw did not delete around the word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (editor.clipboardTextCardTextForTest() != innerWordDeleted ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("Clipboard-card ciw did not change the inner word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_A);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (editor.clipboardTextCardTextForTest() != aroundWordDeleted ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("Clipboard-card caw did not change around the word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_C, Qt::ShiftModifier);
+  const QString changedToEnd = QStringLiteral(
+      "const \n# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != changedToEnd ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("Clipboard-card C did not change to end of line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  const QString changedLine = QStringLiteral(
+      "\n# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != changedLine ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("Clipboard-card cc did not change the line");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card change operations did not undo");
     return false;
   }
 
@@ -435,6 +548,43 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   if (editor.clipboardTextCardTextForTest() != edited) {
     error = QStringLiteral(
         "Clipboard-card Visual-character delete did not undo and redo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_C, Qt::ShiftModifier);
+  if (editor.clipboardTextCardTextForTest() != visualCharactersDeleted ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral(
+        "Clipboard-card Visual C did not change selected characters");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card Visual C did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  const QString visualLinesChanged = QStringLiteral(
+      "\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != visualLinesChanged ||
+      !editor.statusForTest().contains(QStringLiteral("INSERT"))) {
+    error = QStringLiteral("Clipboard-card Visual-line c did not change lines");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card Visual-line c did not undo");
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);

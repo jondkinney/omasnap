@@ -75,11 +75,29 @@ public:
               theme.keyword, QFont::DemiBold);
       addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
               QFont::Normal, true);
+    } else if (language == QStringLiteral("QML")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:as|break|case|catch|const|continue|default|do|else|false|finally|for|function|if|import|in|instanceof|let|null|on|property|readonly|required|return|signal|switch|this|throw|true|try|typeof|var|void|while)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(^\s*[A-Z][A-Za-z0-9_.]*\s*(?=\{))"),
+              theme.command, QFont::DemiBold);
+      addRule(QStringLiteral(R"(\bon[A-Z][A-Za-z0-9_]*\b)"), theme.flag);
+      addRule(QStringLiteral(R"(//.*$|/\*.*\*/)"), theme.comment,
+              QFont::Normal, true);
     } else if (language == QStringLiteral("Python")) {
       addRule(QStringLiteral(
                   R"(\b(?:and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|match|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)"),
               theme.keyword, QFont::DemiBold);
       addRule(QStringLiteral(R"(^\s*@[A-Za-z_][\w.]*)"), theme.command);
+      addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("Ruby")) {
+      addRule(QStringLiteral(
+                  R"(\b(?:alias|and|begin|break|case|class|def|defined\?|do|else|elsif|end|ensure|false|for|if|in|module|next|nil|not|or|redo|rescue|retry|return|self|super|then|true|undef|unless|until|when|while|yield)\b)"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"((?:@@?|\$)[A-Za-z_][A-Za-z0-9_]*)"),
+              theme.number);
+      addRule(QStringLiteral(R"(:[A-Za-z_][A-Za-z0-9_]*[!?=]?)"),
+              theme.flag);
       addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
     } else if (language == QStringLiteral("Rust")) {
       addRule(QStringLiteral(
@@ -104,6 +122,26 @@ public:
               theme.keyword, QFont::DemiBold);
       addRule(QStringLiteral(R"(^\s*-\s+)"), theme.command);
       addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("TOML")) {
+      addRule(QStringLiteral(R"(^\s*\[\[?[^\]]+\]\]?\s*$)"), theme.command,
+              QFont::DemiBold);
+      addRule(QStringLiteral(R"(^\s*[A-Za-z0-9_.-]+\s*(?==))"),
+              theme.keyword, QFont::DemiBold);
+      addRule(QStringLiteral(R"(\b(?:false|true)\b)"), theme.keyword,
+              QFont::DemiBold);
+      addRule(QStringLiteral(R"(#.*$)"), theme.comment, QFont::Normal, true);
+    } else if (language == QStringLiteral("CSS") ||
+               language == QStringLiteral("SCSS") ||
+               language == QStringLiteral("Sass")) {
+      addRule(QStringLiteral(R"(@[A-Za-z-]+)"), theme.keyword,
+              QFont::DemiBold);
+      addRule(QStringLiteral(R"(\$[A-Za-z_-][A-Za-z0-9_-]*)"),
+              theme.number);
+      addRule(QStringLiteral(R"((?:--)?[A-Za-z_-][A-Za-z0-9_-]*\s*(?=:))"),
+              theme.command);
+      addRule(QStringLiteral(R"(#[0-9A-Fa-f]{3,8}\b)"), theme.number);
+      addRule(QStringLiteral(R"(/\*.*\*/|//.*$)"), theme.comment,
+              QFont::Normal, true);
     } else if (language == QStringLiteral("Markdown")) {
       addRule(QStringLiteral(R"(^\s{0,3}#{1,6}\s+.*$)"), theme.keyword,
               QFont::DemiBold);
@@ -228,6 +266,11 @@ QString languageFromFilename(const QString &filename) {
     return QStringLiteral("TypeScript");
   if (suffix == QStringLiteral("py"))
     return QStringLiteral("Python");
+  if (suffix == QStringLiteral("rb") || name == QStringLiteral("gemfile") ||
+      name == QStringLiteral("rakefile"))
+    return QStringLiteral("Ruby");
+  if (suffix == QStringLiteral("qml"))
+    return QStringLiteral("QML");
   if (suffix == QStringLiteral("rs"))
     return QStringLiteral("Rust");
   if (suffix == QStringLiteral("go"))
@@ -237,6 +280,14 @@ QString languageFromFilename(const QString &filename) {
   if (QStringList{QStringLiteral("yaml"), QStringLiteral("yml")}.contains(
           suffix))
     return QStringLiteral("YAML");
+  if (suffix == QStringLiteral("toml"))
+    return QStringLiteral("TOML");
+  if (suffix == QStringLiteral("css"))
+    return QStringLiteral("CSS");
+  if (suffix == QStringLiteral("scss"))
+    return QStringLiteral("SCSS");
+  if (suffix == QStringLiteral("sass"))
+    return QStringLiteral("Sass");
   if (QStringList{QStringLiteral("md"), QStringLiteral("markdown")}.contains(
           suffix))
     return QStringLiteral("Markdown");
@@ -256,6 +307,10 @@ QString extensionForLanguage(const QString &language) {
     return QStringLiteral("ts");
   if (language == QStringLiteral("Python"))
     return QStringLiteral("py");
+  if (language == QStringLiteral("Ruby"))
+    return QStringLiteral("rb");
+  if (language == QStringLiteral("QML"))
+    return QStringLiteral("qml");
   if (language == QStringLiteral("Rust"))
     return QStringLiteral("rs");
   if (language == QStringLiteral("Go"))
@@ -264,6 +319,14 @@ QString extensionForLanguage(const QString &language) {
     return QStringLiteral("json");
   if (language == QStringLiteral("YAML"))
     return QStringLiteral("yaml");
+  if (language == QStringLiteral("TOML"))
+    return QStringLiteral("toml");
+  if (language == QStringLiteral("CSS"))
+    return QStringLiteral("css");
+  if (language == QStringLiteral("SCSS"))
+    return QStringLiteral("scss");
+  if (language == QStringLiteral("Sass"))
+    return QStringLiteral("sass");
   if (language == QStringLiteral("Markdown"))
     return QStringLiteral("md");
   if (language == QStringLiteral("Lua"))
@@ -330,6 +393,8 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
     const QString firstLine = trimmed.section('\n', 0, 0).toLower();
     if (firstLine.contains(QStringLiteral("python")))
       return QStringLiteral("Python");
+    if (firstLine.contains(QStringLiteral("ruby")))
+      return QStringLiteral("Ruby");
     return QStringLiteral("Shell");
   }
   if ((trimmed.startsWith(QLatin1Char('{')) ||
@@ -350,6 +415,16 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
           .match(text)
           .hasMatch())
     return QStringLiteral("Go");
+  if (QRegularExpression(QStringLiteral(
+          R"((?:^|\n)\s*(?:class|module|def)\s+\w+.*(?:\n|$)[\s\S]*\bend\b|(?:^|\n)\s*require(?:_relative)?\s+['"])"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("Ruby");
+  if (QRegularExpression(QStringLiteral(
+          R"((?:^|\n)\s*import\s+Qt\w+|(?:^|\n)\s*(?:ApplicationWindow|Item|Rectangle)\s*\{)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("QML");
   if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:def\s+\w+|from\s+\w+\s+import\b|import\s+\w+))"))
           .match(text)
           .hasMatch())
@@ -370,6 +445,16 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
           .match(text)
           .hasMatch())
     return QStringLiteral("Markdown");
+  if (QRegularExpression(QStringLiteral(
+          R"((?:^|\n)[ \t]*\[[A-Za-z0-9_.-]+\][ \t]*\n[ \t]*[A-Za-z0-9_.-]+[ \t]*=)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("TOML");
+  if (QRegularExpression(QStringLiteral(
+          R"((?:^|\n)\s*(?:[.#]?[A-Za-z_-][A-Za-z0-9_ >+~.#:-]*)\s*\{[\s\S]*\b[A-Za-z-]+\s*:)"))
+          .match(text)
+          .hasMatch())
+    return QStringLiteral("CSS");
   if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*[A-Za-z_][\w.-]*\s*:\s*\S)"))
           .match(text)
           .hasMatch())
