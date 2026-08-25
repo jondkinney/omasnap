@@ -41,6 +41,8 @@ public:
   void exitToNormal();
   /** Dispatches one Normal- or Visual-mode key; true when consumed. */
   [[nodiscard]] bool handleKey(QKeyEvent *key);
+  /** Insert-mode keys the modal layer owns; false lets the widget type. */
+  [[nodiscard]] bool handleInsertKey(QKeyEvent *key);
 
 signals:
   void statusRequested(const QString &status);
@@ -92,6 +94,7 @@ private:
   bool stickyEol_ = false;
   QString pendingCommand_;
   bool insertEditActive_ = false;
+  bool insertSessionFresh_ = false;
   int insertEditStart_ = -1;
   int insertEditUndoSteps_ = 0;
   QVector<UndoMark> undoMarks_;

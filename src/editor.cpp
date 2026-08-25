@@ -1145,18 +1145,7 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     }
     if (!textCardModal_->insertMode())
       return textCardModal_->handleKey(key);
-    if (key->key() == Qt::Key_Escape) {
-      textCardModal_->setInsertMode(false);
-      return true;
-    }
-    if (key->key() == Qt::Key_Tab) {
-      QTextCursor cursor = textCardEditor_->textCursor();
-      cursor.insertText(QStringLiteral("\t"));
-      return true;
-    }
-    // Widget undo would rewind past the session grouping; undo belongs to
-    // Normal-mode u and Ctrl+R.
-    if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo))
+    if (textCardModal_->handleInsertKey(key))
       return true;
   } else if (watched == textCardEditor_->viewport() &&
              (event->type() == QEvent::MouseButtonPress ||

@@ -143,9 +143,46 @@ void TextCardEditor::beginInsertEdit(int cursorPosition) {
   if (insertEditActive_)
     return;
   insertEditActive_ = true;
+  insertSessionFresh_ = true;
   insertEditStart_ = std::clamp(
       cursorPosition, 0, static_cast<int>(edit_->toPlainText().size()));
   insertEditUndoSteps_ = edit_->document()->availableUndoSteps();
+}
+
+bool TextCardEditor::handleInsertKey(QKeyEvent *key) {
+  if (key->key() == Qt::Key_Escape) {
+    setInsertMode(false);
+    return true;
+  }
+  // Widget undo would rewind past the session grouping; undo belongs to
+  // Normal-mode u and Ctrl+R.
+  if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo))
+    return true;
+  const bool plainText =
+      !key->text().isEmpty() && key->text().at(0).isPrint() &&
+      !(key->modifiers() &
+        (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+  const QString text =
+      key->key() == Qt::Key_Tab ? QStringLiteral("\t") : key->text();
+  if ((plainText || key->key() == Qt::Key_Tab) && insertSessionFresh_) {
+    // The session's first insert is block-flagged: Qt merges contiguous
+    // plain inserts into one undo command, which would fuse this session
+    // with the previous one and make a single u span both.
+    QTextCursor cursor = edit_->textCursor();
+    cursor.beginEditBlock();
+    cursor.insertText(text);
+    cursor.endEditBlock();
+    insertSessionFresh_ = false;
+    return true;
+  }
+  if (key->key() == Qt::Key_Tab) {
+    QTextCursor cursor = edit_->textCursor();
+    cursor.insertText(QStringLiteral("\t"));
+    return true;
+  }
+  if (plainText)
+    insertSessionFresh_ = false;
+  return false;
 }
 
 void TextCardEditor::endInsertEdit() {
@@ -165,10 +202,7 @@ void TextCardEditor::endInsertEdit() {
 
 void TextCardEditor::recordUndoCursor(int cursorPosition) {
   const int after = edit_->document()->availableUndoSteps();
-  undoMarks_.push_back(
-      {std::clamp(cursorPosition, 0,
-                  static_cast<int>(edit_->toPlainText().size())),
-       after - 1, after});
+  undoMarks_.push_back({std::max(0, cursorPosition), after - 1, after});
   redoMarks_.clear();
 }
 
@@ -204,6 +238,7 @@ void TextCardEditor::undo(bool redo) {
   QTextCursor cursor(edit_->document());
   cursor.setPosition(std::clamp(
       cursorPosition, 0, static_cast<int>(edit_->toPlainText().size())));
+  clampToLastCharacter(cursor);
   edit_->setTextCursor(cursor);
 }
 
@@ -617,6 +652,13 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
 
 void TextCardEditor::deleteRange(int first, int last, bool change,
                                  const QString &deleted) {
+  if (first >= last) {
+    if (change) {
+      beginInsertEdit(first);
+      setInsertMode(true);
+    }
+    return;
+  }
   yank_ = edit_->toPlainText().mid(first, last - first);
   yankLinewise_ = false;
   if (change)
@@ -709,7 +751,7 @@ void TextCardEditor::put(bool before) {
       cursor.insertText(QLatin1Char('\n') + text);
     }
   } else {
-    if (!before)
+    if (!before && !cursor.atBlockEnd())
       cursor.movePosition(QTextCursor::NextCharacter);
     placedAt = cursor.position();
     cursor.insertText(text);
@@ -719,8 +761,9 @@ void TextCardEditor::put(bool before) {
   if (linewise)
     moveToFirstNonBlank(cursor);
   else
-    cursor.setPosition(
-        std::max(placedAt, placedAt + static_cast<int>(text.size()) - 1));
+    cursor.setPosition(snapToCharacterStart(
+        edit_->toPlainText(),
+        std::max(placedAt, placedAt + static_cast<int>(text.size()) - 1)));
   edit_->setTextCursor(cursor);
   recordUndoCursor(placedAt);
   emit statusRequested(
@@ -751,9 +794,10 @@ bool TextCardEditor::applyMotion(QTextCursor &cursor,
       goalColumn_ = cursor.position() - block.position();
     const int lastColumn =
         std::max(0, static_cast<int>(target.text().size()) - 1);
-    cursor.setPosition(target.position() +
-                       (stickyEol_ ? lastColumn
-                                   : std::min(goalColumn_, lastColumn)));
+    const int column = snapToCharacterStart(
+        target.text(),
+        stickyEol_ ? lastColumn : std::min(goalColumn_, lastColumn));
+    cursor.setPosition(target.position() + column);
   } else if (command == QStringLiteral("l")) {
     if (!cursor.atBlockEnd()) {
       cursor.movePosition(QTextCursor::NextCharacter);
@@ -869,7 +913,9 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     cursor.movePosition(QTextCursor::StartOfBlock);
     const int blankLine = cursor.position();
     beginInsertEdit(blankLine);
+    cursor.beginEditBlock();
     cursor.insertText(QStringLiteral("\n"));
+    cursor.endEditBlock();
     cursor.setPosition(blankLine);
     edit_->setTextCursor(cursor);
     setInsertMode(true);
@@ -949,8 +995,7 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
       cursor.beginEditBlock();
       cursor.removeSelectedText();
       cursor.endEditBlock();
-      recordUndoCursor(
-          std::min(start, static_cast<int>(edit_->toPlainText().size())));
+      recordUndoCursor(start);
       cursor.setPosition(
           std::min(start, static_cast<int>(edit_->toPlainText().size())));
       moveToFirstNonBlank(cursor);
@@ -1064,14 +1109,17 @@ bool TextCardEditor::handleKey(QKeyEvent *key) {
     setInsertMode(true);
     return true;
   } else if (command == QStringLiteral("a")) {
-    cursor.movePosition(QTextCursor::NextCharacter);
+    if (!cursor.atBlockEnd())
+      cursor.movePosition(QTextCursor::NextCharacter);
     edit_->setTextCursor(cursor);
     setInsertMode(true);
     return true;
   } else if (command == QStringLiteral("o")) {
     cursor.movePosition(QTextCursor::EndOfBlock);
     beginInsertEdit(cursor.position());
+    cursor.beginEditBlock();
     cursor.insertText(QStringLiteral("\n"));
+    cursor.endEditBlock();
     edit_->setTextCursor(cursor);
     setInsertMode(true);
     return true;

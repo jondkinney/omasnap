@@ -717,6 +717,46 @@ bool runTextCardNormalModeCheck(CaptureEditor &editor,
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_A, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("AA"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_A, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("BB"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (!editor.clipboardTextCardTextForTest().endsWith(QStringLiteral("AA"))) {
+    error = QStringLiteral("One u rewound two insert sessions: %1")
+                .arg(editor.clipboardTextCardTextForTest().right(8));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Adjacent insert sessions did not undo apart");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_O);
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_C, Qt::ShiftModifier);
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (cardEditor->document()->findBlockByNumber(2).text() !=
+      QStringLiteral("const answer = \"hello\";")) {
+    error = QStringLiteral(
+        "C on an empty line wiped the yank register: %1")
+                .arg(cardEditor->document()->findBlockByNumber(2).text());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Empty-line C sequence did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G, Qt::ShiftModifier);
   if (cardEditor->textCursor().position() !=
       cardEditor->document()->lastBlock().position() + 1) {
     error = QStringLiteral(
