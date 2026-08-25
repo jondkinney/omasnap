@@ -64,6 +64,8 @@ add_library(omasnap-core STATIC
   src/text-band.hpp
   src/text-card.cpp
   src/text-card.hpp
+  src/text-card-editor.cpp
+  src/text-card-editor.hpp
   src/auto-capture.cpp
   src/auto-capture.hpp
   src/scroll-capture.cpp

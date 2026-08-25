@@ -29,6 +29,7 @@ class QPainter;
 
 class InlineTextEdit;
 class ScrollCapturePanel;
+class TextCardEditor;
 namespace LayerShellQt {
 class Window;
 }
@@ -494,26 +495,6 @@ private:
   void finishClipboardTextCard();
   void cancelClipboardTextCard();
   void resetClipboardTextCardEditor(bool clearDocument = true);
-  void setClipboardTextCardInsertMode(bool insertMode);
-  void beginClipboardTextCardInsertEdit(int cursorPosition);
-  void endClipboardTextCardInsertEdit();
-  void recordClipboardTextCardUndoCursor(int cursorPosition);
-  void undoClipboardTextCard(bool redo);
-  void startClipboardTextCardVisualMode(bool linewise);
-  void updateClipboardTextCardVisualSelection();
-  void leaveClipboardTextCardVisualMode(int cursorPosition);
-  [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
-  void joinClipboardTextCardLines();
-  [[nodiscard]] int clipboardTextCardWordEnd(int cursorPosition) const;
-  [[nodiscard]] std::optional<QPair<int, int>> clipboardTextCardWordRange(
-      bool around, bool fromCursor = false) const;
-  [[nodiscard]] bool applyClipboardTextCardEndOperator(bool change);
-  [[nodiscard]] bool applyClipboardTextCardWordOperator(
-      bool change, bool around, bool fromCursor = false);
-  void yankClipboardTextCardLine();
-  void putClipboardTextCard(bool before);
-  [[nodiscard]] QString clipboardTextCardMode() const;
-  [[nodiscard]] bool handleClipboardTextCardNormalKey(QKeyEvent *key);
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -796,21 +777,7 @@ private:
   QString textCardDocumentFilename_;
   bool clipboardTextCardEditing_ = false;
   bool textCardRestoreEditing_ = false;
-  bool textCardInsertMode_ = false;
-  bool textCardVisualLineMode_ = false;
-  int textCardVisualAnchor_ = -1;
-  int textCardVisualPosition_ = -1;
-  int textCardVisualSelectionStart_ = -1;
-  int textCardVisualSelectionEnd_ = -1;
-  QString textCardYank_;
-  bool textCardYankLinewise_ = false;
-  QString textCardPendingCommand_;
-  QTextCursor textCardInsertEditCursor_;
-  bool textCardInsertEditActive_ = false;
-  int textCardInsertEditStart_ = -1;
-  int textCardInsertEditUndoSteps_ = 0;
-  QVector<int> textCardUndoCursorStack_;
-  QVector<int> textCardRedoCursorStack_;
+  TextCardEditor *textCardModal_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;
