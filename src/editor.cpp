@@ -667,7 +667,7 @@ QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
   return end;
 }
 
-bool isPlainControlChord(const QKeyEvent *key, int keycode) {
+static bool isPlainControlChord(const QKeyEvent *key, int keycode) {
   return key->key() == keycode &&
          key->modifiers().testFlag(Qt::ControlModifier) &&
          !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
