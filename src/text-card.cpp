@@ -501,6 +501,27 @@ QFont textCardCodeFont() {
   return codeFont;
 }
 
+/** Angled statusline segment spanning [left, right]; arrows extend past it. */
+QPainterPath powerlineSegment(const QRect &status, int left, int right,
+                              bool arrowLeft, bool arrowRight) {
+  const qreal bottom = status.bottom() + 1.0;
+  const qreal middle = status.center().y() + 0.5;
+  QPainterPath segment;
+  if (arrowLeft) {
+    segment.moveTo(left - kPowerlineAngle, middle);
+    segment.lineTo(left, status.top());
+  } else {
+    segment.moveTo(left, status.top());
+  }
+  segment.lineTo(right, status.top());
+  if (arrowRight)
+    segment.lineTo(right + kPowerlineAngle, middle);
+  segment.lineTo(right, bottom);
+  segment.lineTo(left, bottom);
+  segment.closeSubpath();
+  return segment;
+}
+
 void prepareTextDocument(QTextDocument &document, const QString &snippet,
                          const TextCardTheme &theme, int textWidth,
                          const QString &language) {
@@ -752,7 +773,7 @@ TextCardRender renderTextCardLayout(const QString &text,
                    panel.top() + kHeaderHeight);
 
   QFont headerFont = textCardCodeFont();
-  headerFont.setPixelSize(14);
+  headerFont.setPixelSize(kTextCardHeaderPixelSize);
   painter.setFont(headerFont);
   painter.setPen(theme.outline);
   const QRect headerText(panel.left() + 24, panel.top(), panel.width() - 48,
@@ -804,18 +825,13 @@ TextCardRender renderTextCardLayout(const QString &text,
                      panel.width(), kStatusHeight);
   painter.fillRect(status, theme.header);
   const QString modeText = QStringLiteral(" %1 ").arg(mode);
-  const int modeWidth = mode == QStringLiteral("VISUAL LINE") ? 142 : 104;
+  const int modeWidth =
+      QFontMetrics(headerFont).horizontalAdvance(modeText) + 28;
   const QRect modeRect(status.left(), status.top(), modeWidth, status.height());
-  const qreal statusBottom = status.bottom() + 1.0;
-  QPainterPath modeSegment;
-  modeSegment.moveTo(status.left(), status.top());
-  modeSegment.lineTo(modeRect.right() + 1, status.top());
-  modeSegment.lineTo(modeRect.right() + 1 + kPowerlineAngle,
-                     status.center().y() + 0.5);
-  modeSegment.lineTo(modeRect.right() + 1, statusBottom);
-  modeSegment.lineTo(status.left(), statusBottom);
-  modeSegment.closeSubpath();
-  painter.fillPath(modeSegment, theme.outline);
+  painter.fillPath(
+      powerlineSegment(status, status.left(), modeRect.right() + 1, false,
+                       true),
+      theme.outline);
   painter.setFont(headerFont);
   painter.setPen(theme.outline.lightness() > 130 ? theme.header
                                                  : theme.foreground);
@@ -830,24 +846,11 @@ TextCardRender renderTextCardLayout(const QString &text,
   const int linesWidth = 64;
   const int formatLeft = status.right() - formatWidth + 1;
   const int linesLeft = formatLeft - linesWidth;
-  QPainterPath linesSegment;
-  linesSegment.moveTo(linesLeft - kPowerlineAngle,
-                      status.center().y() + 0.5);
-  linesSegment.lineTo(linesLeft, status.top());
-  linesSegment.lineTo(formatLeft, status.top());
-  linesSegment.lineTo(formatLeft, statusBottom);
-  linesSegment.lineTo(linesLeft, statusBottom);
-  linesSegment.closeSubpath();
-  painter.fillPath(linesSegment, theme.selection);
-  QPainterPath formatSegment;
-  formatSegment.moveTo(formatLeft - kPowerlineAngle,
-                       status.center().y() + 0.5);
-  formatSegment.lineTo(formatLeft, status.top());
-  formatSegment.lineTo(status.right() + 1, status.top());
-  formatSegment.lineTo(status.right() + 1, statusBottom);
-  formatSegment.lineTo(formatLeft, statusBottom);
-  formatSegment.closeSubpath();
-  painter.fillPath(formatSegment, theme.outline);
+  painter.fillPath(powerlineSegment(status, linesLeft, formatLeft, true, false),
+                   theme.selection);
+  painter.fillPath(
+      powerlineSegment(status, formatLeft, status.right() + 1, true, false),
+      theme.outline);
   painter.setPen(theme.foreground);
   painter.drawText(QRect(linesLeft, status.top(), linesWidth, status.height()),
                    Qt::AlignCenter, QStringLiteral("%1L").arg(lineNumber - 1));

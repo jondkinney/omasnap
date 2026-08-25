@@ -6789,7 +6789,8 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
   textCardEditor_->document()->setDefaultTextOption(option);
 
   QFont filenameFont = font;
-  filenameFont.setPixelSize(std::max(8, qRound(14 * scale)));
+  filenameFont.setPixelSize(
+      std::max(8, qRound(kTextCardHeaderPixelSize * scale)));
   textCardFilenameEditor_->setFont(filenameFont);
 }
 

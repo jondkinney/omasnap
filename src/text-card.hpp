@@ -12,6 +12,8 @@ class QTextDocument;
 
 inline constexpr int kTextCardCodePixelSize = 25;
 inline constexpr int kTextCardTabSpaces = 4;
+/// Header/statusline text size; the live filename overlay must match it.
+inline constexpr int kTextCardHeaderPixelSize = 14;
 
 /** Share framing for export, or a tight canvas for the live floating editor. */
 enum class TextCardLayout { Share, Compact };
