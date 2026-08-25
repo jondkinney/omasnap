@@ -236,6 +236,28 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
                 .arg(blockCommentError);
     return false;
   }
+  QStringList gutterLines;
+  for (int line = 1; line <= 105; ++line)
+    gutterLines.append(QStringLiteral("line %1").arg(line));
+  QString gutterError;
+  const TextCardRender gutterCard = renderTextCardLayout(
+      gutterLines.join(QLatin1Char('\n')), theme, gutterError, true,
+      QStringLiteral("NORMAL"), QStringLiteral("notes.txt"));
+  int hundredsDigitPixels = 0;
+  for (int y = 0; y < gutterCard.image.height(); ++y) {
+    for (int x = gutterCard.editorRect.left() - 74;
+         x <= gutterCard.editorRect.left() - 55; ++x) {
+      if (gutterCard.image.pixelColor(x, y) == theme.muted)
+        ++hundredsDigitPixels;
+    }
+  }
+  if (hundredsDigitPixels < 20) {
+    error = QStringLiteral(
+        "Three-digit gutter numbers were clipped: leading pixels=%1 %2")
+                .arg(hundredsDigitPixels)
+                .arg(gutterError);
+    return false;
+  }
 
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");

@@ -781,9 +781,11 @@ TextCardRender renderTextCardLayout(const QString &text,
   for (QTextBlock block = document.begin(); block.isValid();
        block = block.next(), ++lineNumber) {
     const qreal top = document.documentLayout()->blockBoundingRect(block).top();
+    // Right edge stays fixed; the box reaches left into the panel padding so
+    // three digits (the 120-line cap) draw unclipped at the code pixel size.
     painter.drawText(
-        QRectF(editorRect.left() - kGutterWidth, editorRect.top() + top,
-               kGutterWidth - 28, codeMetrics.lineSpacing()),
+        QRectF(editorRect.left() - kGutterWidth - 20, editorRect.top() + top,
+               kGutterWidth - 8, codeMetrics.lineSpacing()),
         Qt::AlignRight | Qt::AlignTop, QString::number(lineNumber));
   }
   if (drawText) {
