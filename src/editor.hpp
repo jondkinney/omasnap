@@ -5,18 +5,21 @@
 #include "overlay-chrome.hpp"
 #include "palette-config.hpp"
 #include "recent-snaps.hpp"
+#include "text-card.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QLineF>
+#include <QTextCursor>
 #include <QTimer>
 #include <QWidget>
 
 #include <optional>
 
 class QKeyEvent;
+class QLineEdit;
 class QMouseEvent;
 class QPaintEvent;
 class QWheelEvent;
@@ -25,6 +28,7 @@ class QPainter;
 
 class InlineTextEdit;
 class ScrollCapturePanel;
+class TextCardModal;
 namespace LayerShellQt {
 class Window;
 }
@@ -258,9 +262,9 @@ public:
   /// The layer surface this editor lives on. The scroll state toggles its
   /// keyboard interactivity and input mask while the page underneath is live.
   /** The editor runs as a normal compositor window, not the overlay. */
-  void setWindowedPresentation(bool windowed) {
-    windowedPresentation_ = windowed;
-  }
+  void setWindowedPresentation(bool windowed);
+  /** Natural floating size for either a capture or the compact snippet UI. */
+  [[nodiscard]] QSize naturalWindowSize(const QSize &available) const;
   /** A windowed editor's backdrop: solid, or the overlay's see-through
    *  dim. Solid also drops the translucent surface: an alpha window shows
    *  the desktop through any repaint gap while resizing or zooming. */
@@ -304,6 +308,33 @@ public:
   }
   /// Current status line. Test accessor.
   [[nodiscard]] QString statusForTest() const { return status_; }
+  /** Whether the clipboard card's Neovim-style source editor owns input. */
+  [[nodiscard]] bool clipboardTextCardEditingForTest() const {
+    return clipboardTextCardEditing_;
+  }
+  [[nodiscard]] QRectF textCardDoneButtonRectForTest() const;
+  /** Current unflattened clipboard-card source. */
+  [[nodiscard]] QString clipboardTextCardTextForTest() const {
+    return textCardEditor_ ? textCardEditor_->toPlainText() : QString();
+  }
+  /** Editable path shown in the clipboard card's Neovim title/status bars. */
+  [[nodiscard]] QString clipboardTextCardFilenameForTest() const {
+    return textCardFilename_;
+  }
+  /** Syntax profile currently attached to the live clipboard editor. */
+  [[nodiscard]] QString clipboardTextCardLanguageForTest() const {
+    return textCardSyntaxLanguage_;
+  }
+  /** Whether a rendered card still has source available for Ctrl+E. */
+  [[nodiscard]] bool clipboardTextCardSourceRetainedForTest() const {
+    return !textCardDocumentText_.isEmpty();
+  }
+  /** Current card mode string (NORMAL/INSERT/VISUAL/...). Test accessor. */
+  [[nodiscard]] QString clipboardTextCardModeForTest() const;
+  /** The log a snapshot or handoff would persist right now. Test accessor. */
+  [[nodiscard]] OperationLog workingLogForTest() const {
+    return composeWorkingLog();
+  }
   /// Whether the selection chrome is currently stepped back for an adjustment.
   /// Test accessor.
   [[nodiscard]] bool selectionFadedForTest() const {
@@ -398,6 +429,7 @@ private:
   [[nodiscard]] int windowAt(const QPointF &position) const;
   [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
+  [[nodiscard]] QVector<ToolbarButton> textCardToolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
   [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
   [[nodiscard]] QPointF
@@ -435,6 +467,25 @@ private:
   void endScrollCapture();
   /// A stitched scroll capture becomes the image being edited.
   void adoptStitched(const QImage &image);
+  /// Turns plain clipboard text into a styled, syntax-colored share card.
+  void openClipboardTextCard();
+  void beginClipboardTextCard(const QString &text, const QString &filename);
+  void reopenClipboardTextCard();
+  void updateClipboardTextCardPreview();
+  void updateClipboardTextCardEditorGeometry();
+  void beginClipboardTextCardFilenameEdit();
+  void endClipboardTextCardFilenameEdit(bool accept);
+  void reinstallClipboardTextCardHighlighter();
+  void finishClipboardTextCard();
+  void cancelClipboardTextCard();
+  void resetClipboardTextCardEditor(bool clearDocument = true);
+  void adoptTextCardSurface(QImage image);
+  bool handOffLiveTextCard();
+  void settleFloatingWindow(const QSize &size);
+  void updateTextCardCaret();
+  void applyTextCardRestoreState();
+  [[nodiscard]] qreal textCardIdealRatio() const;
+  [[nodiscard]] OperationLog composeWorkingLog() const;
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -494,6 +545,8 @@ private:
   void handleEscape();
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
+  void paintClipboardTextCardEditing(QPainter &painter);
+  void paintClipboardTextCardToolbar(QPainter &painter);
   void paintSelect(QPainter &painter);
   void refreshBackdropCache();
   void refreshComposedCapture();
@@ -683,6 +736,37 @@ private:
   QString status_ =
       QStringLiteral("Drag to select an area · Space selects a window");
   InlineTextEdit *textEditor_ = nullptr;
+  QPlainTextEdit *textCardEditor_ = nullptr;
+  QLineEdit *textCardFilenameEditor_ = nullptr;
+  QSyntaxHighlighter *textCardHighlighter_ = nullptr;
+  bool textCardHighlighterUpdating_ = false;
+  QString textCardSyntaxLanguage_;
+  TextCardTheme textCardTheme_;
+  QRect textCardSourceEditorRect_;
+  QRect textCardSourceTitleRect_;
+  QString textCardFilename_;
+  QString textCardFilenameBeforeEdit_;
+  QString textCardDocumentText_;
+  QString textCardDocumentFilename_;
+  QString textCardOpenedText_;
+  QString textCardOpenedFilename_;
+  bool textCardDiscardArmed_ = false;
+  bool textCardReopenArmed_ = false;
+  QString textCardFrameKey_;
+  QImage textCardDisplayFrame_;
+  qreal textCardDisplayRatio_ = 1.0;
+  bool textCardPreviewPending_ = false;
+  QString textCardHoveredAction_;
+  bool textCardRepostingKey_ = false;
+  int textCardDetectRevision_ = -1;
+  QString textCardDetectFilename_;
+  QString textCardDetectedLanguage_;
+  bool clipboardTextCardEditing_ = false;
+  bool textCardRestoreEditing_ = false;
+  int textCardRestoreCursor_ = -1;
+  QString textCardRestoreYank_;
+  bool textCardRestoreYankLinewise_ = false;
+  TextCardModal *textCardModal_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

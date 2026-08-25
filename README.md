@@ -44,6 +44,9 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped files
   under `~/Pictures/Screenshots` by default.
 - Open an image already on the clipboard directly in the annotation editor.
+- Turn clipboard text into a share-ready, syntax-colored card with `Ctrl+Shift+V`:
+  edit it with a compact Neovim-style modal key set inside a square frame whose
+  background, outline, text, and syntax colors follow the active Omarchy theme.
 - A recents shelf: the select overlay stacks small cards of the last five captures
   along the right edge; hover to fan them out, click one to reopen it in the editor
   with its layers still editable instead of taking a new screenshot.
@@ -249,6 +252,57 @@ omasnap --clipboard
 The clipboard must offer readable image data. Text-only clipboard contents return an
 error instead of opening an empty editor.
 
+### Clipboard text cards
+
+Copy a code or text snippet, launch `omasnap`, then press `Ctrl+Shift+V` on the
+capture screen. Omasnap opens it in a square-cornered, Neovim-inspired
+JetBrains Mono editor using the active Omarchy theme's background, surface,
+outline, selection, foreground, and semantic code colors, with palette and
+Nord fallbacks for themes
+that do not provide them. The filename starts from lightweight content detection,
+and its extension selects a language-specific syntax profile. Press
+`F` or click the title to rename it inline; the status line shows the basename
+and detected language. Profiles cover Shell, C/C++, JavaScript/TypeScript,
+Python, Ruby, Rust, Go, QML, JSON, YAML, TOML, CSS/SCSS/Sass, Markdown, Lua,
+and CMake, with a plain-text fallback. It starts in Normal mode; `Ctrl+Enter`
+renders the text into the card and hands it to the normal annotation editor.
+`Ctrl+W` moves the live source editor between the fullscreen overlay and a
+compact normal compositor window, carrying the draft, filename, cursor, and
+yank register; the document undo history stays behind. The live view has a
+snippet-only toolbar for switching presentation and **Done → Omasnap**;
+annotation chrome appears only after rendering. `Ctrl+E` then reopens the
+retained source and filename for typo fixes, asking first when annotations
+drawn on the card would be discarded. From there, `Ctrl+C` copies, `Ctrl+S` saves, and `Enter` does both. Every
+annotation and canvas control remains available after rendering.
+
+The intentionally small modal key set covers the motions and edits useful for
+massaging a snippet without embedding a full editor:
+
+| Text-card input | Action |
+|---|---|
+| `h` `j` `k` `l` or arrows/Backspace, `w` `b` `e`, `0` `$` or Home/End, `gg` `G` | Move in Normal or Visual mode; `j`/`k` walk logical lines, remember their column, and stay at line ends after `$` |
+| `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
+| `Esc` | Return from Insert or Visual to Normal mode |
+| `F`, `Shift+Tab` (outside Visual), or click the title | Edit the displayed filename; its extension switches live syntax highlighting even before code is entered; Enter or Tab accepts and Esc cancels |
+| `x` or Delete, `dd`, `dw`, `de`, `diw`, `daw`, `D`, `Shift+J` | Delete a character, line, to the next word, through word end, inner/around word, to the line end, or join with the next line |
+| `C`, `cc`, `cw`, `ce`, `ciw`, `caw` | Change to end of line, a whole line, through word end, or the inner/around word |
+| `r` | Replace the character under the cursor — or every selected character in Visual mode — with the next key typed |
+| `>>`, `<<` | Indent or outdent the current line by one tab; in Visual mode (also `Tab`/`Shift+Tab`) they shift the selected lines and keep the selection so presses repeat |
+| `.` | Repeat the last change — operators, `r`, indents, puts, and full insert changes like `cw` with the text that was typed |
+| `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them; `o` swaps the selection ends and `p` replaces the selection with the register, which then holds the replaced text |
+| `yy`, `yw`, `ye`, `yiw`, `yaw` | Copy the current line, to the next word, through word end, or the inner/around word |
+| `p`, `Shift+P` | Put after/below or before/above the cursor/current line; deleted text fills the register `p` puts |
+| `u`, `Ctrl+R` | Undo or redo; the cursor returns to the start of that change |
+| `Tab` | Insert a literal tab in Insert mode |
+| `Ctrl+W` | Re-present the live source editor as a normal window or fullscreen overlay |
+| `Ctrl+Enter` | Render the card and continue in the annotation editor |
+| `q` | Exit Omasnap from the live snippet editor; unsaved edits ask for a second `q` |
+
+Counts, named registers, macros, and `f`/`t` motions are deliberately left
+out. Line and Visual-mode yanks persist through `wl-copy`, so they outlive
+the editor; word yanks stay in the editor's own register, and `p` falls back
+to the system clipboard when nothing has been yanked yet.
+
 File URLs are accepted too. A saved capture notification's "Click to edit" action launches
 `omasnap` on the finished screenshot, so it can be reopened and re-annotated.
 
@@ -344,6 +398,7 @@ without reaching for the pointer.
 | `SUPER + Arrow` | Move among windows in window mode |
 | `Enter` | Capture the highlighted window |
 | `Ctrl+A` | Select the full focused monitor (the Fullscreen tab) |
+| `Ctrl+Shift+V` | Turn clipboard text into a syntax-colored share card and open it in the editor |
 | Hover the right-edge stack | Fan out the five most recent captures; click one to reopen it |
 | `Esc` | Dismiss (while selecting; in the editor, `Esc` returns to Select and a second `Esc` closes) |
 
@@ -369,6 +424,7 @@ without reaching for the pointer.
 | `Shift+B` | Toggle the screenshot card's drop shadow; on by default |
 | `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Framed, Overflow, Image. Framed auto-grows with the normal frame; Overflow grows only the sides needed by annotations with no frame; Image clips at the original screenshot edge |
 | `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
+| `Ctrl+E` | Reopen retained source and filename when the current image is a rendered text card; asks first when annotations would be discarded |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
 | Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |

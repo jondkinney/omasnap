@@ -1336,16 +1336,17 @@ bool runEditorWindowConfigCheck(QString &error) {
     return false;
   }
 
-  // The window hugs the capture at 100% plus the measured chrome; only a
-  // capture too large for the screen scales down, and the guide band is
+  // The window hugs the capture at 100% plus the measured chrome; a
+  // capture too large for the screen clamps each side to the 90% box (the
+  // view scales the image down inside it), and the guide band is
   // whatever the entries need at the window's width.
   if (editorWindowSize(QSize(800, 600), QSize(2560, 1600), 100) !=
           QSize(928, 910) ||
       editorWindowSize(QSize(4000, 2000), QSize(2000, 1000), 100) !=
-          QSize(1608, 900) ||
+          QSize(1800, 900) ||
       editorWindowSize(QSize(100, 50), QSize(2000, 1000), 214) !=
           QSize(640, 474) ||
-      editorWindowSize(QSize(5000, 5000), QSize(), 100) != QSize(1042, 1080)) {
+      editorWindowSize(QSize(5000, 5000), QSize(), 100) != QSize(1728, 1080)) {
     error = QStringLiteral("The windowed editor sized itself wrong");
     return false;
   }
@@ -4860,6 +4861,12 @@ bool runTextFontSmoke(QApplication &application, QString &error) {
   saved.ops = editor.operationLog();
   saved.index = editor.operationIndex();
   saved.previewSize = capture.previewSize;
+  saved.textCardText = QStringLiteral("puts 'theme round trip'");
+  saved.textCardFilename = QStringLiteral("snippet.rb");
+  saved.textCardEditing = true;
+  saved.textCardCursor = 4;
+  saved.textCardYank = QStringLiteral("puts");
+  saved.textCardYankLinewise = true;
   const QString path =
       QDir(directory.path()).filePath(QStringLiteral("text-fonts.json"));
   OperationLog loaded;
@@ -8257,7 +8264,7 @@ int main(int argc, char **argv) {
   }
 
   QString clipboardError;
-  if (!runClipboardSmoke(clipboardError)) {
+  if (!runClipboardSmoke(outputRoot, clipboardError)) {
     qWarning().noquote() << clipboardError;
     return 88;
   }

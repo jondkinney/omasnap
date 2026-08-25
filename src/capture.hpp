@@ -120,6 +120,15 @@ struct OperationLog {
   /// coordinates live in that space, so a source captured on a scaled
   /// monitor reopens at the same scale. Invalid when unknown.
   QSize previewSize;
+  /// Original source retained for a rendered clipboard text card. A live
+  /// draft sets textCardEditing so an overlay/window handoff reopens it.
+  QString textCardText{};
+  QString textCardFilename{};
+  bool textCardEditing = false;
+  /// Live-draft state a presentation switch carries across processes.
+  int textCardCursor = -1;
+  QString textCardYank{};
+  bool textCardYankLinewise = false;
 
   bool operator==(const OperationLog &) const = default;
 };
@@ -226,6 +235,8 @@ void describeFileCapture(CaptureData &capture, QImage image,
                                        CanvasBoundaryMode::Framed);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
+/** Loads plain text from the current Wayland clipboard. */
+[[nodiscard]] bool loadClipboardText(QString &text, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
 [[nodiscard]] bool copyImageToClipboard(const QImage &image, QString &error);
 [[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,

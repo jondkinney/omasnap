@@ -1227,6 +1227,76 @@ bool loadClipboardImage(QImage &image, QString &error) {
   return false;
 }
 
+bool loadClipboardText(QString &text, QString &error) {
+  text.clear();
+  error.clear();
+
+  const ProcessResult listed =
+      runProcess(QStringLiteral("wl-paste"), {QStringLiteral("--list-types")},
+                 {}, 5000);
+  if (!listed.finished || listed.exitCode != 0) {
+    const QString detail = QString::fromUtf8(listed.error).trimmed();
+    error = detail.isEmpty()
+                ? QStringLiteral("Could not read the Wayland clipboard")
+                : QStringLiteral("Could not read the Wayland clipboard: %1")
+                      .arg(detail);
+    return false;
+  }
+
+  const QStringList offered =
+      QString::fromUtf8(listed.output)
+          .split('\n', Qt::SkipEmptyParts, Qt::CaseSensitive);
+  QStringList textTypes;
+  const QStringList preferred{
+      QStringLiteral("text/plain;charset=utf-8"),
+      QStringLiteral("text/plain;charset=UTF-8"),
+      QStringLiteral("UTF8_STRING"), QStringLiteral("text/plain")};
+  for (const QString &mimeType : preferred) {
+    if (offered.contains(mimeType))
+      textTypes.append(mimeType);
+  }
+  for (const QString &mimeType : offered) {
+    const QString trimmed = mimeType.trimmed();
+    if (trimmed.startsWith(QStringLiteral("text/")) &&
+        !textTypes.contains(trimmed))
+      textTypes.append(trimmed);
+  }
+  if (textTypes.isEmpty()) {
+    error = QStringLiteral("Clipboard does not contain text");
+    return false;
+  }
+
+  QString readError;
+  for (const QString &mimeType : textTypes) {
+    const ProcessResult pasted = runProcess(
+        QStringLiteral("wl-paste"),
+        {QStringLiteral("--no-newline"), QStringLiteral("--type"), mimeType},
+        {}, 5000);
+    if (!pasted.finished || pasted.exitCode != 0) {
+      const QString detail = QString::fromUtf8(pasted.error).trimmed();
+      if (!detail.isEmpty())
+        readError = detail;
+      continue;
+    }
+    text = QString::fromUtf8(pasted.output);
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace('\r', '\n');
+    while (text.startsWith('\n'))
+      text.remove(0, 1);
+    while (text.endsWith('\n'))
+      text.chop(1);
+    if (!text.trimmed().isEmpty())
+      return true;
+  }
+
+  error = readError.isEmpty()
+              ? QStringLiteral("Clipboard text is empty")
+              : QStringLiteral("Could not read clipboard text: %1")
+                    .arg(readError);
+  text.clear();
+  return false;
+}
+
 bool copyPngFileToClipboard(const QString &path, QString &error) {
   QFile input(path);
   if (!input.open(QIODevice::ReadOnly)) {
@@ -1430,8 +1500,8 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
                          ? QSize(1728, 1080)
                          : QSize(qRound(available.width() * 0.9),
                                  qRound(available.height() * 0.9));
-  if (size.width() > room.width() || size.height() > room.height())
-    size.scale(room, Qt::KeepAspectRatio);
+  size = QSize(std::min(size.width(), room.width()),
+               std::min(size.height(), room.height()));
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
 }
 
@@ -1884,6 +1954,18 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
     root.insert(QStringLiteral("previewWidth"), log.previewSize.width());
     root.insert(QStringLiteral("previewHeight"), log.previewSize.height());
   }
+  if (!log.textCardText.isEmpty()) {
+    root.insert(QStringLiteral("textCardText"), log.textCardText);
+    root.insert(QStringLiteral("textCardFilename"), log.textCardFilename);
+    root.insert(QStringLiteral("textCardEditing"), log.textCardEditing);
+    if (log.textCardCursor >= 0)
+      root.insert(QStringLiteral("textCardCursor"), log.textCardCursor);
+    if (!log.textCardYank.isEmpty()) {
+      root.insert(QStringLiteral("textCardYank"), log.textCardYank);
+      root.insert(QStringLiteral("textCardYankLinewise"),
+                  log.textCardYankLinewise);
+    }
+  }
   root.insert(QStringLiteral("ops"), ops);
 
   QSaveFile file(path);
@@ -1929,6 +2011,18 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.previewSize =
       QSize(root.value(QStringLiteral("previewWidth")).toInt(),
             root.value(QStringLiteral("previewHeight")).toInt());
+  loaded.textCardText =
+      root.value(QStringLiteral("textCardText")).toString();
+  loaded.textCardFilename =
+      root.value(QStringLiteral("textCardFilename")).toString();
+  loaded.textCardEditing =
+      !loaded.textCardText.isEmpty() &&
+      root.value(QStringLiteral("textCardEditing")).toBool();
+  loaded.textCardCursor =
+      root.value(QStringLiteral("textCardCursor")).toInt(-1);
+  loaded.textCardYank = root.value(QStringLiteral("textCardYank")).toString();
+  loaded.textCardYankLinewise =
+      root.value(QStringLiteral("textCardYankLinewise")).toBool();
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)

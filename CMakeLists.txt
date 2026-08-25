@@ -60,6 +60,10 @@ add_library(omasnap-core STATIC
   src/surface-capture.cpp
   src/stitch.cpp
   src/stitch.hpp
+  src/text-card.cpp
+  src/text-card.hpp
+  src/text-card-modal.cpp
+  src/text-card-modal.hpp
   src/auto-capture.cpp
   src/auto-capture.hpp
   src/scroll-capture.cpp
@@ -118,6 +122,8 @@ qt_add_executable(omasnap-smoke
   src/cli-path.hpp
   src/capture.cpp
   src/capture.hpp
+  src/text-card.cpp
+  src/text-card.hpp
   src/overlay-chrome.cpp
   src/overlay-chrome.hpp
   tests/surface-capture-smoke.cpp
