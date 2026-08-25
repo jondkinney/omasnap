@@ -29,7 +29,7 @@ class QPainter;
 
 class InlineTextEdit;
 class ScrollCapturePanel;
-class TextCardEditor;
+class TextCardModal;
 namespace LayerShellQt {
 class Window;
 }
@@ -801,7 +801,7 @@ private:
   int textCardRestoreCursor_ = -1;
   QString textCardRestoreYank_;
   bool textCardRestoreYankLinewise_ = false;
-  TextCardEditor *textCardModal_ = nullptr;
+  TextCardModal *textCardModal_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

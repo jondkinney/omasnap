@@ -1,5 +1,5 @@
 /** @fileoverview Modal Normal/Insert/Visual editing on the card's source. */
-#include "text-card-editor.hpp"
+#include "text-card-modal.hpp"
 
 #include "capture.hpp"
 
@@ -107,10 +107,10 @@ QString modalCommand(const QKeyEvent *key) {
 }
 } // namespace
 
-TextCardEditor::TextCardEditor(QPlainTextEdit *edit, QObject *parent)
+TextCardModal::TextCardModal(QPlainTextEdit *edit, QObject *parent)
     : QObject(parent), edit_(edit) {}
 
-void TextCardEditor::reset() {
+void TextCardModal::reset() {
   endInsertEdit();
   goalColumn_ = -1;
   stickyEol_ = false;
@@ -130,7 +130,7 @@ void TextCardEditor::reset() {
   edit_->setExtraSelections({});
 }
 
-void TextCardEditor::exitToNormal() {
+void TextCardModal::exitToNormal() {
   if (visualAnchor_ >= 0)
     leaveVisualMode(visualPosition_);
   if (insertMode_)
@@ -140,7 +140,7 @@ void TextCardEditor::exitToNormal() {
 // An insert session is grouped by undo-step marks, not one held edit block:
 // Qt defers textChanged and re-highlighting while a block is open, so a held
 // block would freeze the live card for the whole session.
-void TextCardEditor::beginInsertEdit(int cursorPosition) {
+void TextCardModal::beginInsertEdit(int cursorPosition) {
   if (insertEditActive_)
     return;
   insertEditActive_ = true;
@@ -150,7 +150,7 @@ void TextCardEditor::beginInsertEdit(int cursorPosition) {
   insertEditUndoSteps_ = edit_->document()->availableUndoSteps();
 }
 
-bool TextCardEditor::handleInsertKey(QKeyEvent *key) {
+bool TextCardModal::handleInsertKey(QKeyEvent *key) {
   if (key->key() == Qt::Key_Escape) {
     setInsertMode(false);
     return true;
@@ -186,7 +186,7 @@ bool TextCardEditor::handleInsertKey(QKeyEvent *key) {
   return false;
 }
 
-void TextCardEditor::endInsertEdit() {
+void TextCardModal::endInsertEdit() {
   if (!insertEditActive_)
     return;
   insertEditActive_ = false;
@@ -201,13 +201,13 @@ void TextCardEditor::endInsertEdit() {
   insertEditStart_ = -1;
 }
 
-void TextCardEditor::recordUndoCursor(int cursorPosition) {
+void TextCardModal::recordUndoCursor(int cursorPosition) {
   const int after = edit_->document()->availableUndoSteps();
   undoMarks_.push_back({std::max(0, cursorPosition), after - 1, after});
   redoMarks_.clear();
 }
 
-void TextCardEditor::undo(bool redo) {
+void TextCardModal::undo(bool redo) {
   QTextDocument *document = edit_->document();
   if ((redo && !document->isRedoAvailable()) ||
       (!redo && !document->isUndoAvailable()))
@@ -243,7 +243,7 @@ void TextCardEditor::undo(bool redo) {
   edit_->setTextCursor(cursor);
 }
 
-void TextCardEditor::setInsertMode(bool insertMode) {
+void TextCardModal::setInsertMode(bool insertMode) {
   if (insertMode && !insertMode_)
     beginInsertEdit(edit_->textCursor().position());
   else if (!insertMode && insertMode_)
@@ -268,7 +268,7 @@ void TextCardEditor::setInsertMode(bool insertMode) {
   emit modeChanged();
 }
 
-QString TextCardEditor::mode() const {
+QString TextCardModal::mode() const {
   if (insertMode_)
     return QStringLiteral("INSERT");
   if (visualAnchor_ >= 0)
@@ -277,7 +277,7 @@ QString TextCardEditor::mode() const {
   return QStringLiteral("NORMAL");
 }
 
-void TextCardEditor::startVisualMode(bool linewise) {
+void TextCardModal::startVisualMode(bool linewise) {
   pendingCommand_.clear();
   visualLineMode_ = linewise;
   const int lastCharacter = edit_->toPlainText().size() - 1;
@@ -292,7 +292,7 @@ void TextCardEditor::startVisualMode(bool linewise) {
   emit modeChanged();
 }
 
-void TextCardEditor::updateVisualSelection() {
+void TextCardModal::updateVisualSelection() {
   const int textLength = edit_->toPlainText().size();
   if (textLength <= 0) {
     visualSelectionStart_ = 0;
@@ -341,7 +341,7 @@ void TextCardEditor::updateVisualSelection() {
   edit_->setTextCursor(active);
 }
 
-void TextCardEditor::leaveVisualMode(int cursorPosition) {
+void TextCardModal::leaveVisualMode(int cursorPosition) {
   const int textLength = edit_->toPlainText().size();
   visualLineMode_ = false;
   visualAnchor_ = -1;
@@ -357,7 +357,7 @@ void TextCardEditor::leaveVisualMode(int cursorPosition) {
   emit modeChanged();
 }
 
-bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
+bool TextCardModal::handleVisualKey(QKeyEvent *key) {
   const QString command = modalCommand(key);
   const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
   if (command != QStringLiteral("j") && command != QStringLiteral("k")) {
@@ -525,7 +525,7 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
   return true;
 }
 
-void TextCardEditor::joinLines() {
+void TextCardModal::joinLines() {
   QTextCursor cursor = edit_->textCursor();
   const QTextBlock block = cursor.block();
   const QTextBlock next = block.next();
@@ -558,7 +558,7 @@ void TextCardEditor::joinLines() {
 
 // Next-word boundary for w operators, stopping at the line end like Vim's
 // dw instead of eating the newline.
-int TextCardEditor::wordForwardStop(const QTextCursor &cursor) const {
+int TextCardModal::wordForwardStop(const QTextCursor &cursor) const {
   QTextCursor probe = cursor;
   probe.movePosition(QTextCursor::NextWord);
   const int blockEnd = cursor.block().position() +
@@ -570,7 +570,7 @@ int TextCardEditor::wordForwardStop(const QTextCursor &cursor) const {
 
 // Returns the first UTF-16 unit of the word's final character; pair-aware
 // so the cursor and deletion ranges never land between surrogate halves.
-int TextCardEditor::wordEnd(int cursorPosition) const {
+int TextCardModal::wordEnd(int cursorPosition) const {
   const QString text = edit_->toPlainText();
   if (text.isEmpty())
     return 0;
@@ -608,7 +608,7 @@ int TextCardEditor::wordEnd(int cursorPosition) const {
   return currentEnd;
 }
 
-std::optional<QPair<int, int>> TextCardEditor::wordRange(
+std::optional<QPair<int, int>> TextCardModal::wordRange(
     bool around, bool fromCursor) const {
   const QTextCursor current = edit_->textCursor();
   const QTextBlock block = current.block();
@@ -651,7 +651,7 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
   return QPair{block.position() + first, block.position() + last};
 }
 
-void TextCardEditor::deleteRange(int first, int last, bool change,
+void TextCardModal::deleteRange(int first, int last, bool change,
                                  const QString &deleted) {
   if (first >= last) {
     if (change) {
@@ -682,7 +682,7 @@ void TextCardEditor::deleteRange(int first, int last, bool change,
   }
 }
 
-bool TextCardEditor::applyEndOperator(bool change) {
+bool TextCardModal::applyEndOperator(bool change) {
   const QString source = edit_->toPlainText();
   if (source.isEmpty())
     return false;
@@ -695,7 +695,7 @@ bool TextCardEditor::applyEndOperator(bool change) {
   return true;
 }
 
-bool TextCardEditor::applyWordOperator(bool change, bool around,
+bool TextCardModal::applyWordOperator(bool change, bool around,
                                        bool fromCursor) {
   const auto range = wordRange(around, fromCursor);
   if (!range)
@@ -705,7 +705,7 @@ bool TextCardEditor::applyWordOperator(bool change, bool around,
   return true;
 }
 
-void TextCardEditor::emitUnsupportedMotion(const QString &pending,
+void TextCardModal::emitUnsupportedMotion(const QString &pending,
                                            const QString &command) {
   if (command.isEmpty())
     return;
@@ -714,7 +714,7 @@ void TextCardEditor::emitUnsupportedMotion(const QString &pending,
           .arg(pending, command));
 }
 
-void TextCardEditor::yankLine() {
+void TextCardModal::yankLine() {
   const QTextCursor cursor = edit_->textCursor();
   yank_ = cursor.block().text() + QLatin1Char('\n');
   yankLinewise_ = true;
@@ -726,7 +726,7 @@ void TextCardEditor::yankLine() {
              : clipboardError);
 }
 
-void TextCardEditor::put(bool before) {
+void TextCardModal::put(bool before) {
   QString text = yank_;
   bool linewise = yankLinewise_;
   if (text.isEmpty()) {
@@ -776,7 +776,7 @@ void TextCardEditor::put(bool before) {
                                  : QStringLiteral("after")));
 }
 
-bool TextCardEditor::applyMotion(QTextCursor &cursor,
+bool TextCardModal::applyMotion(QTextCursor &cursor,
                                  const QString &command) {
   if (command == QStringLiteral("h")) {
     // h and l stay on their line, Vim-style.
@@ -825,7 +825,7 @@ bool TextCardEditor::applyMotion(QTextCursor &cursor,
   return true;
 }
 
-bool TextCardEditor::handleKey(QKeyEvent *key) {
+bool TextCardModal::handleKey(QKeyEvent *key) {
   if (visualAnchor_ >= 0)
     return handleVisualKey(key);
   if (key->modifiers().testFlag(Qt::ControlModifier) &&

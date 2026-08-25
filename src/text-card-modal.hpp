@@ -16,11 +16,11 @@ class QPlainTextEdit;
 /** Owns the card's modal editing state: modes, motions, operators, the yank
  * register, and Vim-style undo cursors. The host owns the widget, rendering,
  * filename editing, and persistence, and reacts through the signals. */
-class TextCardEditor final : public QObject {
+class TextCardModal final : public QObject {
   Q_OBJECT
 
 public:
-  explicit TextCardEditor(QPlainTextEdit *edit, QObject *parent = nullptr);
+  explicit TextCardModal(QPlainTextEdit *edit, QObject *parent = nullptr);
 
   /** Clears mode, register, pending command, and undo cursors for a fresh
    * card. */

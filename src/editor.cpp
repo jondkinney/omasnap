@@ -11,7 +11,7 @@
 #include "recent-snaps.hpp"
 #include "scroll-capture.hpp"
 #include "text-band.hpp"
-#include "text-card-editor.hpp"
+#include "text-card-modal.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -828,19 +828,19 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
             updateClipboardTextCardPreview();
           });
 
-  textCardModal_ = new TextCardEditor(textCardEditor_, this);
-  connect(textCardModal_, &TextCardEditor::statusRequested, this,
+  textCardModal_ = new TextCardModal(textCardEditor_, this);
+  connect(textCardModal_, &TextCardModal::statusRequested, this,
           [this](const QString &status) { setStatus(status); });
-  connect(textCardModal_, &TextCardEditor::modeChanged, this, [this] {
+  connect(textCardModal_, &TextCardModal::modeChanged, this, [this] {
     updateClipboardTextCardEditorGeometry();
     updateClipboardTextCardPreview();
     updateTextCardCaret();
   });
   connect(textCardEditor_, &QPlainTextEdit::cursorPositionChanged, this,
           [this] { updateTextCardCaret(); });
-  connect(textCardModal_, &TextCardEditor::cancelRequested, this,
+  connect(textCardModal_, &TextCardModal::cancelRequested, this,
           [this] { cancelClipboardTextCard(); });
-  connect(textCardModal_, &TextCardEditor::filenameEditRequested, this,
+  connect(textCardModal_, &TextCardModal::filenameEditRequested, this,
           [this] { beginClipboardTextCardFilenameEdit(); });
 
   ocrAnimTimer_.setInterval(16);
