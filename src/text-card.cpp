@@ -282,10 +282,16 @@ private:
   void addRule(const QString &pattern, const QColor &color,
                QFont::Weight weight = QFont::Normal, bool toEnd = false,
                RuleScope scope = RuleScope::SkipsStrings) {
+    // A highlighter is rebuilt per preview render; compiled patterns are
+    // shared across instances. GUI-thread only.
+    static QHash<QString, QRegularExpression> compiled;
+    auto entry = compiled.constFind(pattern);
+    if (entry == compiled.cend())
+      entry = compiled.insert(pattern, QRegularExpression(pattern));
     QTextCharFormat format;
     format.setForeground(color);
     format.setFontWeight(weight);
-    rules_.push_back({QRegularExpression(pattern), format, toEnd, scope});
+    rules_.push_back({*entry, format, toEnd, scope});
   }
 
   void addBlockSpan(const QString &open, const QString &close,
@@ -554,80 +560,76 @@ QString detectTextCardLanguage(const QString &text, const QString &filename) {
       return QStringLiteral("Ruby");
     return QStringLiteral("Shell");
   }
+  static const QRegularExpression jsonKey(QStringLiteral(R"("[^"\n]+"\s*:)"));
   if ((trimmed.startsWith(QLatin1Char('{')) ||
        trimmed.startsWith(QLatin1Char('['))) &&
-      QRegularExpression(QStringLiteral(R"("[^"\n]+"\s*:)"))
-          .match(trimmed)
-          .hasMatch())
+      jsonKey.match(trimmed).hasMatch())
     return QStringLiteral("JSON");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:#include\b|using\s+namespace\b|std::))"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression cppMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:#include\b|using\s+namespace\b|std::))"));
+  if (cppMarks.match(text).hasMatch())
     return QStringLiteral("C++");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:fn\s+main\b|let\s+mut\b|use\s+\w+::))"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression rustMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:fn\s+main\b|let\s+mut\b|use\s+\w+::))"));
+  if (rustMarks.match(text).hasMatch())
     return QStringLiteral("Rust");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:package\s+main\b|func\s+\w+\s*\())"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression goMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:package\s+main\b|func\s+\w+\s*\())"));
+  if (goMarks.match(text).hasMatch())
     return QStringLiteral("Go");
-  if (QRegularExpression(QStringLiteral(
-          R"((?:^|\n)\s*import\s+Qt\w+|(?:^|\n)\s*(?:ApplicationWindow|Item|Rectangle)\s*\{)"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression qmlMarks(QStringLiteral(
+      R"((?:^|\n)\s*import\s+Qt\w+|(?:^|\n)\s*(?:ApplicationWindow|Item|Rectangle)\s*\{)"));
+  if (qmlMarks.match(text).hasMatch())
     return QStringLiteral("QML");
   // A Python def always carries its colon; a Ruby def never does. Checking
   // Python first keeps print(..., end="") away from the Ruby rule below.
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:def\s+\w+[^\n]*:|from\s+\w+\s+import\b|import\s+\w+))"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression pythonMarks(QStringLiteral(
+      R"((?:^|\n)\s*(?:def\s+\w+[^\n]*:|from\s+\w+\s+import\b|import\s+\w+))"));
+  if (pythonMarks.match(text).hasMatch())
     return QStringLiteral("Python");
   // Two anchored probes instead of one [\s\S]* bridge: the single pattern
   // backtracked quadratically on def-heavy text with no closing "end".
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*require(?:_relative)?\s+['"])"))
-          .match(text)
-          .hasMatch() ||
-      (QRegularExpression(
-           QStringLiteral(R"((?:^|\n)\s*(?:class|module|def)\s+\w+)"))
-           .match(text)
-           .hasMatch() &&
-       QRegularExpression(QStringLiteral(R"((?:^|\n)\s*end\b)"))
-           .match(text)
-           .hasMatch()))
+  static const QRegularExpression rubyRequire(
+      QStringLiteral(R"((?:^|\n)\s*require(?:_relative)?\s+['"])"));
+  static const QRegularExpression rubyDefinition(
+      QStringLiteral(R"((?:^|\n)\s*(?:class|module|def)\s+\w+)"));
+  static const QRegularExpression rubyEnd(
+      QStringLiteral(R"((?:^|\n)\s*end\b)"));
+  if (rubyRequire.match(text).hasMatch() ||
+      (rubyDefinition.match(text).hasMatch() &&
+       rubyEnd.match(text).hasMatch()))
     return QStringLiteral("Ruby");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:git|cd|curl|echo|make|omasnap|pacman|sudo)\b)"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression shellMarks(QStringLiteral(
+      R"((?:^|\n)\s*(?:git|cd|curl|echo|make|omasnap|pacman|sudo)\b)"));
+  if (shellMarks.match(text).hasMatch())
     return QStringLiteral("Shell");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:interface|type)\s+\w+\s*[={])"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression typescriptMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:interface|type)\s+\w+\s*[={])"));
+  if (typescriptMarks.match(text).hasMatch())
     return QStringLiteral("TypeScript");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:const|let|function|import|export)\b)"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression javascriptMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:const|let|function|import|export)\b)"));
+  if (javascriptMarks.match(text).hasMatch())
     return QStringLiteral("JavaScript");
-  if (QRegularExpression(QStringLiteral(R"((?:^|\n)\s*(?:```|#{1,6}\s+))"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression markdownMarks(
+      QStringLiteral(R"((?:^|\n)\s*(?:```|#{1,6}\s+))"));
+  if (markdownMarks.match(text).hasMatch())
     return QStringLiteral("Markdown");
-  if (QRegularExpression(QStringLiteral(
-          R"((?:^|\n)[ \t]*\[[A-Za-z0-9_.-]+\][ \t]*\n[ \t]*[A-Za-z0-9_.-]+[ \t]*=)"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression tomlMarks(QStringLiteral(
+      R"((?:^|\n)[ \t]*\[[A-Za-z0-9_.-]+\][ \t]*\n[ \t]*[A-Za-z0-9_.-]+[ \t]*=)"));
+  if (tomlMarks.match(text).hasMatch())
     return QStringLiteral("TOML");
-  if (QRegularExpression(QStringLiteral(
-          R"((?:^|\n)\s*(?:[.#]?[A-Za-z_-][A-Za-z0-9_ >+~.#:-]*)\s*\{[\s\S]*\b[A-Za-z-]+\s*:)"))
-          .match(text)
-          .hasMatch())
+  // The property probe is bounded so brace-heavy non-CSS text cannot make
+  // the wildcard backtrack across the whole snippet.
+  static const QRegularExpression cssMarks(QStringLiteral(
+      R"((?:^|\n)\s*(?:[.#]?[A-Za-z_-][A-Za-z0-9_ >+~.#:-]*)\s*\{[\s\S]{0,2000}\b[A-Za-z-]+\s*:)"));
+  if (cssMarks.match(text).hasMatch())
     return QStringLiteral("CSS");
   // Two consecutive key: lines, like the TOML rule above, so a lone
   // "Note: buy milk" prose line stays plain text.
-  if (QRegularExpression(QStringLiteral(
-          R"((?:^|\n)[ \t]*[A-Za-z_][\w.-]*[ \t]*:\s*\S[^\n]*\n[ \t]*[A-Za-z_][\w.-]*[ \t]*:)"))
-          .match(text)
-          .hasMatch())
+  static const QRegularExpression yamlMarks(QStringLiteral(
+      R"((?:^|\n)[ \t]*[A-Za-z_][\w.-]*[ \t]*:\s*\S[^\n]*\n[ \t]*[A-Za-z_][\w.-]*[ \t]*:)"));
+  if (yamlMarks.match(text).hasMatch())
     return QStringLiteral("YAML");
   return QStringLiteral("Plain Text");
 }
