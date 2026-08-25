@@ -279,12 +279,12 @@ massaging a snippet without embedding a full editor:
 
 | Text-card input | Action |
 |---|---|
-| `h` `j` `k` `l`, `w` `b`, `0` `$`, `gg` `G` | Move in Normal or Visual mode |
+| `h` `j` `k` `l`, `w` `b` `e`, `0` `$`, `gg` `G` | Move in Normal or Visual mode |
 | `i` `a` `I` `A`, `o` `O` | Enter Insert mode at the corresponding position |
 | `Esc` | Return from Insert or Visual to Normal mode |
 | `F`, `Shift+Tab`, or click the title | Edit the displayed filename; its extension switches live syntax highlighting even before code is entered; Enter or Tab accepts and Esc cancels |
-| `x`, `dd`, `diw`, `daw`, `Shift+J` | Delete a character, line, inner/around word, or join with the next line |
-| `C`, `cc`, `cw`, `ciw`, `caw` | Change to end of line, a whole line, from the cursor through word end, or the inner/around word |
+| `x`, `dd`, `de`, `diw`, `daw`, `Shift+J` | Delete a character, line, through word end, inner/around word, or join with the next line |
+| `C`, `cc`, `cw`, `ce`, `ciw`, `caw` | Change to end of line, a whole line, through word end, or the inner/around word |
 | `v`, `viw`, `V`, then movement; `y`, `d`, `x`, `c`/`C` | Select characters, the inner word, or whole lines, then copy, delete, or change them |
 | `yy` | Copy the current line |
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line |

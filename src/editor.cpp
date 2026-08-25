@@ -1480,6 +1480,8 @@ bool CaptureEditor::handleClipboardTextCardVisualKey(QKeyEvent *key) {
     motion.movePosition(QTextCursor::NextWord);
   } else if (command == QStringLiteral("b")) {
     motion.movePosition(QTextCursor::PreviousWord);
+  } else if (command == QStringLiteral("e")) {
+    motion.setPosition(clipboardTextCardWordEnd(textCardVisualPosition_));
   } else {
     textCardPendingCommand_ = {};
     return true;
@@ -1518,6 +1520,44 @@ void CaptureEditor::joinClipboardTextCardLines() {
   textCardEditor_->setTextCursor(cursor);
   recordClipboardTextCardUndoCursor(joinPosition);
   setStatus(QStringLiteral("Text card · NORMAL · joined lines · u undoes"));
+}
+
+int CaptureEditor::clipboardTextCardWordEnd(int cursorPosition) const {
+  const QString text = textCardEditor_->toPlainText();
+  if (text.isEmpty())
+    return 0;
+
+  const auto characterClass = [](QChar character) {
+    if (character.isLetterOrNumber() || character == QLatin1Char('_'))
+      return 0;
+    if (character.isSpace())
+      return 1;
+    return 2;
+  };
+  const int original =
+      std::clamp(cursorPosition, 0, static_cast<int>(text.size()) - 1);
+  int position = original;
+  int selectedClass = characterClass(text.at(position));
+  if (selectedClass != 1) {
+    int currentEnd = position;
+    while (currentEnd + 1 < text.size() &&
+           characterClass(text.at(currentEnd + 1)) == selectedClass)
+      ++currentEnd;
+    if (currentEnd > position)
+      return currentEnd;
+    ++position;
+  }
+
+  while (position < text.size() && text.at(position).isSpace())
+    ++position;
+  if (position >= text.size())
+    return original;
+
+  selectedClass = characterClass(text.at(position));
+  while (position + 1 < text.size() &&
+         characterClass(text.at(position + 1)) == selectedClass)
+    ++position;
+  return position;
 }
 
 std::optional<QPair<int, int>> CaptureEditor::clipboardTextCardWordRange(
@@ -1562,6 +1602,35 @@ std::optional<QPair<int, int>> CaptureEditor::clipboardTextCardWordRange(
   }
 
   return QPair{block.position() + first, block.position() + last};
+}
+
+bool CaptureEditor::applyClipboardTextCardEndOperator(bool change) {
+  const QString source = textCardEditor_->toPlainText();
+  if (source.isEmpty())
+    return false;
+  const int first = std::clamp(textCardEditor_->textCursor().position(), 0,
+                               static_cast<int>(source.size()) - 1);
+  const int last = clipboardTextCardWordEnd(first) + 1;
+  textCardYank_ = source.mid(first, last - first);
+  textCardYankLinewise_ = false;
+  if (change)
+    beginClipboardTextCardInsertEdit(first);
+  QTextCursor edit(textCardEditor_->document());
+  edit.beginEditBlock();
+  edit.setPosition(first);
+  edit.setPosition(last, QTextCursor::KeepAnchor);
+  edit.removeSelectedText();
+  edit.endEditBlock();
+  edit.setPosition(first);
+  textCardEditor_->setTextCursor(edit);
+  if (change)
+    setClipboardTextCardInsertMode(true);
+  else {
+    recordClipboardTextCardUndoCursor(first);
+    setStatus(QStringLiteral("Text card · NORMAL · deleted through word "
+                             "end · p puts it back · u undoes"));
+  }
+  return true;
 }
 
 bool CaptureEditor::applyClipboardTextCardWordOperator(bool change,
@@ -1764,6 +1833,11 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
           applyClipboardTextCardWordOperator(true, false, true));
       return true;
     }
+    if (command == QStringLiteral("e")) {
+      static_cast<void>(
+          applyClipboardTextCardEndOperator(pending == QStringLiteral("c")));
+      return true;
+    }
     if (pending == QStringLiteral("d") && command == QStringLiteral("d")) {
       textCardYank_ = cursor.block().text() + QLatin1Char('\n');
       textCardYankLinewise_ = true;
@@ -1847,6 +1921,8 @@ bool CaptureEditor::handleClipboardTextCardNormalKey(QKeyEvent *key) {
     cursor.movePosition(QTextCursor::NextWord);
   else if (command == QStringLiteral("b"))
     cursor.movePosition(QTextCursor::PreviousWord);
+  else if (command == QStringLiteral("e"))
+    cursor.setPosition(clipboardTextCardWordEnd(cursor.position()));
   else if (command == QStringLiteral("x")) {
     const int beforeLength =
         static_cast<int>(textCardEditor_->toPlainText().size());

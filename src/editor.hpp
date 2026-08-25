@@ -504,8 +504,10 @@ private:
   void leaveClipboardTextCardVisualMode(int cursorPosition);
   [[nodiscard]] bool handleClipboardTextCardVisualKey(QKeyEvent *key);
   void joinClipboardTextCardLines();
+  [[nodiscard]] int clipboardTextCardWordEnd(int cursorPosition) const;
   [[nodiscard]] std::optional<QPair<int, int>> clipboardTextCardWordRange(
       bool around, bool fromCursor = false) const;
+  [[nodiscard]] bool applyClipboardTextCardEndOperator(bool change);
   [[nodiscard]] bool applyClipboardTextCardWordOperator(
       bool change, bool around, bool fromCursor = false);
   void yankClipboardTextCardLine();

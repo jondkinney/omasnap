@@ -325,6 +325,64 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
 
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  if (cardEditor->textCursor().position() != 4) {
+    error = QStringLiteral("Clipboard-card e did not reach the current word end");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  if (cardEditor->textCursor().position() != 11) {
+    error = QStringLiteral("Clipboard-card e did not reach the next word end");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  if (QGuiApplication::clipboard()->text(QClipboard::Clipboard) !=
+          QStringLiteral("answer") ||
+      cardEditor->textCursor().position() != 6) {
+    error = QStringLiteral("Clipboard-card Visual e did not select to word end");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  const QString deletedThroughEnd = QStringLiteral(
+      "co answer = \"hello\";\n# install\nomasnap --version\n\techo \"done\"");
+  if (editor.clipboardTextCardTextForTest() != deletedThroughEnd) {
+    error = QStringLiteral("Clipboard-card de did not delete through word end");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  QTest::keyClicks(cardEditor, QStringLiteral("value"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  const QString changedThroughEnd = QStringLiteral(
+      "const value = \"hello\";\n# install\nomasnap --version\n\techo "
+      "\"done\"");
+  if (editor.clipboardTextCardTextForTest() != changedThroughEnd) {
+    error = QStringLiteral("Clipboard-card ce did not change through word end");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card de/ce operations did not undo");
+    return false;
+  }
+
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_D);
   QTest::keyClick(cardEditor, Qt::Key_I);
   QTest::keyClick(cardEditor, Qt::Key_W);
