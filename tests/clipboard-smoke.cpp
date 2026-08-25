@@ -1058,6 +1058,62 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_O);
+  if (cardEditor->textCursor().position() != 0 ||
+      !editor.statusForTest().contains(QStringLiteral("VISUAL"))) {
+    error = QStringLiteral("Clipboard-card visual o did not swap the ends");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_I);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_E);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const const = "))) {
+    error = QStringLiteral(
+        "Clipboard-card visual p did not replace the selection: %1")
+                .arg(editor.clipboardTextCardTextForTest().left(16));
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  for (int step = 0; step < 5; ++step)
+    QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  QTest::keyClick(cardEditor, Qt::Key_A);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("const = "))) {
+    error = QStringLiteral(
+        "Clipboard-card daw from whitespace missed the following word");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClicks(cardEditor, QStringLiteral("$"));
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_W);
+  if (cardEditor->textCursor().position() !=
+      cardEditor->document()->findBlockByNumber(1).position()) {
+    error = QStringLiteral(
+        "Clipboard-card visual w stopped on the line separator");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
   cardEditor->setPlainText(QStringLiteral("🙂🙃 hi"));
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);

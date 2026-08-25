@@ -8,6 +8,7 @@
 #include <QTextBlock>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 /// Vim word classes: 0 keyword, 1 whitespace, 2 punctuation run.
@@ -396,6 +397,40 @@ bool TextCardEditor::handleVisualKey(QKeyEvent *key) {
     }
     return true;
   }
+  if (command == QStringLiteral("o")) {
+    std::swap(visualAnchor_, visualPosition_);
+    updateVisualSelection();
+    return true;
+  }
+  if (command == QStringLiteral("p")) {
+    QString pasted = yank_;
+    if (pasted.isEmpty())
+      pasted = QGuiApplication::clipboard()->text(QClipboard::Clipboard);
+    if (pasted.isEmpty())
+      return true;
+    if (visualLineMode_ && !pasted.endsWith(QLatin1Char('\n')))
+      pasted.append(QLatin1Char('\n'));
+    const int first = visualSelectionStart_;
+    const int last = visualSelectionEnd_;
+    const QString source = edit_->toPlainText();
+    // Vim swaps: the register replaces the selection, which becomes the
+    // register.
+    const QString removed = source.mid(first, last - first);
+    QTextCursor replace(edit_->document());
+    replace.beginEditBlock();
+    replace.setPosition(first);
+    replace.setPosition(last, QTextCursor::KeepAnchor);
+    replace.removeSelectedText();
+    replace.insertText(pasted);
+    replace.endEditBlock();
+    yank_ = removed;
+    yankLinewise_ = visualLineMode_;
+    leaveVisualMode(first);
+    recordUndoCursor(first);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · selection replaced · u undoes"));
+    return true;
+  }
 
   if (pendingCommand_ == QStringLiteral("i")) {
     pendingCommand_.clear();
@@ -554,7 +589,12 @@ std::optional<QPair<int, int>> TextCardEditor::wordRange(
          characterClass(line.at(last)) == selectedClass)
     ++last;
 
-  if (around && selectedClass != 1) {
+  if (around && selectedClass == 1 && last < line.size()) {
+    const int wordClass = fullCharacterClass(line, last);
+    while (last < line.size() &&
+           fullCharacterClass(line, last) == wordClass)
+      last += characterWidth(line, last);
+  } else if (around && selectedClass != 1) {
     const int contentLast = last;
     while (last < line.size() && line.at(last).isSpace())
       ++last;
@@ -715,11 +755,15 @@ bool TextCardEditor::applyMotion(QTextCursor &cursor,
     cursor.movePosition(QTextCursor::EndOfBlock);
     clampToLastCharacter(cursor);
     stickyEol_ = true;
-  } else if (command == QStringLiteral("w"))
+  } else if (command == QStringLiteral("w")) {
     cursor.movePosition(QTextCursor::NextWord);
-  else if (command == QStringLiteral("b"))
+    if (cursor.atBlockEnd() && !cursor.atEnd())
+      cursor.movePosition(QTextCursor::NextWord);
+  } else if (command == QStringLiteral("b")) {
     cursor.movePosition(QTextCursor::PreviousWord);
-  else if (command == QStringLiteral("e"))
+    if (cursor.atBlockEnd() && !cursor.atStart())
+      cursor.movePosition(QTextCursor::PreviousWord);
+  } else if (command == QStringLiteral("e"))
     cursor.setPosition(wordEnd(cursor.position()));
   else
     return false;
