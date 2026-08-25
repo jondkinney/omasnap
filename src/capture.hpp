@@ -137,6 +137,10 @@ struct OperationLog {
   QString textCardText{};
   QString textCardFilename{};
   bool textCardEditing = false;
+  /// Live-draft state a presentation switch carries across processes.
+  int textCardCursor = -1;
+  QString textCardYank{};
+  bool textCardYankLinewise = false;
 
   bool operator==(const OperationLog &) const = default;
 };

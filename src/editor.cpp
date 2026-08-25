@@ -690,6 +690,9 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
       log.textCardEditing && !log.textCardText.isEmpty();
   textCardDocumentText_ = log.textCardText;
   textCardDocumentFilename_ = log.textCardFilename;
+  textCardRestoreCursor_ = log.textCardCursor;
+  textCardRestoreYank_ = log.textCardYank;
+  textCardRestoreYankLinewise_ = log.textCardYankLinewise;
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultConfigPath());
@@ -1047,6 +1050,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
         return;
       textCardRestoreEditing_ = false;
       reopenClipboardTextCard();
+      applyTextCardRestoreState();
     });
   }
 }
@@ -1075,6 +1079,7 @@ void CaptureEditor::setWindowedPresentation(bool windowed) {
   if (textCardRestoreEditing_) {
     textCardRestoreEditing_ = false;
     reopenClipboardTextCard();
+    applyTextCardRestoreState();
   } else if (clipboardTextCardEditing_) {
     updateClipboardTextCardPreview();
   }
@@ -3238,6 +3243,13 @@ void CaptureEditor::startSnapshotRender() {
                              : textCardDocumentFilename_;
   log.textCardEditing =
       clipboardTextCardEditing_ && !log.textCardText.isEmpty();
+  log.textCardCursor = clipboardTextCardEditing_
+                           ? textCardEditor_->textCursor().position()
+                           : -1;
+  log.textCardYank =
+      clipboardTextCardEditing_ ? textCardModal_->yankText() : QString();
+  log.textCardYankLinewise =
+      clipboardTextCardEditing_ && textCardModal_->yankLinewise();
   const bool writeSource = !sourceWritten_ || !QFile::exists(path);
   snapshotWatcher_.setFuture(QtConcurrent::run(
       [source, path, logPath, log, writeSource] {
@@ -3997,17 +4009,25 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
                           ? static_cast<QWidget *>(textCardFilenameEditor_)
                           : textCardEditor_;
     target->setFocus(Qt::ShortcutFocusReason);
-    QKeyEvent repost(QEvent::KeyPress, event->key(), event->modifiers(),
-                     event->text(), event->isAutoRepeat(),
-                     static_cast<quint16>(event->count()));
-    QCoreApplication::sendEvent(target, &repost);
+    // A key the child ignores bubbles back here; resend it only once.
+    if (!textCardRepostingKey_) {
+      textCardRepostingKey_ = true;
+      QKeyEvent repost(QEvent::KeyPress, event->key(), event->modifiers(),
+                       event->text(), event->isAutoRepeat(),
+                       static_cast<quint16>(event->count()));
+      QCoreApplication::sendEvent(target, &repost);
+      textCardRepostingKey_ = false;
+    }
     event->accept();
     return;
   }
   const bool reopenChord = phase_ == Phase::Edit &&
                            isPlainControlChord(event, Qt::Key_E) &&
                            !textCardDocumentText_.isEmpty();
-  if (!reopenChord)
+  const bool modifierOnly =
+      event->key() == Qt::Key_Shift || event->key() == Qt::Key_Control ||
+      event->key() == Qt::Key_Alt || event->key() == Qt::Key_Meta;
+  if (!reopenChord && !modifierOnly)
     textCardReopenArmed_ = false;
   if (reopenChord) {
     if (!ops_.isEmpty() && !textCardReopenArmed_) {
@@ -6224,6 +6244,25 @@ void CaptureEditor::reopenClipboardTextCard() {
   const QString text = textCardDocumentText_;
   const QString filename = textCardDocumentFilename_;
   beginClipboardTextCard(text, filename);
+}
+
+// Cursor and yank register carried through a presentation switch; the
+// document undo stack cannot cross processes.
+void CaptureEditor::applyTextCardRestoreState() {
+  if (!clipboardTextCardEditing_)
+    return;
+  if (textCardRestoreCursor_ >= 0) {
+    QTextCursor cursor(textCardEditor_->document());
+    cursor.setPosition(std::clamp(
+        textCardRestoreCursor_, 0,
+        static_cast<int>(textCardEditor_->toPlainText().size())));
+    textCardEditor_->setTextCursor(cursor);
+  }
+  textCardRestoreCursor_ = -1;
+  if (!textCardRestoreYank_.isEmpty())
+    textCardModal_->restoreYank(textCardRestoreYank_,
+                                textCardRestoreYankLinewise_);
+  textCardRestoreYank_.clear();
 }
 
 void CaptureEditor::cancelClipboardTextCard() {

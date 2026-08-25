@@ -31,6 +31,12 @@ public:
   [[nodiscard]] bool visualMode() const { return visualAnchor_ >= 0; }
   void setInsertMode(bool insertMode);
   void endInsertEdit();
+  [[nodiscard]] QString yankText() const { return yank_; }
+  [[nodiscard]] bool yankLinewise() const { return yankLinewise_; }
+  void restoreYank(const QString &text, bool linewise) {
+    yank_ = text;
+    yankLinewise_ = linewise;
+  }
   /** Drops any Visual selection or Insert session back to Normal mode. */
   void exitToNormal();
   /** Dispatches one Normal- or Visual-mode key; true when consumed. */

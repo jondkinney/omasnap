@@ -1171,6 +1171,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Clipboard-card x left half an emoji behind");
     return false;
   }
+  cardEditor->setPlainText(QStringLiteral("🙂🙃 hi"));
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_D);
@@ -1331,7 +1332,14 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Card re-render after annotation discard failed");
     return false;
   }
-  QTest::keyClick(&editor, Qt::Key_Escape);
+  const QRectF regionTab =
+      editor.selectTabRectForTest(QStringLiteral("REGION"));
+  if (regionTab.isEmpty()) {
+    error = QStringLiteral("Edit phase lost its way back to the select tabs");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    regionTab.center().toPoint());
   QApplication::processEvents();
   if (editor.clipboardTextCardSourceRetainedForTest()) {
     error = QStringLiteral(
@@ -1349,6 +1357,8 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   handoffLog.textCardText = edited;
   handoffLog.textCardFilename = QStringLiteral("~/share/install.sh");
   handoffLog.textCardEditing = true;
+  handoffLog.textCardCursor = 5;
+  handoffLog.textCardYank = QStringLiteral("zap");
   CaptureEditor handedOff(std::move(handoffCapture),
                           CaptureEditor::CaptureMode::File,
                           QuickOutputMode::None, std::move(handoffLog));
@@ -1388,6 +1398,23 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Compact text card did not focus its editor");
     return false;
   }
+  if (compactEditor->textCursor().position() != 5) {
+    error = QStringLiteral(
+        "Window handoff did not restore the draft cursor: %1")
+                .arg(compactEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(compactEditor, Qt::Key_P, Qt::ShiftModifier);
+  if (!handedOff.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("constzap "))) {
+    error = QStringLiteral(
+        "Window handoff did not restore the yank register: %1")
+                .arg(handedOff.clipboardTextCardTextForTest().left(12));
+    return false;
+  }
+  QTest::keyClick(compactEditor, Qt::Key_U);
+  QTest::keyClick(compactEditor, Qt::Key_G);
+  QTest::keyClick(compactEditor, Qt::Key_G);
   QTest::keyClick(compactEditor, Qt::Key_V);
   QTest::keyClick(compactEditor, Qt::Key_G, Qt::ShiftModifier);
   QTest::keyClick(compactEditor, Qt::Key_D);

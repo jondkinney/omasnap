@@ -498,6 +498,7 @@ private:
   void adoptTextCardSurface(QImage image);
   bool handOffLiveTextCard();
   void updateTextCardCaret();
+  void applyTextCardRestoreState();
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -784,11 +785,15 @@ private:
   bool textCardReopenArmed_ = false;
   QString textCardFrameKey_;
   QString textCardHoveredAction_;
+  bool textCardRepostingKey_ = false;
   int textCardDetectRevision_ = -1;
   QString textCardDetectFilename_;
   QString textCardDetectedLanguage_;
   bool clipboardTextCardEditing_ = false;
   bool textCardRestoreEditing_ = false;
+  int textCardRestoreCursor_ = -1;
+  QString textCardRestoreYank_;
+  bool textCardRestoreYankLinewise_ = false;
   TextCardEditor *textCardModal_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;

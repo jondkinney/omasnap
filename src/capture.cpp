@@ -2363,6 +2363,13 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
     root.insert(QStringLiteral("textCardText"), log.textCardText);
     root.insert(QStringLiteral("textCardFilename"), log.textCardFilename);
     root.insert(QStringLiteral("textCardEditing"), log.textCardEditing);
+    if (log.textCardCursor >= 0)
+      root.insert(QStringLiteral("textCardCursor"), log.textCardCursor);
+    if (!log.textCardYank.isEmpty()) {
+      root.insert(QStringLiteral("textCardYank"), log.textCardYank);
+      root.insert(QStringLiteral("textCardYankLinewise"),
+                  log.textCardYankLinewise);
+    }
   }
   root.insert(QStringLiteral("ops"), ops);
 
@@ -2416,6 +2423,11 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.textCardEditing =
       !loaded.textCardText.isEmpty() &&
       root.value(QStringLiteral("textCardEditing")).toBool();
+  loaded.textCardCursor =
+      root.value(QStringLiteral("textCardCursor")).toInt(-1);
+  loaded.textCardYank = root.value(QStringLiteral("textCardYank")).toString();
+  loaded.textCardYankLinewise =
+      root.value(QStringLiteral("textCardYankLinewise")).toBool();
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)

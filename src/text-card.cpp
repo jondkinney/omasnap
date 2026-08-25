@@ -392,7 +392,8 @@ QColor readableOn(QColor color, const QColor &panel) {
     color = QColor::fromRgbF(color.redF() * 0.9 + pole.redF() * 0.1,
                              color.greenF() * 0.9 + pole.greenF() * 0.1,
                              color.blueF() * 0.9 + pole.blueF() * 0.1);
-  return color;
+  // Snapped to 8-bit so painted pixels compare equal to the theme color.
+  return QColor(color.red(), color.green(), color.blue());
 }
 
 QColor semanticColor(const QHash<QString, QColor> &colors,
