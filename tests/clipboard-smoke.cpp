@@ -69,10 +69,20 @@ bool runTextOnlyCheck(QString &error) {
 }
 
 /** Checks text transfer, styled rendering, and the select-phase shortcut. */
-bool runTextCardCheck(const QString &outputRoot, QString &error) {
-  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY", "1");
-  const QString expected = QStringLiteral(
+QString expectedCardText() {
+  return QStringLiteral(
       "const answer = \"hello\";\n# install\nomasnap --version");
+}
+
+QString editedCardText() {
+  return expectedCardText() + QStringLiteral("\n\techo \"done\"");
+}
+
+
+/** Language and filename detection over the fake clipboard. */
+bool runTextCardDetectionCheck(QString &error) {
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT_ONLY", "1");
+  const QString expected = expectedCardText();
   QString text;
   if (!loadClipboardText(text, error) || text != expected) {
     if (error.isEmpty())
@@ -134,11 +144,17 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  return true;
+}
+
+/** Card rendering: theme import, pixels, precedence, gutter. */
+bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
+  const QString expected = expectedCardText();
   QString renderError;
-  const QImage card = renderTextCard(text, renderError);
+  const QImage card = renderTextCard(expected, renderError);
   const TextCardTheme theme = loadTextCardTheme();
   const TextCardRender compact = renderTextCardLayout(
-      text, theme, renderError, false, QStringLiteral("NORMAL"),
+      expected, theme, renderError, false, QStringLiteral("NORMAL"),
       QStringLiteral("snippet.sh"), TextCardLayout::Compact);
   if (compact.image.isNull() || compact.image.width() >= card.width() ||
       compact.image.height() >= card.height() ||
@@ -270,51 +286,52 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
-  CaptureData capture;
-  capture.monitor.name = QStringLiteral("TEST");
-  capture.monitor.geometry = {0, 0, 320, 240};
-  capture.monitor.pixelSize = {320, 240};
-  capture.monitor.scale = 1.0;
-  capture.source = QImage(320, 240, QImage::Format_ARGB32_Premultiplied);
-  capture.source.fill(QColor(QStringLiteral("#182030")));
-  capture.previewSize = capture.source.size();
-  {
-    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", "   \n  ");
-    CaptureEditor rejectionEditor(capture, CaptureEditor::CaptureMode::Region);
-    rejectionEditor.setSuppressSnapshots(true);
-    rejectionEditor.resize(640, 480);
-    rejectionEditor.show();
-    QApplication::processEvents();
-    QTest::keyClick(&rejectionEditor, Qt::Key_V,
-                    Qt::ControlModifier | Qt::ShiftModifier);
-    if (rejectionEditor.clipboardTextCardEditingForTest() ||
-        !rejectionEditor.statusForTest().contains(QStringLiteral("empty"))) {
-      error = QStringLiteral(
-          "A blank clipboard was not rejected before opening a card");
-      return false;
-    }
-    QStringList overflowLines;
-    for (int line = 0; line < 130; ++line)
-      overflowLines.append(QStringLiteral("line %1").arg(line));
-    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
-            overflowLines.join(QLatin1Char('\n')).toUtf8());
-    QTest::keyClick(&rejectionEditor, Qt::Key_V,
-                    Qt::ControlModifier | Qt::ShiftModifier);
-    if (rejectionEditor.clipboardTextCardEditingForTest() ||
-        !rejectionEditor.statusForTest().contains(
-            QStringLiteral("too long"))) {
-      error = QStringLiteral(
-          "An oversize clipboard was not rejected before opening a card");
-      return false;
-    }
-    rejectionEditor.close();
-    qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expected.toUtf8());
-  }
-  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
-  editor.setSuppressSnapshots(true);
-  editor.resize(640, 480);
-  editor.show();
+  return true;
+}
+
+/** Blank and oversize clipboards are rejected before a card opens. */
+bool runTextCardRejectionCheck(const CaptureData &capture,
+                              QString &error) {
+  const QString expected = expectedCardText();
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", "   \n  ");
+  CaptureEditor rejectionEditor(capture, CaptureEditor::CaptureMode::Region);
+  rejectionEditor.setSuppressSnapshots(true);
+  rejectionEditor.resize(640, 480);
+  rejectionEditor.show();
   QApplication::processEvents();
+  QTest::keyClick(&rejectionEditor, Qt::Key_V,
+          Qt::ControlModifier | Qt::ShiftModifier);
+  if (rejectionEditor.clipboardTextCardEditingForTest() ||
+    !rejectionEditor.statusForTest().contains(QStringLiteral("empty"))) {
+    error = QStringLiteral(
+      "A blank clipboard was not rejected before opening a card");
+    return false;
+  }
+  QStringList overflowLines;
+  for (int line = 0; line < 130; ++line)
+    overflowLines.append(QStringLiteral("line %1").arg(line));
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
+      overflowLines.join(QLatin1Char('\n')).toUtf8());
+  QTest::keyClick(&rejectionEditor, Qt::Key_V,
+          Qt::ControlModifier | Qt::ShiftModifier);
+  if (rejectionEditor.clipboardTextCardEditingForTest() ||
+    !rejectionEditor.statusForTest().contains(
+      QStringLiteral("too long"))) {
+    error = QStringLiteral(
+      "An oversize clipboard was not rejected before opening a card");
+    return false;
+  }
+  rejectionEditor.close();
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", expected.toUtf8());
+  return true;
+}
+
+/** Ctrl+Shift+V entry, filename editing, and live insert typing. */
+bool runTextCardEntryCheck(CaptureEditor &editor,
+                           QPlainTextEdit *&cardEditor,
+                           const QString &outputRoot, QString &error) {
+  const QString expected = expectedCardText();
+  const TextCardTheme theme = loadTextCardTheme();
   QTest::keyClick(&editor, Qt::Key_V,
                   Qt::ControlModifier | Qt::ShiftModifier);
   QApplication::processEvents();
@@ -326,7 +343,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
-  auto *cardEditor = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  cardEditor = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
   if (!cardEditor) {
     error = QStringLiteral("Clipboard text card did not focus its editor");
     return false;
@@ -420,8 +437,15 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     error = QStringLiteral("Could not save the live text-card editor fixture");
     return false;
   }
+  return true;
+}
+
+/** Normal-mode motions, operators, registers, and undo marks. */
+bool runTextCardNormalModeCheck(CaptureEditor &editor,
+                                QPlainTextEdit *cardEditor,
+                                QString &error) {
   QTest::keyClick(cardEditor, Qt::Key_Escape);
-  const QString edited = expected + QStringLiteral("\n\techo \"done\"");
+  const QString edited = editedCardText();
   const int beforeH = cardEditor->textCursor().position();
   QTest::keyClick(cardEditor, Qt::Key_H);
   if (editor.clipboardTextCardTextForTest() != edited ||
@@ -693,6 +717,15 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  return true;
+}
+
+/** Visual selections, objects, puts, and multibyte safety. */
+bool runTextCardVisualModeCheck(CaptureEditor &editor,
+                                QPlainTextEdit *cardEditor,
+                                const QString &outputRoot,
+                                QString &error) {
+  const QString edited = editedCardText();
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_E);
@@ -1215,7 +1248,8 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   QTest::keyClick(cardEditor, Qt::Key_Tab, Qt::ShiftModifier);
-  filenameEditor = qobject_cast<QLineEdit *>(QApplication::focusWidget());
+  QLineEdit *filenameEditor =
+      qobject_cast<QLineEdit *>(QApplication::focusWidget());
   if (!filenameEditor) {
     error = QStringLiteral(
         "Clipboard-card empty source could not focus filename editing");
@@ -1259,6 +1293,15 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
         "Clipboard-card source did not restore after live language test");
     return false;
   }
+  return true;
+}
+
+/** Render, annotate, Ctrl+E confirm/reopen, and the way back out. */
+bool runTextCardRenderRoundTripCheck(CaptureEditor &editor,
+                                     QPlainTextEdit *cardEditor,
+                                     const QString &outputRoot,
+                                     QString &error) {
+  const QString edited = editedCardText();
   QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
   QApplication::processEvents();
   QString editedRenderError;
@@ -1353,7 +1396,20 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
     return false;
   }
   editor.close();
+  return true;
+}
 
+/** A window handoff restores the draft, its cursor, and register. */
+bool runTextCardHandoffCheck(const CaptureData &capture,
+                             const QString &outputRoot,
+                             QString &error) {
+  const QString edited = editedCardText();
+  QString editedRenderError;
+  const QImage editedCard =
+      renderTextCardLayout(edited, loadTextCardTheme(), editedRenderError, true,
+                           QStringLiteral("NORMAL"),
+                           QStringLiteral("~/share/install.sh"))
+          .image;
   CaptureData handoffCapture;
   handoffCapture.monitor = capture.monitor;
   handoffCapture.source = editedCard;
@@ -1453,6 +1509,38 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
   }
   return true;
 }
+
+/** Drives the full clipboard text-card flow section by section. */
+bool runTextCardCheck(const QString &outputRoot, QString &error) {
+  if (!runTextCardDetectionCheck(error) ||
+      !runTextCardRenderCheck(outputRoot, error))
+    return false;
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 320, 240};
+  capture.monitor.pixelSize = {320, 240};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(320, 240, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+  if (!runTextCardRejectionCheck(capture, error))
+    return false;
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+  editor.setSuppressSnapshots(true);
+  editor.resize(640, 480);
+  editor.show();
+  QApplication::processEvents();
+  QPlainTextEdit *cardEditor = nullptr;
+  if (!runTextCardEntryCheck(editor, cardEditor, outputRoot, error) ||
+      !runTextCardNormalModeCheck(editor, cardEditor, error) ||
+      !runTextCardVisualModeCheck(editor, cardEditor, outputRoot,
+                                  error) ||
+      !runTextCardRenderRoundTripCheck(editor, cardEditor, outputRoot,
+                                       error))
+    return false;
+  return runTextCardHandoffCheck(capture, outputRoot, error);
+}
+
 
 /** Checks that illegible theme pairings are corrected on load. */
 bool runTextCardThemeGuardCheck(QString &error) {
