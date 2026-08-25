@@ -737,6 +737,42 @@ bool runTextCardNormalModeCheck(CaptureEditor &editor,
   }
   QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_R);
+  QTest::keyClicks(cardEditor, QStringLiteral("Z"));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("Zonst")) ||
+      cardEditor->textCursor().position() != 0) {
+    error = QStringLiteral(
+        "Clipboard-card r did not replace in place: %1 cursor=%2")
+                .arg(editor.clipboardTextCardTextForTest().left(5))
+                .arg(cardEditor->textCursor().position());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_R);
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card r after Esc still replaced");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_V);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_R);
+  QTest::keyClicks(cardEditor, QStringLiteral("*"));
+  if (!editor.clipboardTextCardTextForTest().startsWith(
+          QStringLiteral("***st")) ||
+      !editor.statusForTest().contains(QStringLiteral("NORMAL"))) {
+    error = QStringLiteral("Clipboard-card visual r did not fill the selection");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != edited) {
+    error = QStringLiteral("Clipboard-card r commands did not undo");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
   QTest::keyClick(cardEditor, Qt::Key_Right);
   QTest::keyClick(cardEditor, Qt::Key_Down);
   const int arrowTarget =
@@ -1403,6 +1439,15 @@ bool runTextCardVisualModeCheck(CaptureEditor &editor,
   QTest::keyClick(cardEditor, Qt::Key_X);
   if (editor.clipboardTextCardTextForTest() != QStringLiteral("🙂 hi")) {
     error = QStringLiteral("Clipboard-card x left half an emoji behind");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_R);
+  QTest::keyClicks(cardEditor, QStringLiteral("z"));
+  if (editor.clipboardTextCardTextForTest() != QStringLiteral("z hi")) {
+    error = QStringLiteral("Clipboard-card r split a surrogate pair: %1")
+                .arg(editor.clipboardTextCardTextForTest());
     return false;
   }
   cardEditor->setPlainText(QStringLiteral("🙂🙃 hi"));

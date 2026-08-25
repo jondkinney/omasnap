@@ -83,6 +83,16 @@ QString visualModeStatus(bool linewise) {
                               "· x/d delete · c changes · Esc Normal");
 }
 
+/// The keystroke completing an r command; empty when it cancels instead.
+QString replacementText(const QKeyEvent *key) {
+  if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)
+    return QStringLiteral("\n");
+  const QString text = key->text();
+  if (text.isEmpty() || !text.at(0).isPrint())
+    return {};
+  return text;
+}
+
 /// Editing keys a non-Vim user expects still work in the modal layer.
 QString modalCommand(const QKeyEvent *key) {
   switch (key->key()) {
@@ -372,6 +382,39 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
   if (key->modifiers() &
       (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
     pendingCommand_.clear();
+    return true;
+  }
+  if (pendingCommand_ == QStringLiteral("r")) {
+    pendingCommand_.clear();
+    const QString replacement = replacementText(key);
+    if (replacement.isEmpty())
+      return true;
+    const int first = visualSelectionStart_;
+    const int last = visualSelectionEnd_;
+    const QString source = edit_->toPlainText();
+    QString replaced;
+    for (int position = first; position < last;
+         position += characterWidth(source, position)) {
+      replaced += source.at(position) == QLatin1Char('\n')
+                      ? QStringLiteral("\n")
+                      : replacement;
+    }
+    QTextCursor replace(edit_->document());
+    replace.beginEditBlock();
+    replace.setPosition(first);
+    replace.setPosition(last, QTextCursor::KeepAnchor);
+    replace.insertText(replaced);
+    replace.endEditBlock();
+    leaveVisualMode(first);
+    recordUndoCursor(first);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · selection replaced · u undoes"));
+    return true;
+  }
+  if (command == QStringLiteral("r")) {
+    pendingCommand_ = QStringLiteral("r");
+    emit statusRequested(QStringLiteral(
+        "Text card · VISUAL · r · type the replacement · Esc cancels"));
     return true;
   }
   const bool changeSelection = key->key() == Qt::Key_C;
@@ -853,6 +896,26 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
     if (command != QStringLiteral("$"))
       stickyEol_ = false;
   }
+  if (pendingCommand_ == QStringLiteral("r")) {
+    pendingCommand_.clear();
+    const QString replacement = replacementText(key);
+    if (replacement.isEmpty() || cursor.atBlockEnd())
+      return true;
+    const int first = cursor.position();
+    QTextCursor replace = cursor;
+    replace.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+    replace.beginEditBlock();
+    replace.insertText(replacement);
+    replace.endEditBlock();
+    recordUndoCursor(first);
+    QTextCursor landed(edit_->document());
+    landed.setPosition(replacement == QStringLiteral("\n") ? first + 1
+                                                            : first);
+    edit_->setTextCursor(landed);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · character replaced · u undoes"));
+    return true;
+  }
   if (shifted && key->key() == Qt::Key_J) {
     pendingCommand_.clear();
     joinLines();
@@ -1076,6 +1139,12 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
   }
   if (command == QStringLiteral("y")) {
     pendingCommand_ = QStringLiteral("y");
+    return true;
+  }
+  if (command == QStringLiteral("r")) {
+    pendingCommand_ = QStringLiteral("r");
+    emit statusRequested(QStringLiteral(
+        "Text card · NORMAL · r · type the replacement · Esc cancels"));
     return true;
   }
   if (key->key() == Qt::Key_V) {
