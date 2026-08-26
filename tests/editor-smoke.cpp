@@ -808,8 +808,8 @@ bool runTextAwareHighlighterEditorCheck(QApplication &application,
   editor.resize(460, 500);
   editor.show();
   application.processEvents();
-  const auto widgetPoint = [](qreal x, qreal y) {
-    return QPoint(qRound(x + 30.0), qRound(y + 135.0));
+  const auto widgetPoint = [&editor](qreal x, qreal y) {
+    return editor.toScreenPointForTest(QPointF(x, y)).toPoint();
   };
 
   QTest::keyClick(&editor, Qt::Key_H);
@@ -1632,10 +1632,10 @@ bool runEditorWindowConfigCheck(QString &error) {
   if (editorWindowSize(QSize(800, 600), QSize(2560, 1600), 100) !=
           QSize(928, 910) ||
       editorWindowSize(QSize(4000, 2000), QSize(2000, 1000), 100) !=
-          QSize(1608, 900) ||
+          QSize(1800, 900) ||
       editorWindowSize(QSize(100, 50), QSize(2000, 1000), 214) !=
           QSize(640, 474) ||
-      editorWindowSize(QSize(5000, 5000), QSize(), 100) != QSize(1042, 1080)) {
+      editorWindowSize(QSize(5000, 5000), QSize(), 100) != QSize(1728, 1080)) {
     error = QStringLiteral("The windowed editor sized itself wrong");
     return false;
   }
@@ -1679,9 +1679,12 @@ bool runZoomOutCheck(QApplication &application, QString &error) {
     application.processEvents();
   };
   // A point just inside the fitted image's corner is bright yellow at fit
-  // and stops being image once the view zooms out.
+  // and stops being image once the view zooms out. Probed at the fit rect
+  // measured before any zoom, so the spot is geometry-independent.
+  const QPoint fitCorner =
+      (editor.editImageRectForTest().topLeft() + QPointF(5, 5)).toPoint();
   const auto cornerIsImage = [&] {
-    const QColor color = editor.grab().toImage().pixelColor(135, 130);
+    const QColor color = editor.grab().toImage().pixelColor(fitCorner);
     return color.red() > 200 && color.green() > 150 && color.blue() < 120;
   };
   if (!cornerIsImage()) {
@@ -1936,8 +1939,8 @@ bool runDraftPillStaysPutCheck(QApplication &application, QString &error) {
   return true;
 }
 
-/** A text layer pushed past the canvas edge keeps a reachable wrap handle,
- *  and the handle drag stops at the canvas edge. */
+/** A text layer pushed past the source edge grows the canvas, keeps its wrap
+ *  handle reachable there, and can still be resized inward. */
 bool runTextOverrunHandleCheck(QApplication &application, QString &error) {
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -2004,14 +2007,20 @@ bool runTextOverrunHandleCheck(QApplication &application, QString &error) {
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, ink.center());
   application.processEvents();
 
-  // The layer's own corner is far off the canvas, maybe off the screen; the
-  // handle waits at the canvas edge instead. Sweep a neighborhood around
-  // where the edge must be (the ink locates the layer, the display scale is
-  // near one) until the hover cursor says resize; never finding it is
-  // exactly the bug this guards.
-  const int guessX = std::min(
-      790, ink.left() + qRound(selection.width() - 4.0 - text.start.x()));
-  const int guessY = ink.bottom() + 6;
+  // The grown canvas fits the whole layer on screen. Its handle stays beside
+  // the layer instead of jumping back onto the original source frame.
+  const QRectF layerBounds = annotationTextBounds(
+      editor.currentAnnotationsForTest().constFirst(), selection.width());
+  QPointF rescuedHandle = layerBounds.bottomRight();
+  const QRectF canvas = editor.currentCanvasForTest();
+  rescuedHandle.setX(
+      std::clamp(rescuedHandle.x(), canvas.left() + 4.0, canvas.right() - 4.0));
+  rescuedHandle.setY(
+      std::clamp(rescuedHandle.y(), canvas.top() + 4.0, canvas.bottom() - 4.0));
+  const QPointF handleGuess =
+      editor.annotationPointToWidgetForTest(rescuedHandle);
+  const int guessX = qRound(handleGuess.x());
+  const int guessY = qRound(handleGuess.y());
   QPoint handleSpot;
   for (int gy = guessY - 24; gy <= guessY + 24 && handleSpot.isNull(); gy += 4)
     for (int gx = guessX - 60; gx <= std::min(795, guessX + 80); gx += 4) {
@@ -2027,14 +2036,11 @@ bool runTextOverrunHandleCheck(QApplication &application, QString &error) {
     return false;
   }
 
-  // Dragging the handle right stops at the canvas edge (drag points clamp to
-  // the selection), so the text must wrap there rather than follow the
-  // pointer out. Two ink lines say the width stopped at the edge; the frozen
-  // 900 (or anything past the full line) would keep one.
+  // Dragging inward narrows the stored wrap width and produces multiple lines.
   QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, handleSpot);
-  const QPoint wayRight(std::min(795, handleSpot.x() + 120), handleSpot.y());
-  QTest::mouseMove(&editor, wayRight, 20);
-  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, wayRight);
+  const QPoint inward(std::max(0, handleSpot.x() - 180), handleSpot.y());
+  QTest::mouseMove(&editor, inward, 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, inward);
   application.processEvents();
   const QRect after = inkBounds();
   int bands = 0;
@@ -2050,7 +2056,7 @@ bool runTextOverrunHandleCheck(QApplication &application, QString &error) {
     inBand = rowInk;
   }
   if (bands < 2) {
-    error = QStringLiteral("Handle drag past the edge did not stop there");
+    error = QStringLiteral("Grown-canvas text did not resize inward");
     return false;
   }
   return true;
@@ -2165,7 +2171,8 @@ bool runTextVerticalOverrunHandleCheck(QApplication &application,
   return true;
 }
 
-/** The view holds still while a text draft is open. */
+/** The view holds still while a text draft is open: no wheel zoom or scroll,
+ *  no middle-drag pan, until the text commits. */
 bool runDraftViewLockCheck(QApplication &application, QString &error) {
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -2174,6 +2181,8 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
   capture.monitor.scale = 1.0;
   capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
   {
+    // A checkerboard, so even a one-pixel pan or zoom of the view flips
+    // sampled pixels; a flat fill would hide a moving view entirely.
     QPainter painter(&capture.source);
     for (int y = 0; y < 600; y += 20)
       for (int x = 0; x < 800; x += 20)
@@ -2183,11 +2192,18 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
   }
   capture.previewSize = capture.source.size();
 
-  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+  CaptureEditor editor(capture);
   editor.resize(800, 600);
   editor.show();
   application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
 
+  // Sampled well inside the canvas: below even the zoomed draft's descent,
+  // above the status pill, and clear of the legend and the blinking caret.
+  const QRect sample(140, 430, 400, 60);
   const auto ctrlWheel = [&] {
     QWheelEvent wheel(QPointF(400, 300), QPointF(400, 300), {}, {0, 120},
                       Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase,
@@ -2195,23 +2211,16 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
     QApplication::sendEvent(&editor, &wheel);
     application.processEvents();
   };
-  const QRectF image = editor.editImageRectForTest();
-  const QRect sample(qRound(image.left() + 20), qRound(image.bottom() - 80),
-                     200, 40);
   const auto grab = [&] { return editor.grab().toImage().copy(sample); };
 
+  // Zoom well in first so a middle-drag pan has real slack to move within.
   ctrlWheel();
   ctrlWheel();
   ctrlWheel();
   QTest::keyClick(&editor, Qt::Key_T);
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                    editor.toScreenPointForTest(QPointF(400, 200)).toPoint());
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(300, 300));
   application.processEvents();
   QWidget *draft = QApplication::focusWidget();
-  if (!draft) {
-    error = QStringLiteral("Text draft did not open for the view-lock check");
-    return false;
-  }
   QTest::keyClicks(draft, QStringLiteral("hold"));
   application.processEvents();
 
@@ -2221,6 +2230,9 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
     error = QStringLiteral("Zooming during a text draft moved the view");
     return false;
   }
+  // The middle press hands focus away, which commits the draft (the same
+  // click-away contract as a left click); the view must still hold through
+  // that very drag.
   QTest::mousePress(&editor, Qt::MiddleButton, Qt::NoModifier, QPoint(400, 300));
   QTest::mouseMove(&editor, QPoint(460, 350), 20);
   QTest::mouseRelease(&editor, Qt::MiddleButton, Qt::NoModifier,
@@ -2231,6 +2243,8 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
     return false;
   }
 
+  // With the draft gone the view is handed back: the same wheel must zoom
+  // again, or this check is asserting nothing.
   const QImage committed = grab();
   ctrlWheel();
   if (grab() == committed) {
@@ -2413,7 +2427,7 @@ bool runTextClickAwayCommitCheck(QApplication &application, QString &error) {
   // The committing click above did only that; a second click opens the next
   // editor, with the text tool still armed.
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                    QPoint(450, 300));
+                    toScreen({325, 180}));
   application.processEvents();
   // The arrow button sits in the spaced toolbar above the capture.
   QTest::keyClicks(QApplication::focusWidget(), toolbar.text);
@@ -4966,6 +4980,58 @@ bool runFullscreenBackdropCycleSmoke(QApplication &application,
   return true;
 }
 
+/** An opaque normal window already presents the shadowed-gray opening state,
+ *  so B advances through the colors, both gray states, Off, and its wrap. */
+bool runWindowedBackdropCycleSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 180, 120};
+  capture.monitor.pixelSize = {180, 120};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(180, 120, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#527196")));
+  capture.previewSize = capture.source.size();
+
+  struct BackdropStep {
+    BackgroundStyle style;
+    bool shadow;
+  };
+  const std::array<BackdropStep, 8> windowedCycle{{
+      {BackgroundStyle::Aurora, true},
+      {BackgroundStyle::Sunset, true},
+      {BackgroundStyle::Lagoon, true},
+      {BackgroundStyle::Violet, true},
+      {BackgroundStyle::Slate, false},
+      {BackgroundStyle::Slate, true},
+      {BackgroundStyle::Off, true},
+      {BackgroundStyle::Aurora, true},
+  }};
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+  editor.setWindowedPresentation(true);
+  editor.setWindowedBackdropOpaque(true);
+  editor.resize(640, 480);
+  editor.show();
+  application.processEvents();
+  for (const BackdropStep step : windowedCycle) {
+    QTest::keyClick(&editor, Qt::Key_B);
+    application.processEvents();
+    const Operation &operation = editor.operationLog().constLast();
+    const QImage expected = renderCapture(capture, editor.currentSelection(),
+                                          {}, step.style, step.shadow);
+    if (operation.type != Operation::Type::Background ||
+        operation.background != step.style ||
+        operation.imageShadow != step.shadow ||
+        editor.renderCurrentOutput() != expected) {
+      error =
+          QStringLiteral("Normal-window backdrop cycle reached the wrong state");
+      return false;
+    }
+  }
+  editor.close();
+  return true;
+}
+
 /** Checks that sampling a color is not a change of tool: the eyedropper
  *  hands back whatever was in hand, and recolors the layer that was selected
  *  rather than dropping the selection with it. */
@@ -5189,6 +5255,16 @@ bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
     error = QStringLiteral("Shadow left the visible image edge when zoomed "
                            "(probe %1)")
                 .arg(belowShadow.name());
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
+  application.processEvents();
+  const QColor shadowOff =
+      editor.grab().toImage().pixelColor(60, bandBottom + 6);
+  if (shadowOff != QColor(36, 36, 36)) {
+    error = QStringLiteral("Shift+B did not remove the normal-window shadow "
+                           "(probe %1)")
+                .arg(shadowOff.name());
     return false;
   }
   editor.close();
@@ -6037,6 +6113,15 @@ bool runTextFontSmoke(QApplication &application, QString &error) {
   saved.ops = editor.operationLog();
   saved.index = editor.operationIndex();
   saved.previewSize = capture.previewSize;
+  saved.textCardText = QStringLiteral("puts 'theme round trip'");
+  saved.textCardFilename = QStringLiteral("snippet.rb");
+  saved.textCardEditing = true;
+  saved.textCardCursor = 4;
+  saved.textCardYank = QStringLiteral("puts");
+  saved.textCardYankLinewise = true;
+  saved.textCardFontSize = 31;
+  saved.textCardNoWrap = true;
+  saved.textCardTabWidth = 4;
   const QString path =
       QDir(directory.path()).filePath(QStringLiteral("text-fonts.json"));
   OperationLog loaded;
@@ -6058,6 +6143,7 @@ bool runTextWrapRenderingCheck(QString &error) {
   error = QStringLiteral("Text wrap rendering check failed");
   Annotation text;
   text.kind = Annotation::Kind::Text;
+  text.textFont = TextFont::JetBrainsMono;
   text.start = {20, 40};
   text.color = QColor(QStringLiteral("#ff375f"));
   text.size = 5;
@@ -6076,7 +6162,8 @@ bool runTextWrapRenderingCheck(QString &error) {
     error = QStringLiteral("Text did not wrap at its dragged width");
     return false;
   }
-  const QFontMetricsF metrics(annotationTextFont(text.size));
+  const QFontMetricsF metrics(
+      annotationTextFont(text.size, text.textFont));
   for (const QString &line : wrapped) {
     if (metrics.horizontalAdvance(line) > 120.0) {
       error = QStringLiteral("A wrapped line ran past the wrap width");
@@ -6122,17 +6209,18 @@ bool runTextWrapRenderingCheck(QString &error) {
   // the break this would have caught.
   CaptureData capture;
   capture.monitor.scale = 1.0;
-  capture.monitor.pixelSize = {400, 200};
-  capture.source = QImage(400, 200, QImage::Format_ARGB32_Premultiplied);
+  capture.monitor.pixelSize = {400, 400};
+  capture.source = QImage(400, 400, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(Qt::transparent);
   capture.previewSize = capture.source.size();
   Annotation painted = text;
   painted.start = {20, 40};
   painted.textWidth = 120.0;
   painted.textBackground = TextBackground::Plain;
-  const QImage out = renderCapture(capture, QRectF(0, 0, 400, 200), {painted},
+  const QImage out = renderCapture(capture, QRectF(0, 0, 400, 400), {painted},
                                    BackgroundStyle::None);
-  const QFontMetricsF painterMetrics(annotationTextFont(painted.size));
+  const QFontMetricsF painterMetrics(
+      annotationTextFont(painted.size, painted.textFont));
   bool secondLineInk = false;
   const int secondBaseline = qRound(40 + painterMetrics.lineSpacing());
   for (int x = 20; x < 140 && !secondLineInk; ++x)
@@ -6289,9 +6377,15 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
     application.processEvents();
   };
 
+  const QPointF imageOrigin = editor.editImageRectForTest().topLeft();
+  const qreal editScale = editor.editScaleForTest();
+  const auto toScreen = [&](const QPointF &annotationPoint) {
+    return (imageOrigin + annotationPoint * editScale).toPoint();
+  };
+
   // New text gets the pill by default.
   QTest::keyClick(&editor, Qt::Key_T);
-  typeText(QPoint(300, 312), QStringLiteral("Pill"));
+  typeText(toScreen({200, 195}), QStringLiteral("Pill"));
   const Annotation pill =
       text({200, 195}, QStringLiteral("Pill"), TextBackground::Pill);
   if (!snapshotMatches(expected({pill}))) {
@@ -6303,7 +6397,7 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
   // text lands on plain.
   QTest::keyClick(&editor, Qt::Key_T);
   QTest::keyClick(&editor, Qt::Key_T);
-  typeText(QPoint(300, 412), QStringLiteral("Plain"));
+  typeText(toScreen({200, 295}), QStringLiteral("Plain"));
   const Annotation plain =
       text({200, 295}, QStringLiteral("Plain"), TextBackground::Plain);
   if (!snapshotMatches(expected({pill, plain}))) {
@@ -6313,7 +6407,8 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
 
   // T with a text layer selected cycles that layer, undoably.
   QTest::keyClick(&editor, Qt::Key_V);
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 302));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    toScreen({210, 185}));
   QTest::keyClick(&editor, Qt::Key_T);
   application.processEvents();
   Annotation pillNowOutline = pill;
@@ -6334,7 +6429,8 @@ bool runTextPillSmoke(QApplication &application, QString &error) {
   }
 
   // Re-editing keeps the layer's own background.
-  QTest::mouseDClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(310, 422));
+  QTest::mouseDClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                     toScreen({210, 305}));
   application.processEvents();
   QTest::keyClick(QApplication::focusWidget(), Qt::Key_End); // text is selected
   QTest::keyClicks(QApplication::focusWidget(), QStringLiteral(" text"));
@@ -6536,7 +6632,7 @@ bool runGrownCanvasSelectAllChromeSmoke(QApplication &application,
   const QColor liveShadow = grabLogicalPixel(
       idle, editor, editor.annotationPointToWidgetForTest({610, 220}));
   const QColor liveMatte = grabLogicalPixel(
-      idle, editor, editor.annotationPointToWidgetForTest({645, 220}));
+      idle, editor, editor.annotationPointToWidgetForTest({648, 220}));
   if (liveShadow.alpha() != 255 || liveShadow.red() >= 36 ||
       liveShadow.green() >= 36 || liveShadow.blue() >= 36 ||
       liveMatte != QColor(QStringLiteral("#242424"))) {
@@ -8294,6 +8390,47 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
     error = QStringLiteral("Custom arrow curve was not used consistently");
     return false;
   }
+
+  // Canvas growth must use the same explicit curve geometry as paint and hit
+  // testing. Exercise two edges at once so neither the swept arc nor its head
+  // can be accidentally reduced to the straight start/end chord.
+  Annotation grownArrow = arrow;
+  grownArrow.start = {70, 70};
+  grownArrow.end = {145, 70};
+  grownArrow.curveControl = QPointF(105, -100);
+  const QRectF grownArrowBounds = arrowVisualBounds(grownArrow);
+  const QRectF arrowCanvas = captureCanvasRect(QSizeF(100, 100), {grownArrow});
+  CaptureData growthCapture;
+  growthCapture.monitor.scale = 1.0;
+  growthCapture.monitor.pixelSize = {100, 100};
+  growthCapture.source = QImage(100, 100, QImage::Format_RGB32);
+  growthCapture.source.fill(Qt::white);
+  growthCapture.previewSize = growthCapture.source.size();
+  const QImage grownArrowOutput =
+      renderCapture(growthCapture, QRectF(0, 0, 100, 100), {grownArrow},
+                    BackgroundStyle::None);
+  const QRect sourceFrame(qRound(-arrowCanvas.left()),
+                          qRound(-arrowCanvas.top()), 100, 100);
+  bool foundArrowOutside = false;
+  bool foundSlateOutside = false;
+  for (int y = 0; y < grownArrowOutput.height(); ++y) {
+    for (int x = 0; x < grownArrowOutput.width(); ++x) {
+      if (sourceFrame.contains(x, y))
+        continue;
+      const QColor pixel = grownArrowOutput.pixelColor(x, y);
+      foundArrowOutside |= pixel.red() > 220 && pixel.green() < 120 &&
+                           pixel.blue() < 160;
+      foundSlateOutside |= pixel == QColor(QStringLiteral("#242424"));
+    }
+  }
+  if (arrowCanvas.top() >= 0 || arrowCanvas.right() <= 100 ||
+      !arrowCanvas.contains(grownArrowBounds) ||
+      grownArrowOutput.size() != arrowCanvas.size().toSize() ||
+      !foundArrowOutside || !foundSlateOutside) {
+    error = QStringLiteral(
+        "Custom curved arrow did not grow and paint on the Slate canvas");
+    return false;
+  }
   arrow.curveControl.reset();
 
   const auto renderAtDisplayScale = [&](ArrowStyle style, qreal displayScale) {
@@ -8302,7 +8439,7 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
     image.fill(Qt::transparent);
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing);
-    paintAnnotation(painter, arrow, displayScale);
+    paintAnnotation(painter, arrow, 0.0, displayScale);
     return image;
   };
   const auto tailSpan = [](const QImage &image, int x) {
@@ -8745,6 +8882,82 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** A zoom-legibility tail at a grown edge gets a preview-only matte/clip;
+ *  the exported canvas remains the exact natural arrow bounds. */
+bool runArrowPreviewOverscanSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  Annotation arrow;
+  arrow.kind = Annotation::Kind::Arrow;
+  arrow.start = {-900, 300};
+  arrow.end = {300, 300};
+  arrow.color = QColor(QStringLiteral("#ff375f"));
+  arrow.size = 30;
+  arrow.arrowStyle = ArrowStyle::Standard;
+  arrow.id = 1;
+  Operation annotate;
+  annotate.type = Operation::Type::Annotate;
+  annotate.annotations = {arrow};
+  OperationLog log;
+  log.ops = {annotate};
+  log.index = 1;
+  log.nextId = 2;
+  log.previewSize = capture.previewSize;
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen,
+                       QuickOutputMode::None, log);
+  editor.setSuppressSnapshots(true);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+
+  const QRectF canvas = editor.currentCanvasForTest();
+  const QPointF canvasTopLeft =
+      editor.annotationPointToWidgetForTest(canvas.topLeft());
+  const QPointF canvasBottomRight =
+      editor.annotationPointToWidgetForTest(canvas.bottomRight());
+  const QRectF canvasOnScreen =
+      QRectF(canvasTopLeft, canvasBottomRight).normalized();
+  const qreal displayScale = canvasOnScreen.width() / canvas.width();
+  const QRectF naturalBounds = arrowVisualBounds(arrow);
+  const QRectF previewBounds = arrowVisualBounds(arrow, displayScale);
+  const QRectF previewOnScreen(
+      editor.annotationPointToWidgetForTest(previewBounds.topLeft()),
+      editor.annotationPointToWidgetForTest(previewBounds.bottomRight()));
+  const QImage frame = editor.grab().toImage();
+  const QRect scan = previewOnScreen.normalized().toAlignedRect().intersected(
+      frame.rect());
+  bool foundInkOutside = false;
+  bool foundSlateOutside = false;
+  for (int y = scan.top(); y <= scan.bottom(); ++y) {
+    for (int x = scan.left(); x <= scan.right(); ++x) {
+      if (canvasOnScreen.contains(QPointF(x + 0.5, y + 0.5)))
+        continue;
+      const QColor pixel = frame.pixelColor(x, y);
+      foundInkOutside |= pixel.red() > 220 && pixel.green() < 120 &&
+                         pixel.blue() < 160;
+      foundSlateOutside |= pixel == QColor(QStringLiteral("#242424"));
+    }
+  }
+  const QImage exported = editor.renderCurrentOutput();
+  if (displayScale >= 1.0 || previewBounds.left() >= naturalBounds.left() ||
+      !foundInkOutside || !foundSlateOutside ||
+      exported.size() != canvas.size().toSize()) {
+    error = QStringLiteral(
+        "Zoom-aware arrow tail was clipped or changed the exported canvas");
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
@@ -8833,6 +9046,10 @@ int main(int argc, char **argv) {
   if (!runTextAwareHighlighterEditorCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 129;
+  }
+  if (!runArrowPreviewOverscanSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 202;
   }
   if (!runSecureRedactionChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -9022,6 +9239,10 @@ int main(int argc, char **argv) {
   if (!runWindowedZoomFramingCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 200;
+  }
+  if (!runWindowedBackdropCycleSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 174;
   }
   if (!runTextClickAwayCommitCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -10261,7 +10482,7 @@ int main(int argc, char **argv) {
   }
 
   QString clipboardError;
-  if (!runClipboardSmoke(clipboardError)) {
+  if (!runClipboardSmoke(outputRoot, clipboardError)) {
     qWarning().noquote() << clipboardError;
     return 88;
   }

@@ -3,5 +3,5 @@
 
 #include <QString>
 
-/** Runs clipboard image loading checks with a fake wl-paste command. */
-[[nodiscard]] bool runClipboardSmoke(QString &error);
+/** Runs clipboard loading checks and writes the rendered text-card fixture. */
+[[nodiscard]] bool runClipboardSmoke(const QString &outputRoot, QString &error);

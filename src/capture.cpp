@@ -177,8 +177,17 @@ QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
     // larger canvas to reveal.
     if (annotation.kind == Annotation::Kind::Redaction)
       return QRectF();
-    if (annotation.kind == Annotation::Kind::Text)
-      return annotationTextBounds(annotation).adjusted(-1, -1, 1, 1);
+    if (annotation.kind == Annotation::Kind::Text) {
+      qreal extent = 1.0;
+      if (annotation.textBackground == TextBackground::Outline) {
+        const int fontPixels =
+            annotationTextFont(annotation.size, annotation.textFont)
+                .pixelSize();
+        extent += fontPixels * 0.17 / 2.0;
+      }
+      return annotationTextBounds(annotation, sourceFrameSize.width())
+          .adjusted(-extent, -extent, extent, extent);
+    }
     if (annotation.kind == Annotation::Kind::Marker) {
       const qreal diameter = std::max<qreal>(24.0, annotation.size * 6.0);
       const qreal antialias =
@@ -200,25 +209,13 @@ QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
           .adjusted(-extent, -extent, extent, extent);
     }
 
+    if (annotation.kind == Annotation::Kind::Arrow)
+      return arrowVisualBounds(annotation).adjusted(-1, -1, 1, 1);
+
     QRectF bounds(annotation.start, annotation.end);
     bounds = bounds.normalized();
-    if (annotation.kind == Annotation::Kind::Arrow) {
-      const QLineF line(annotation.start, annotation.end);
-      if (line.length() >= 1.0) {
-        const qreal angle = std::atan2(line.dy(), line.dx());
-        const qreal headLength = std::max<qreal>(14.0, annotation.size * 4.2);
-        const qreal halfWidth = headLength * 0.46;
-        const QPointF direction(std::cos(angle), std::sin(angle));
-        const QPointF perpendicular(-direction.y(), direction.x());
-        const QPointF base = annotation.end - direction * headLength;
-        bounds = pointBounds({annotation.start, annotation.end,
-                              base + perpendicular * halfWidth,
-                              base - perpendicular * halfWidth});
-      }
-    }
     qreal extent = 1.0;
     if (annotation.kind == Annotation::Kind::Line ||
-        annotation.kind == Annotation::Kind::Arrow ||
         ((annotation.kind == Annotation::Kind::Rectangle ||
           annotation.kind == Annotation::Kind::Ellipse) &&
          !annotation.filled)) {
@@ -1417,7 +1414,8 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
     layerPainter.translate(growLeft, growTop);
     layerPainter.scale(scaleX, scaleY);
     layerPainter.setClipRect(canvas);
-    paintDefaultLayer(layerPainter, layerSource, layerBounds, annotations);
+    paintDefaultLayer(layerPainter, layerSource, layerBounds, annotations,
+                      selection.width());
     layerPainter.end();
     return output;
   }
@@ -1460,7 +1458,7 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   painter.scale(scaleX, scaleY);
   painter.setClipRect(QRectF(QPointF(), selection.size()));
   paintDefaultLayer(painter, cropped, QRectF(QPointF(), selection.size()),
-                    annotations);
+                    annotations, selection.width());
   painter.restore();
   painter.end();
   return output;
@@ -1558,6 +1556,76 @@ bool loadClipboardImage(QImage &image, QString &error) {
     return false;
   }
   error = QStringLiteral("Clipboard image could not be decoded");
+  return false;
+}
+
+bool loadClipboardText(QString &text, QString &error) {
+  text.clear();
+  error.clear();
+
+  const ProcessResult listed =
+      runProcess(QStringLiteral("wl-paste"), {QStringLiteral("--list-types")},
+                 {}, 5000);
+  if (!listed.finished || listed.exitCode != 0) {
+    const QString detail = QString::fromUtf8(listed.error).trimmed();
+    error = detail.isEmpty()
+                ? QStringLiteral("Could not read the Wayland clipboard")
+                : QStringLiteral("Could not read the Wayland clipboard: %1")
+                      .arg(detail);
+    return false;
+  }
+
+  const QStringList offered =
+      QString::fromUtf8(listed.output)
+          .split('\n', Qt::SkipEmptyParts, Qt::CaseSensitive);
+  QStringList textTypes;
+  const QStringList preferred{
+      QStringLiteral("text/plain;charset=utf-8"),
+      QStringLiteral("text/plain;charset=UTF-8"),
+      QStringLiteral("UTF8_STRING"), QStringLiteral("text/plain")};
+  for (const QString &mimeType : preferred) {
+    if (offered.contains(mimeType))
+      textTypes.append(mimeType);
+  }
+  for (const QString &mimeType : offered) {
+    const QString trimmed = mimeType.trimmed();
+    if (trimmed.startsWith(QStringLiteral("text/")) &&
+        !textTypes.contains(trimmed))
+      textTypes.append(trimmed);
+  }
+  if (textTypes.isEmpty()) {
+    error = QStringLiteral("Clipboard does not contain text");
+    return false;
+  }
+
+  QString readError;
+  for (const QString &mimeType : textTypes) {
+    const ProcessResult pasted = runProcess(
+        QStringLiteral("wl-paste"),
+        {QStringLiteral("--no-newline"), QStringLiteral("--type"), mimeType},
+        {}, 5000);
+    if (!pasted.finished || pasted.exitCode != 0) {
+      const QString detail = QString::fromUtf8(pasted.error).trimmed();
+      if (!detail.isEmpty())
+        readError = detail;
+      continue;
+    }
+    text = QString::fromUtf8(pasted.output);
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace('\r', '\n');
+    while (text.startsWith('\n'))
+      text.remove(0, 1);
+    while (text.endsWith('\n'))
+      text.chop(1);
+    if (!text.trimmed().isEmpty())
+      return true;
+  }
+
+  error = readError.isEmpty()
+              ? QStringLiteral("Clipboard text is empty")
+              : QStringLiteral("Could not read clipboard text: %1")
+                    .arg(readError);
+  text.clear();
   return false;
 }
 
@@ -1766,8 +1834,8 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
                          ? QSize(1728, 1080)
                          : QSize(qRound(available.width() * 0.9),
                                  qRound(available.height() * 0.9));
-  if (size.width() > room.width() || size.height() > room.height())
-    size.scale(room, Qt::KeepAspectRatio);
+  size = QSize(std::min(size.width(), room.width()),
+               std::min(size.height(), room.height()));
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
 }
 
@@ -2034,6 +2102,8 @@ QJsonObject annotationToJson(const Annotation &annotation) {
   }
   if (!annotation.text.isEmpty())
     object.insert(QStringLiteral("text"), annotation.text);
+  if (annotation.textWidth > 0.0)
+    object.insert(QStringLiteral("textWidth"), annotation.textWidth);
   if (annotation.kind == Annotation::Kind::Text)
     object.insert(QStringLiteral("textFont"),
                   textFontStyleName(annotation.textFont));
@@ -2103,6 +2173,8 @@ bool annotationFromJson(const QJsonObject &object, Annotation &annotation,
     annotation.curveControl =
         pointFromArray(object.value(QStringLiteral("curveControl")));
   annotation.text = object.value(QStringLiteral("text")).toString();
+  annotation.textWidth =
+      object.value(QStringLiteral("textWidth")).toDouble(0.0);
   annotation.textFont = textFontFromStyleName(
       object.value(QStringLiteral("textFont")).toString());
   annotation.number = object.value(QStringLiteral("number")).toInt();
@@ -2293,6 +2365,24 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
     root.insert(QStringLiteral("previewWidth"), log.previewSize.width());
     root.insert(QStringLiteral("previewHeight"), log.previewSize.height());
   }
+  if (!log.textCardText.isEmpty()) {
+    root.insert(QStringLiteral("textCardText"), log.textCardText);
+    root.insert(QStringLiteral("textCardFilename"), log.textCardFilename);
+    root.insert(QStringLiteral("textCardEditing"), log.textCardEditing);
+    if (log.textCardCursor >= 0)
+      root.insert(QStringLiteral("textCardCursor"), log.textCardCursor);
+    if (!log.textCardYank.isEmpty()) {
+      root.insert(QStringLiteral("textCardYank"), log.textCardYank);
+      root.insert(QStringLiteral("textCardYankLinewise"),
+                  log.textCardYankLinewise);
+    }
+    if (log.textCardFontSize > 0)
+      root.insert(QStringLiteral("textCardFontSize"), log.textCardFontSize);
+    if (log.textCardNoWrap)
+      root.insert(QStringLiteral("textCardNoWrap"), log.textCardNoWrap);
+    if (log.textCardTabWidth > 0)
+      root.insert(QStringLiteral("textCardTabWidth"), log.textCardTabWidth);
+  }
   root.insert(QStringLiteral("ops"), ops);
 
   QSaveFile file(path);
@@ -2338,6 +2428,24 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.previewSize =
       QSize(root.value(QStringLiteral("previewWidth")).toInt(),
             root.value(QStringLiteral("previewHeight")).toInt());
+  loaded.textCardText =
+      root.value(QStringLiteral("textCardText")).toString();
+  loaded.textCardFilename =
+      root.value(QStringLiteral("textCardFilename")).toString();
+  loaded.textCardEditing =
+      !loaded.textCardText.isEmpty() &&
+      root.value(QStringLiteral("textCardEditing")).toBool();
+  loaded.textCardCursor =
+      root.value(QStringLiteral("textCardCursor")).toInt(-1);
+  loaded.textCardYank = root.value(QStringLiteral("textCardYank")).toString();
+  loaded.textCardYankLinewise =
+      root.value(QStringLiteral("textCardYankLinewise")).toBool();
+  loaded.textCardFontSize =
+      root.value(QStringLiteral("textCardFontSize")).toInt(0);
+  loaded.textCardNoWrap =
+      root.value(QStringLiteral("textCardNoWrap")).toBool();
+  loaded.textCardTabWidth =
+      root.value(QStringLiteral("textCardTabWidth")).toInt(0);
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)

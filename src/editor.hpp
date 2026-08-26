@@ -6,18 +6,21 @@
 #include "palette-config.hpp"
 #include "recent-snaps.hpp"
 #include "stroke-smoothing.hpp"
+#include "text-card.hpp"
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QLineF>
+#include <QTextCursor>
 #include <QTimer>
 #include <QWidget>
 
 #include <optional>
 
 class QKeyEvent;
+class QLineEdit;
 class QMouseEvent;
 class QPaintEvent;
 class QWheelEvent;
@@ -26,6 +29,7 @@ class QPainter;
 
 class InlineTextEdit;
 class ScrollCapturePanel;
+class TextCardModal;
 namespace LayerShellQt {
 class Window;
 }
@@ -136,6 +140,7 @@ protected:
   void mousePressEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
   void paintEvent(QPaintEvent *event) override;
+  void resizeEvent(QResizeEvent *event) override;
   void wheelEvent(QWheelEvent *event) override;
 
 public:
@@ -280,9 +285,9 @@ public:
   /// The layer surface this editor lives on. The scroll state toggles its
   /// keyboard interactivity and input mask while the page underneath is live.
   /** The editor runs as a normal compositor window, not the overlay. */
-  void setWindowedPresentation(bool windowed) {
-    windowedPresentation_ = windowed;
-  }
+  void setWindowedPresentation(bool windowed);
+  /** Natural floating size for either a capture or the compact snippet UI. */
+  [[nodiscard]] QSize naturalWindowSize(const QSize &available) const;
   /** A windowed editor's backdrop: solid, or the overlay's see-through
    *  dim. Solid also drops the translucent surface: an alpha window shows
    *  the desktop through any repaint gap while resizing or zooming. */
@@ -326,6 +331,42 @@ public:
   }
   /// Current status line. Test accessor.
   [[nodiscard]] QString statusForTest() const { return status_; }
+  /** Whether the clipboard card's Neovim-style source editor owns input. */
+  [[nodiscard]] bool clipboardTextCardEditingForTest() const {
+    return clipboardTextCardEditing_;
+  }
+  [[nodiscard]] QRectF textCardDoneButtonRectForTest() const;
+  /** Current unflattened clipboard-card source. */
+  [[nodiscard]] QString clipboardTextCardTextForTest() const {
+    return textCardEditor_ ? textCardEditor_->toPlainText() : QString();
+  }
+  /** Editable path shown in the clipboard card's Neovim title/status bars. */
+  [[nodiscard]] QString clipboardTextCardFilenameForTest() const {
+    return textCardFilename_;
+  }
+  /** Syntax profile currently attached to the live clipboard editor. */
+  [[nodiscard]] QString clipboardTextCardLanguageForTest() const {
+    return textCardSyntaxLanguage_;
+  }
+  /** Whether a rendered card still has source available for Ctrl+E. */
+  [[nodiscard]] bool clipboardTextCardSourceRetainedForTest() const {
+    return !textCardDocumentText_.isEmpty();
+  }
+  /** Current card mode string (NORMAL/INSERT/VISUAL/...). Test accessor. */
+  [[nodiscard]] QString clipboardTextCardModeForTest() const;
+  [[nodiscard]] int clipboardTextCardFontSizeForTest() const {
+    return textCardRenderedFontSize_;
+  }
+  [[nodiscard]] bool clipboardTextCardNoWrapForTest() const {
+    return textCardNoWrap_;
+  }
+  [[nodiscard]] int clipboardTextCardTabWidthForTest() const {
+    return textCardTabWidth_;
+  }
+  /** The log a snapshot or handoff would persist right now. Test accessor. */
+  [[nodiscard]] OperationLog workingLogForTest() const {
+    return composeWorkingLog();
+  }
   /// Text-height I-beam in annotation coordinates, or an empty rect when the
   /// Snap highlighter has no text row near the pointer. Test accessor.
   [[nodiscard]] QRectF highlighterPreviewRectForTest() const;
@@ -371,8 +412,9 @@ public:
   /// "tool-arrow"), or (-1,-1) if not found. Test accessor: a click position
   /// that survives the toolbar's own layout changing.
   [[nodiscard]] QPoint toolbarButtonCenterForTest(const QString &action) const {
+    // The arrow button's action carries its current style suffix.
     for (const ToolbarButton &button : toolbarButtons())
-      if (button.action == action)
+      if (button.action == action || button.action.startsWith(action + '-'))
         return button.rect.center().toPoint();
     return {-1, -1};
   }
@@ -469,6 +511,7 @@ private:
   [[nodiscard]] int windowAt(const QPointF &position) const;
   [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
+  [[nodiscard]] QVector<ToolbarButton> textCardToolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
   [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
   [[nodiscard]] QPointF
@@ -506,6 +549,36 @@ private:
   void endScrollCapture();
   /// A stitched scroll capture becomes the image being edited.
   void adoptStitched(const QImage &image);
+  /// Turns plain clipboard text into a styled, syntax-colored share card.
+  void openClipboardTextCard();
+  void beginClipboardTextCard(const QString &text, const QString &filename);
+  void reopenClipboardTextCard();
+  void updateClipboardTextCardPreview();
+  /// 0 returns to auto-fit; the status reports the effective size.
+  void setTextCardFontOverride(int pixelSize);
+  void toggleTextCardWrap();
+  void setTextCardTabWidth(int spaces);
+  /// Re-hugs the floating window around the card after an explicit size or
+  /// wrap change; a manual window resize stays respected between them.
+  void followTextCardWindow();
+  /// Debounced follow for content-driven card size changes while typing.
+  void scheduleTextCardWindowFollow();
+  /// Asks the compositor for the new size so its configure drives the
+  /// client, one atomic resize+center; false when the caller must resize.
+  bool dispatchFloatingResize(const QSize &size) const;
+  void updateClipboardTextCardEditorGeometry();
+  void beginClipboardTextCardFilenameEdit();
+  void endClipboardTextCardFilenameEdit(bool accept);
+  void reinstallClipboardTextCardHighlighter();
+  void finishClipboardTextCard();
+  void cancelClipboardTextCard();
+  void resetClipboardTextCardEditor(bool clearDocument = true);
+  void adoptTextCardSurface(QImage image);
+  bool handOffLiveTextCard();
+  void updateTextCardCaret();
+  void applyTextCardRestoreState();
+  [[nodiscard]] qreal textCardIdealRatio() const;
+  [[nodiscard]] OperationLog composeWorkingLog() const;
   /// The editor's other mode of working: not a region of the frozen screen
   /// but an image handed to it, with the op log it was last edited with.
   /// `kind` is the tab lit for it.
@@ -572,6 +645,8 @@ private:
   void handleEscape();
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
+  void paintClipboardTextCardEditing(QPainter &painter);
+  void paintClipboardTextCardToolbar(QPainter &painter);
   void paintSelect(QPainter &painter);
   void refreshBackdropCache();
   void refreshComposedCapture();
@@ -608,6 +683,9 @@ private:
   QVector<CutOp> cuts_;
   bool windowedPresentation_ = false;
   bool windowedHandoffOnEdit_ = false;
+  /// Latched once a successor owns the document; keys queued behind the
+  /// blocking handoff flush must not spawn another one.
+  bool handOffStarted_ = false;
   bool windowedBackdropOpaque_ = true;
   Phase phase_ = Phase::Select;
   Tool tool_ = Tool::Select;
@@ -784,6 +862,55 @@ private:
   QString status_ =
       QStringLiteral("Drag to select an area · Space selects a window");
   InlineTextEdit *textEditor_ = nullptr;
+  QPlainTextEdit *textCardEditor_ = nullptr;
+  QLineEdit *textCardFilenameEditor_ = nullptr;
+  QSyntaxHighlighter *textCardHighlighter_ = nullptr;
+  bool textCardHighlighterUpdating_ = false;
+  QString textCardSyntaxLanguage_;
+  TextCardTheme textCardTheme_;
+  QRect textCardSourceEditorRect_;
+  QRect textCardSourceTitleRect_;
+  QString textCardFilename_;
+  QString textCardFilenameBeforeEdit_;
+  QString textCardDocumentText_;
+  QString textCardDocumentFilename_;
+  QString textCardOpenedText_;
+  QString textCardOpenedFilename_;
+  bool textCardDiscardArmed_ = false;
+  /// 0 auto-fits the longest line; +/- pins a manual pixel size.
+  int textCardFontOverride_ = 0;
+  bool textCardNoWrap_ = false;
+  /// Tab-stop width in spaces; keypad 2/4 switches it per card.
+  int textCardTabWidth_ = kTextCardTabSpaces;
+  /// Effective size of the last rendered frame; geometry and +/- start here.
+  int textCardRenderedFontSize_ = kTextCardCodePixelSize;
+  /// Annotations stashed while the card source is re-edited, replayed onto
+  /// the next render; carried in the working log's otherwise-empty ops slot
+  /// across a presentation switch.
+  OperationLog textCardStashedLog_;
+  /// A reopened card gates q even when clean; only the initial paste exits
+  /// on a single q.
+  bool textCardReopened_ = false;
+  QString textCardFrameKey_;
+  QImage textCardDisplayFrame_;
+  qreal textCardDisplayRatio_ = 1.0;
+  bool textCardPreviewPending_ = false;
+  bool textCardFollowQueued_ = false;
+  /// Set when a resize arrives that this process did not request: the user
+  /// took over the window size, so content changes stop re-hugging it.
+  bool textCardWindowManual_ = false;
+  QSize textCardWindowRequested_;
+  QString textCardHoveredAction_;
+  bool textCardRepostingKey_ = false;
+  int textCardDetectRevision_ = -1;
+  QString textCardDetectFilename_;
+  QString textCardDetectedLanguage_;
+  bool clipboardTextCardEditing_ = false;
+  bool textCardRestoreEditing_ = false;
+  int textCardRestoreCursor_ = -1;
+  QString textCardRestoreYank_;
+  bool textCardRestoreYankLinewise_ = false;
+  TextCardModal *textCardModal_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;
   QVector<int> selectedAnnotations_;

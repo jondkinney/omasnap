@@ -190,8 +190,9 @@ bool runStrokeSmoothingSmoke(QApplication &application, QString &error) {
   editor.resize(800, 600);
   editor.show();
   application.processEvents();
-  // A 400x300 file fits at 1:1 in the editor's (30,68)-(770,542) band.
-  const QPointF imageOrigin(200, 155);
+  // A 400x300 file fits at 1:1 in the editor's content band; the measured
+  // origin keeps the drag coordinates exact whatever the chrome height is.
+  const QPointF imageOrigin = editor.editImageRectForTest().topLeft();
   const QVector<QPointF> raw{{35, 65},  {55, 68},  {75, 62},  {95, 70},
                              {115, 90}, {135, 118}, {155, 124}, {175, 116},
                              {195, 92}, {215, 72},  {235, 65}};

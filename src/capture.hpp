@@ -83,19 +83,19 @@ struct Annotation {
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;
   quint32 redactionSeed = 0;
   TextBackground textBackground = TextBackground::Pill;
+  ArrowStyle arrowStyle = ArrowStyle::Standard;
   /// Typeface is a layer property so reopened and duplicated labels keep it.
   TextFont textFont = TextFont::Neucha;
-  ArrowStyle arrowStyle = ArrowStyle::Standard;
   quint64 id = 0;
   /// Wrap width for text layers in image px; 0 wraps at the canvas edge.
   qreal textWidth = 0.0;
+  /** Explicit quadratic Bezier control for Curved/Double arrows. Empty uses
+   *  the calibrated perpendicular-offset curve. */
+  std::optional<QPointF> curveControl = std::nullopt;
   /// Raw pointer geometry retained so smoothing changes never compound.
   QVector<QPointF> rawPoints{};
   /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
   int smoothingLevel = 0;
-  /** Explicit quadratic Bezier control for Curved/Double arrows. Empty uses
-   *  the calibrated perpendicular-offset curve. */
-  std::optional<QPointF> curveControl = std::nullopt;
 
   bool operator==(const Annotation &) const = default;
 };
@@ -132,6 +132,20 @@ struct OperationLog {
   /// coordinates live in that space, so a source captured on a scaled
   /// monitor reopens at the same scale. Invalid when unknown.
   QSize previewSize;
+  /// Original source retained for a rendered clipboard text card. A live
+  /// draft sets textCardEditing so an overlay/window handoff reopens it.
+  QString textCardText{};
+  QString textCardFilename{};
+  bool textCardEditing = false;
+  /// Live-draft state a presentation switch carries across processes.
+  int textCardCursor = -1;
+  QString textCardYank{};
+  bool textCardYankLinewise = false;
+  /// 0 auto-fits; a manual +/- override is carried as its pixel size.
+  int textCardFontSize = 0;
+  bool textCardNoWrap = false;
+  /// 0 keeps the default tab-stop width.
+  int textCardTabWidth = 0;
 
   bool operator==(const OperationLog &) const = default;
 };
@@ -251,6 +265,8 @@ void describeFileCapture(CaptureData &capture, QImage image,
                                        CanvasBoundaryMode::Framed);
 /** Loads the current Wayland clipboard image. */
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
+/** Loads plain text from the current Wayland clipboard. */
+[[nodiscard]] bool loadClipboardText(QString &text, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
 [[nodiscard]] bool copyImageToClipboard(const QImage &image, QString &error);
 [[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,

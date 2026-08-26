@@ -12,6 +12,7 @@
 #include "scroll-capture.hpp"
 #include "startup-timing.hpp"
 #include "text-band.hpp"
+#include "text-card-modal.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -28,6 +29,7 @@
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
@@ -36,9 +38,13 @@
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSignalBlocker>
+#include <QSyntaxHighlighter>
 #include <QTextBlock>
+#include <QTextCursor>
 #include <QTextLayout>
 #include <QTextDocument>
+#include <QTextEdit>
 #include <QThread>
 #include <QTimer>
 #include <QWheelEvent>
@@ -665,6 +671,13 @@ QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,
   return end;
 }
 
+static bool isPlainControlChord(const QKeyEvent *key, int keycode) {
+  return key->key() == keycode &&
+         key->modifiers().testFlag(Qt::ControlModifier) &&
+         !key->modifiers().testAnyFlags(Qt::ShiftModifier | Qt::AltModifier |
+                                        Qt::MetaModifier);
+}
+
 QPointF centeredCreationStart(CaptureEditor::Tool tool, const QPointF &center,
                               const QPointF &end) {
   if (!supportsCenteredCreation(tool))
@@ -678,6 +691,18 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
   startupTimingMark("CaptureEditor constructor entered");
+  textCardRestoreEditing_ =
+      log.textCardEditing && !log.textCardText.isEmpty();
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
+  textCardRestoreCursor_ = log.textCardCursor;
+  textCardRestoreYank_ = log.textCardYank;
+  textCardRestoreYankLinewise_ = log.textCardYankLinewise;
+  // Live members directly: a card reopen captures them before it resets.
+  textCardFontOverride_ = log.textCardFontSize;
+  textCardNoWrap_ = log.textCardNoWrap;
+  if (log.textCardTabWidth > 0)
+    textCardTabWidth_ = log.textCardTabWidth;
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultConfigPath());
@@ -721,6 +746,58 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   nudgePersistTimer_.setInterval(kNudgeCoalesceMs);
   connect(&nudgePersistTimer_, &QTimer::timeout, this,
           [this] { endNudgeRun(); });
+
+  textCardEditor_ = new QPlainTextEdit(this);
+  textCardEditor_->hide();
+  textCardEditor_->setFrameShape(QFrame::NoFrame);
+  textCardEditor_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  textCardEditor_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  textCardEditor_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+  textCardEditor_->setWordWrapMode(
+      QTextOption::WrapAtWordBoundaryOrAnywhere);
+  textCardEditor_->setTabChangesFocus(false);
+  textCardEditor_->setContentsMargins(0, 0, 0, 0);
+  textCardEditor_->setContextMenuPolicy(Qt::NoContextMenu);
+  textCardEditor_->setAcceptDrops(false);
+  textCardEditor_->document()->setDocumentMargin(0.0);
+  textCardEditor_->installEventFilter(this);
+  textCardEditor_->viewport()->installEventFilter(this);
+  connect(textCardEditor_, &QPlainTextEdit::textChanged, this,
+          [this] {
+            textCardDiscardArmed_ = false;
+            reinstallClipboardTextCardHighlighter();
+            updateClipboardTextCardPreview();
+          });
+
+  textCardFilenameEditor_ = new QLineEdit(this);
+  textCardFilenameEditor_->hide();
+  textCardFilenameEditor_->setFrame(false);
+  textCardFilenameEditor_->setMaxLength(240);
+  textCardFilenameEditor_->installEventFilter(this);
+  connect(textCardFilenameEditor_, &QLineEdit::textEdited, this,
+          [this](const QString &filename) {
+            if (!textCardFilenameEditor_->isVisible())
+              return;
+            textCardFilename_ = filename.trimmed();
+            textCardDiscardArmed_ = false;
+            reinstallClipboardTextCardHighlighter();
+            updateClipboardTextCardPreview();
+          });
+
+  textCardModal_ = new TextCardModal(textCardEditor_, this);
+  connect(textCardModal_, &TextCardModal::statusRequested, this,
+          [this](const QString &status) { setStatus(status); });
+  connect(textCardModal_, &TextCardModal::modeChanged, this, [this] {
+    updateClipboardTextCardEditorGeometry();
+    updateClipboardTextCardPreview();
+    updateTextCardCaret();
+  });
+  connect(textCardEditor_, &QPlainTextEdit::cursorPositionChanged, this,
+          [this] { updateTextCardCaret(); });
+  connect(textCardModal_, &TextCardModal::cancelRequested, this,
+          [this] { cancelClipboardTextCard(); });
+  connect(textCardModal_, &TextCardModal::filenameEditRequested, this,
+          [this] { beginClipboardTextCardFilenameEdit(); });
 
   ocrAnimTimer_.setInterval(16);
   connect(&ocrAnimTimer_, &QTimer::timeout, this, [this] { update(); });
@@ -932,6 +1009,15 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     startupTimingMark("recent shelf load dispatched");
   }
   updatePointerCursor();
+  if (textCardRestoreEditing_) {
+    QTimer::singleShot(0, this, [this] {
+      if (!textCardRestoreEditing_)
+        return;
+      textCardRestoreEditing_ = false;
+      reopenClipboardTextCard();
+      applyTextCardRestoreState();
+    });
+  }
 }
 
 CaptureEditor::~CaptureEditor() {
@@ -950,8 +1036,136 @@ CaptureEditor::~CaptureEditor() {
   removeWorking(workingLogPath());
 }
 
+void CaptureEditor::setWindowedPresentation(bool windowed) {
+  windowedPresentation_ = windowed;
+  // A text-card handoff reaches main as an image plus retained source. Restore
+  // it now, after the destination surface role is known, so a normal window
+  // can render the compact draft before main measures its natural size.
+  if (textCardRestoreEditing_) {
+    textCardRestoreEditing_ = false;
+    reopenClipboardTextCard();
+    applyTextCardRestoreState();
+  } else if (clipboardTextCardEditing_) {
+    updateClipboardTextCardPreview();
+  }
+}
+
+QSize CaptureEditor::naturalWindowSize(const QSize &available) const {
+  const QSizeF selectionSize = currentSelection().size();
+  const QSize hugged = selectionSize.isEmpty() ? capture_.previewSize
+                                                : selectionSize.toSize();
+  if (clipboardTextCardEditing_)
+    return textCardEditorWindowSize(hugged, available);
+  const int legendHeight =
+      hotkeyLegendAnchoredSize(editorHotkeyEntries(),
+                               std::max(392, hugged.width() + 100))
+          .height();
+  return editorWindowSize(hugged, available, legendHeight);
+}
+
 bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
-  if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
+  if (watched == textCardFilenameEditor_ &&
+      event->type() == QEvent::KeyPress) {
+    auto *key = static_cast<QKeyEvent *>(event);
+    if (isPlainControlChord(key, Qt::Key_W)) {
+      if (!key->isAutoRepeat()) {
+        endClipboardTextCardFilenameEdit(true);
+        handOffLiveTextCard();
+      }
+      return true;
+    }
+    if (key->key() == Qt::Key_Escape) {
+      endClipboardTextCardFilenameEdit(false);
+      return true;
+    }
+    if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter ||
+        key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+      endClipboardTextCardFilenameEdit(true);
+      return true;
+    }
+  } else if (watched == textCardFilenameEditor_ &&
+             event->type() == QEvent::FocusOut) {
+    QTimer::singleShot(0, this, [this] {
+      if (textCardFilenameEditor_->isVisible() &&
+          !textCardFilenameEditor_->hasFocus())
+        endClipboardTextCardFilenameEdit(true);
+    });
+  } else if (watched == textCardEditor_ && event->type() == QEvent::KeyPress) {
+    auto *key = static_cast<QKeyEvent *>(event);
+    const bool modifierOnly =
+        key->key() == Qt::Key_Shift || key->key() == Qt::Key_Control ||
+        key->key() == Qt::Key_Alt || key->key() == Qt::Key_Meta;
+    if (key->key() != Qt::Key_Q && !modifierOnly)
+      textCardDiscardArmed_ = false;
+    // A held q would arm the discard and confirm it on the next repeat.
+    if (key->key() == Qt::Key_Q && key->isAutoRepeat() &&
+        !textCardModal_->insertMode())
+      return true;
+    if (isPlainControlChord(key, Qt::Key_W)) {
+      if (!key->isAutoRepeat())
+        handOffLiveTextCard();
+      return true;
+    }
+    // Size and wrap shape the card, not the text, so they live outside the
+    // modal keymap; +/- stay typable in Insert and replaceable after r.
+    if (isPlainControlChord(key, Qt::Key_0)) {
+      setTextCardFontOverride(0);
+      return true;
+    }
+    if (key->key() == Qt::Key_Z && key->modifiers() == Qt::AltModifier) {
+      toggleTextCardWrap();
+      return true;
+    }
+    if (key->modifiers().testFlag(Qt::KeypadModifier) &&
+        (key->key() == Qt::Key_2 || key->key() == Qt::Key_4) &&
+        !textCardModal_->insertMode() && !textCardModal_->pendingInput()) {
+      setTextCardTabWidth(key->key() == Qt::Key_2 ? 2 : 4);
+      return true;
+    }
+    const bool sizeKey = key->key() == Qt::Key_Plus ||
+                         key->key() == Qt::Key_Equal ||
+                         key->key() == Qt::Key_Minus;
+    if (sizeKey && !textCardModal_->insertMode() &&
+        !textCardModal_->pendingInput() &&
+        !key->modifiers().testAnyFlags(Qt::ControlModifier |
+                                       Qt::AltModifier | Qt::MetaModifier)) {
+      const int step = key->key() == Qt::Key_Minus ? -2 : 2;
+      setTextCardFontOverride(
+          std::clamp(textCardRenderedFontSize_ + step,
+                     kTextCardManualMinPixelSize,
+                     kTextCardManualMaxPixelSize));
+      return true;
+    }
+    const bool editFilename =
+        key->key() == Qt::Key_Backtab ||
+        (key->key() == Qt::Key_Tab &&
+         key->modifiers().testFlag(Qt::ShiftModifier));
+    // In Visual mode Shift+Tab outdents the selection instead.
+    if (editFilename && !textCardModal_->visualMode()) {
+      textCardModal_->exitToNormal();
+      beginClipboardTextCardFilenameEdit();
+      return true;
+    }
+    if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+        key->modifiers().testFlag(Qt::ControlModifier)) {
+      // Repeats of the commit chord land in the annotation phase, where
+      // Enter finishes the whole capture.
+      if (!key->isAutoRepeat())
+        finishClipboardTextCard();
+      return true;
+    }
+    if (!textCardModal_->insertMode())
+      return textCardModal_->handleKey(key);
+    if (textCardModal_->handleInsertKey(key))
+      return true;
+  } else if (watched == textCardEditor_->viewport() &&
+             (event->type() == QEvent::MouseButtonPress ||
+              event->type() == QEvent::MouseButtonRelease) &&
+             static_cast<QMouseEvent *>(event)->button() ==
+                 Qt::MiddleButton) {
+    // Middle-click paste would bypass the modal layer and its undo marks.
+    return true;
+  } else if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
     if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
       if (key->modifiers().testFlag(Qt::ControlModifier)) {
@@ -1065,10 +1279,14 @@ CaptureEditor::annotationHandles(const Annotation &annotation) const {
     // the wrap can always be dragged back in. Multiline text can overrun the
     // bottom even when its width is already inside the right edge.
     QPointF handle = bounds.bottomRight();
-    if (selection_.width() > 0)
-      handle.setX(std::clamp(handle.x(), 4.0, selection_.width() - 4.0));
-    if (selection_.height() > 0)
-      handle.setY(std::clamp(handle.y(), 4.0, selection_.height() - 4.0));
+    if (!canvasRect_.isEmpty()) {
+      const qreal insetX = std::min<qreal>(4.0, canvasRect_.width() / 2.0);
+      const qreal insetY = std::min<qreal>(4.0, canvasRect_.height() / 2.0);
+      handle.setX(std::clamp(handle.x(), canvasRect_.left() + insetX,
+                             canvasRect_.right() - insetX));
+      handle.setY(std::clamp(handle.y(), canvasRect_.top() + insetY,
+                             canvasRect_.bottom() - insetY));
+    }
     return {{handle, Interaction::ResizeEnd}};
   }
   // A counter is a disc: any corner sets its size, and sides would say
@@ -1576,6 +1794,7 @@ bool CaptureEditor::adjustSelectedAnnotationRing(int step) {
   if (annotation.kind == Annotation::Kind::Rectangle) {
     // The selected rectangle's own corners, undoably; the armed tool's
     // default radius stays what it was.
+    beginSelectionAdjust();
     annotation.cornerRadius =
         std::clamp(annotation.cornerRadius + step * kCornerRadiusStep, 0.0,
                    kMaximumCornerRadius);
@@ -1961,13 +2180,6 @@ qreal CaptureEditor::imageTopMargin() const {
                     kToolbarImageGap);
 }
 
-qreal CaptureEditor::chromeAnchorTop() const {
-  // Zoomed past fit the content fills the viewport band, so anchoring to the
-  // centered fit rect would float the chrome over it. Anchor to the band.
-  const qreal base = baseImageRect().top();
-  return viewZoom_ > 1.0 ? std::min<qreal>(base, 68.0) : base;
-}
-
 qreal CaptureEditor::contentBandTop() const {
   if (!windowedPresentation_)
     return 60;
@@ -1980,6 +2192,23 @@ qreal CaptureEditor::contentBandTop() const {
 QRectF CaptureEditor::baseImageRect() const {
   if (selection_.isEmpty() || canvasRect_.isEmpty())
     return {};
+  if (clipboardTextCardEditing_ && windowedPresentation_) {
+    // The live snippet has its own two-button toolbar and a compact source;
+    // the bottom band leaves the status pill clear of the card's shadow.
+    constexpr qreal side = 24.0;
+    constexpr qreal top = 64.0;
+    constexpr qreal bottom = 56.0;
+    const QRectF available(
+        side, top, std::max<qreal>(1, width() - 2 * side),
+        std::max<qreal>(1, height() - top - bottom));
+    const qreal scale =
+        std::min<qreal>({1.0, available.width() / canvasRect_.width(),
+                         available.height() / canvasRect_.height()});
+    const QSizeF shown = canvasRect_.size() * scale;
+    return {available.center().x() - shown.width() / 2.0,
+            available.center().y() - shown.height() / 2.0, shown.width(),
+            shown.height()};
+  }
   // A windowed editor stacks the key guide above the toolbar, so its top
   // band is as tall as the guide actually is at this width, plus the
   // toolbar, the row the color dropdown and its popover peers hang into,
@@ -1995,12 +2224,19 @@ QRectF CaptureEditor::baseImageRect() const {
       std::min<qreal>({1.0, available.width() / canvasRect_.width(),
                        available.height() / canvasRect_.height()});
   const QSizeF shown = canvasRect_.size() * scale;
-  // Snapped to the pixel grid: centering can land the origin on a half
-  // pixel, which is needless blur at scale 1 (the common case, an
-  // unscaled or lightly cropped capture) for no visual benefit.
+  // The canvas centers in its band, so a resized window keeps the image in
+  // the middle while the chrome above stays pinned. Snapped to the pixel
+  // grid: a half-pixel origin is needless blur at scale 1.
   return {std::round(available.center().x() - shown.width() / 2.0),
           std::round(available.center().y() - shown.height() / 2.0),
           shown.width(), shown.height()};
+}
+
+qreal CaptureEditor::chromeAnchorTop() const {
+  // Zoomed past fit the content fills the viewport band, so anchoring to the
+  // centered fit rect would float the chrome over it. Anchor to the band.
+  const qreal base = baseImageRect().top();
+  return viewZoom_ > 1.0 ? std::min<qreal>(base, 68.0) : base;
 }
 
 QRectF CaptureEditor::editImageRect() const {
@@ -2344,6 +2580,62 @@ int CaptureEditor::windowInDirection(int current, int key) const {
   return best;
 }
 
+QVector<QPair<QString, QString>> editorHotkeyEntries() {
+  return {{QStringLiteral("V"), QStringLiteral("Select / move layer")},
+       {QStringLiteral("A"), QStringLiteral("Arrow")},
+       {QStringLiteral("L"), QStringLiteral("Line")},
+       {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
+       {QStringLiteral("C"), QStringLiteral("Marker")},
+       {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
+       {QStringLiteral("X"), QStringLiteral("Cut out a band")},
+       {QStringLiteral("T"), QStringLiteral("Text")},
+       {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
+       {QStringLiteral("1–8"), QStringLiteral("Color")},
+       {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
+       {QStringLiteral("D / O"), QStringLiteral("Redact / OCR text")},
+       {QStringLiteral("B / G / P"),
+        QStringLiteral("Backdrop / boundary / pin")},
+       {QStringLiteral("W"), QStringLiteral("Editor to window / overlay")},
+       {QStringLiteral("Ctrl+Z"), QStringLiteral("Undo")},
+       {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
+       {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
+       {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
+       {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
+       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}};
+}
+
+QVector<CaptureEditor::ToolbarButton>
+CaptureEditor::textCardToolbarButtons() const {
+  constexpr qreal height = 36.0;
+  constexpr qreal gap = 8.0;
+  constexpr qreal presentationWidth = 152.0;
+  constexpr qreal doneWidth = 210.0;
+  const qreal total = presentationWidth + gap + doneWidth;
+  const qreal x = (width() - total) / 2.0;
+  constexpr qreal y = 14.0;
+  return {{{x, y, presentationWidth, height},
+           QStringLiteral("text-card-presentation"),
+           windowedPresentation_ ? QStringLiteral("OVERLAY  Ctrl+W")
+                                 : QStringLiteral("WINDOW  Ctrl+W"),
+           windowedPresentation_
+               ? QStringLiteral("Return the live snippet to the overlay")
+               : QStringLiteral("Edit the live snippet in a floating window"),
+           {}},
+          {{x + presentationWidth + gap, y, doneWidth, height},
+           QStringLiteral("text-card-done"),
+           QStringLiteral("DONE → OMASNAP  Ctrl+Enter"),
+           QStringLiteral("Render the snippet and open annotation tools"),
+           {}}};
+}
+
+QRectF CaptureEditor::textCardDoneButtonRectForTest() const {
+  for (const ToolbarButton &button : textCardToolbarButtons()) {
+    if (button.action == QStringLiteral("text-card-done"))
+      return button.rect;
+  }
+  return {};
+}
+
 QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   QVector<ToolbarButton> buttons;
   const qreal scale = toolbarScale(width());
@@ -2563,6 +2855,8 @@ bool CaptureEditor::restoreOperationLog(const QString &path, QString &error) {
   OperationLog log;
   if (!loadOperationLog(path, log, error))
     return false;
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
   ops_ = std::move(log.ops);
   opIndex_ = std::clamp(log.index, 0, static_cast<int>(ops_.size()));
   nextAnnotationId_ = std::max<quint64>(log.nextId, 1);
@@ -2695,17 +2989,28 @@ void CaptureEditor::cycleCanvasBoundary(bool reverse) {
 void CaptureEditor::cycleBackground() {
   BackgroundStyle next = BackgroundStyle::None;
   bool nextShadow = true;
+  const bool normalWindowCycle =
+      windowedPresentation_ && windowedBackdropOpaque_;
   switch (backgroundStyle_) {
   case BackgroundStyle::None:
   case BackgroundStyle::Off:
     next = BackgroundStyle::Aurora;
     break;
   case BackgroundStyle::Slate:
-    if (imageShadow_) {
-      next = BackgroundStyle::Slate;
-      nextShadow = false;
+    if (normalWindowCycle) {
+      if (imageShadow_) {
+        next = BackgroundStyle::Off;
+      } else {
+        next = BackgroundStyle::Slate;
+        nextShadow = true;
+      }
     } else {
-      next = BackgroundStyle::Off;
+      if (imageShadow_) {
+        next = BackgroundStyle::Slate;
+        nextShadow = false;
+      } else {
+        next = BackgroundStyle::Off;
+      }
     }
     break;
   case BackgroundStyle::Aurora:
@@ -2719,6 +3024,7 @@ void CaptureEditor::cycleBackground() {
     break;
   case BackgroundStyle::Violet:
     next = BackgroundStyle::Slate;
+    nextShadow = !normalWindowCycle;
     break;
   }
   if (next == BackgroundStyle::Off) {
@@ -2936,14 +3242,49 @@ QImage CaptureEditor::renderCurrentOutput() const {
                        imageShadow_, canvasBoundaryMode_);
 }
 
+OperationLog CaptureEditor::composeWorkingLog() const {
+  OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
+                   pristineLogicalSize_};
+  // A live card draft has no ops of its own; the slot carries the stashed
+  // card annotations across a presentation switch instead.
+  if (clipboardTextCardEditing_ && ops_.isEmpty()) {
+    log.ops = textCardStashedLog_.ops;
+    log.index = textCardStashedLog_.index;
+    log.nextId = textCardStashedLog_.nextId;
+    log.nextMarker = textCardStashedLog_.nextMarker;
+  }
+  log.textCardText = clipboardTextCardEditing_
+                         ? textCardEditor_->toPlainText()
+                         : textCardDocumentText_;
+  log.textCardFilename = clipboardTextCardEditing_
+                             ? textCardFilename_
+                             : textCardDocumentFilename_;
+  log.textCardEditing =
+      clipboardTextCardEditing_ && !log.textCardText.isEmpty();
+  log.textCardCursor = clipboardTextCardEditing_
+                           ? textCardEditor_->textCursor().position()
+                           : -1;
+  log.textCardYank =
+      clipboardTextCardEditing_ ? textCardModal_->yankText() : QString();
+  log.textCardYankLinewise =
+      clipboardTextCardEditing_ && textCardModal_->yankLinewise();
+  log.textCardFontSize = textCardFontOverride_;
+  log.textCardNoWrap = textCardNoWrap_;
+  log.textCardTabWidth = textCardTabWidth_;
+  return log;
+}
+
+QString CaptureEditor::clipboardTextCardModeForTest() const {
+  return textCardModal_->mode();
+}
+
 void CaptureEditor::startSnapshotRender() {
   snapshotBusy_ = true;
   snapshotDirty_ = false;
   const QImage source = capture_.source;
   const QString path = snapshotPath_;
   const QString logPath = operationLogPath(path);
-  const OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
-                         pristineLogicalSize_};
+  OperationLog log = composeWorkingLog();
   const bool writeSource = !sourceWritten_ || !QFile::exists(path);
   snapshotWatcher_.setFuture(QtConcurrent::run(
       [source, path, logPath, log, writeSource] {
@@ -2999,7 +3340,7 @@ bool CaptureEditor::prepareHandoff(QString &path, QString &error) {
 }
 
 void CaptureEditor::handOffEditor(bool toWindow) {
-  if (busy_)
+  if (busy_ || handOffStarted_)
     return;
   QString path;
   QString error;
@@ -3020,6 +3361,7 @@ void CaptureEditor::handOffEditor(bool toWindow) {
     setStatus(QStringLiteral("Could not start omasnap"));
     return;
   }
+  handOffStarted_ = true;
   close();
 }
 
@@ -3099,7 +3441,8 @@ void CaptureEditor::enterEdit(QString status) {
     commitCrop(selection_);
   else
     scheduleSnapshot();
-  if (windowedHandoffOnEdit_ && captureMode_ != CaptureMode::Scroll) {
+  if (windowedHandoffOnEdit_ && !suppressSnapshots_ &&
+      captureMode_ != CaptureMode::Scroll) {
     windowedHandoffOnEdit_ = false;
     handOffEditor(true);
   }
@@ -3133,6 +3476,11 @@ void CaptureEditor::enterExport() {
 }
 
 void CaptureEditor::handleEscape() {
+  if (clipboardTextCardEditing_) {
+    if (textCardModal_->insertMode())
+      textCardModal_->setInsertMode(false);
+    return;
+  }
   if (cutDragActive_) {
     cutDragActive_ = false;
     dragging_ = false;
@@ -3796,6 +4144,34 @@ void CaptureEditor::handleToolbar(const QString &action) {
 
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
+  if (clipboardTextCardEditing_) {
+    QWidget *target = textCardFilenameEditor_->isVisible()
+                          ? static_cast<QWidget *>(textCardFilenameEditor_)
+                          : textCardEditor_;
+    target->setFocus(Qt::ShortcutFocusReason);
+    // A key the child ignores bubbles back here; resend it only once.
+    if (!textCardRepostingKey_) {
+      textCardRepostingKey_ = true;
+      QKeyEvent repost(QEvent::KeyPress, event->key(), event->modifiers(),
+                       event->text(), event->isAutoRepeat(),
+                       static_cast<quint16>(event->count()));
+      QCoreApplication::sendEvent(target, &repost);
+      textCardRepostingKey_ = false;
+    }
+    event->accept();
+    return;
+  }
+  const bool reopenChord = phase_ == Phase::Edit &&
+                           isPlainControlChord(event, Qt::Key_E) &&
+                           !textCardDocumentText_.isEmpty();
+  if (reopenChord) {
+    // Annotations come back on the next render, so a single press suffices;
+    // a repeat would land inside the reopened card.
+    if (!event->isAutoRepeat())
+      reopenClipboardTextCard();
+    event->accept();
+    return;
+  }
   if (!ocrResultText_.isEmpty()) {
     const int key = event->key();
     const bool modifierOnly = key == Qt::Key_Shift || key == Qt::Key_Control ||
@@ -3845,6 +4221,15 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   }
   if (phase_ == Phase::Select) {
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    if (event->key() == Qt::Key_V &&
+        modifiers.testFlag(Qt::ControlModifier) &&
+        modifiers.testFlag(Qt::ShiftModifier) &&
+        !modifiers.testFlag(Qt::AltModifier) &&
+        !modifiers.testFlag(Qt::MetaModifier)) {
+      openClipboardTextCard();
+      return;
+    }
     if (event->matches(QKeySequence::SelectAll)) {
       selectFullscreen();
       return;
@@ -3970,7 +4355,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     return;
   } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
     // Enter on a selected label reopens it for editing; anywhere else it
-    // finishes the capture.
+    // finishes the capture. Repeats held over from another phase (a card
+    // commit, a text layer) must not save and exit.
+    if (event->isAutoRepeat())
+      return;
     if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
         selectedAnnotations_.size() <= 1 &&
         annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text &&
@@ -4123,7 +4511,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     pinSnapshot();
     return;
   } else if (event->key() == Qt::Key_W) {
-    handOffEditor(!windowedPresentation_);
+    // Auto-repeat never swaps processes: repeats queued behind the handoff
+    // land in the successor and would immediately hand back.
+    if (!event->isAutoRepeat())
+      handOffEditor(!windowedPresentation_);
     return;
   } else if (event->key() == Qt::Key_G) {
     cycleCanvasBoundary(
@@ -4184,6 +4575,22 @@ void CaptureEditor::leaveEvent(QEvent *event) {
 }
 
 void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_) {
+    cursor_ = event->position();
+    updatePointerCursor();
+    QString hovered;
+    for (const ToolbarButton &button : textCardToolbarButtons()) {
+      if (button.rect.contains(cursor_)) {
+        hovered = button.action;
+        break;
+      }
+    }
+    if (hovered != textCardHoveredAction_) {
+      textCardHoveredAction_ = hovered;
+      update();
+    }
+    return;
+  }
   if (panning_) {
     panView(event->position() - panAnchor_);
     panAnchor_ = event->position();
@@ -4298,84 +4705,87 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
       } else {
         Annotation &annotation = annotations_[selectedAnnotation_];
         annotation = originalAnnotation_;
-      const QRectF originalBox = annotationBounds(originalAnnotation_);
-      if (interaction_ == Interaction::Move) {
-        translateAnnotation(annotation, point - dragStart_);
-      } else if (isBoxResize(interaction_)) {
-        applyBoxResize(annotation, interaction_, point, originalBox);
-      } else if (interaction_ == Interaction::ResizeStart) {
-        if (hasEndpointHandles(annotation.kind)) {
-          annotation.start = constrainedResizeEndpoint(
-              annotation, point, annotation.end, originalAnnotation_.start);
-        }
-      } else if (interaction_ == Interaction::ResizeEnd) {
-        if (hasEndpointHandles(annotation.kind)) {
-          annotation.end = constrainedResizeEndpoint(
-              annotation, point, annotation.start, originalAnnotation_.end);
-        } else if (isStrokeKind(annotation.kind)) {
-          const QRectF originalBounds = annotationBounds(originalAnnotation_);
-          const qreal scaleX =
-              originalBounds.width() > 0
-                  ? std::max<qreal>(0.05, (point.x() - originalBounds.left()) /
-                                              originalBounds.width())
-                  : 1.0;
-          const qreal scaleY =
-              originalBounds.height() > 0
-                  ? std::max<qreal>(0.05, (point.y() - originalBounds.top()) /
-                                              originalBounds.height())
-                  : 1.0;
-          const auto resizePoints = [&](QVector<QPointF> &resized,
-                                        const QVector<QPointF> &source) {
-            resized.resize(source.size());
-            for (qsizetype index = 0; index < source.size(); ++index) {
-              const QPointF relative =
-                  source.at(index) - originalBounds.topLeft();
-              resized[index] =
-                  originalBounds.topLeft() +
-                  QPointF(relative.x() * scaleX, relative.y() * scaleY);
+        const QRectF originalBox = annotationBounds(originalAnnotation_);
+        if (interaction_ == Interaction::Move) {
+          translateAnnotation(annotation, point - dragStart_);
+        } else if (isBoxResize(interaction_)) {
+          applyBoxResize(annotation, interaction_, point, originalBox);
+        } else if (interaction_ == Interaction::ResizeStart) {
+          if (hasEndpointHandles(annotation.kind)) {
+            annotation.start = constrainedResizeEndpoint(
+                annotation, point, annotation.end, originalAnnotation_.start);
+          }
+        } else if (interaction_ == Interaction::ResizeEnd) {
+          if (hasEndpointHandles(annotation.kind)) {
+            annotation.end = constrainedResizeEndpoint(
+                annotation, point, annotation.start, originalAnnotation_.end);
+          } else if (isStrokeKind(annotation.kind)) {
+            const QRectF originalBounds = annotationBounds(originalAnnotation_);
+            const qreal scaleX =
+                originalBounds.width() > 0
+                    ? std::max<qreal>(
+                          0.05, (point.x() - originalBounds.left()) /
+                                    originalBounds.width())
+                    : 1.0;
+            const qreal scaleY =
+                originalBounds.height() > 0
+                    ? std::max<qreal>(
+                          0.05, (point.y() - originalBounds.top()) /
+                                    originalBounds.height())
+                    : 1.0;
+            const auto resizePoints = [&](QVector<QPointF> &resized,
+                                          const QVector<QPointF> &source) {
+              resized.resize(source.size());
+              for (qsizetype index = 0; index < source.size(); ++index) {
+                const QPointF relative =
+                    source.at(index) - originalBounds.topLeft();
+                resized[index] =
+                    originalBounds.topLeft() +
+                    QPointF(relative.x() * scaleX, relative.y() * scaleY);
+              }
+            };
+            resizePoints(annotation.points, originalAnnotation_.points);
+            resizePoints(annotation.rawPoints, originalAnnotation_.rawPoints);
+            if (!annotation.points.isEmpty()) {
+              annotation.start = annotation.points.first();
+              annotation.end = annotation.points.last();
             }
-          };
-          resizePoints(annotation.points, originalAnnotation_.points);
-          resizePoints(annotation.rawPoints, originalAnnotation_.rawPoints);
-          if (!annotation.points.isEmpty()) {
-            annotation.start = annotation.points.first();
-            annotation.end = annotation.points.last();
+          } else if (annotation.kind == Annotation::Kind::Marker) {
+            annotation.size = std::clamp(
+                QLineF(annotation.start, point).length() / 3.0, 2.0, 30.0);
+          } else if (annotation.kind == Annotation::Kind::Text) {
+            // The handle sets the wrap width, which is what its horizontal
+            // cursor has always promised. Size belongs to the wheel, so the
+            // two are one gesture each rather than both scaling the layer.
+            const QRectF originalBounds = annotationBounds(originalAnnotation_);
+            annotation.textWidth = std::max<qreal>(
+                kMinimumTextWrapWidth, point.x() - originalBounds.left());
           }
-        } else if (annotation.kind == Annotation::Kind::Marker) {
-          annotation.size = std::clamp(
-              QLineF(annotation.start, point).length() / 3.0, 2.0, 30.0);
-        } else if (annotation.kind == Annotation::Kind::Text) {
-          // The handle sets the wrap width, which is what its horizontal
-          // cursor has always promised. Size belongs to the wheel, so the two
-          // are one gesture each rather than both scaling the layer.
-          const QRectF originalBounds = annotationBounds(originalAnnotation_);
-          annotation.textWidth = std::max<qreal>(
-              kMinimumTextWrapWidth, point.x() - originalBounds.left());
-        }
-      } else if (interaction_ == Interaction::ResizeControl &&
-                 annotation.kind == Annotation::Kind::Arrow &&
-                 (annotation.arrowStyle == ArrowStyle::Curved ||
-                  annotation.arrowStyle == ArrowStyle::Double)) {
-        QPointF handlePoint = point;
-        if (resizeConstraintActive_) {
-          // Keep the visible t=.5 handle centered along the chord while its
-          // perpendicular distance remains under the pointer. This preserves
-          // an adjustable, symmetric bend instead of flattening the arrow.
-          const QPointF chord = annotation.end - annotation.start;
-          const qreal chordLengthSquared = QPointF::dotProduct(chord, chord);
-          if (!qFuzzyIsNull(chordLengthSquared)) {
-            const QPointF midpoint =
-                (annotation.start + annotation.end) * 0.5;
-            handlePoint -=
-                chord * (QPointF::dotProduct(handlePoint - midpoint, chord) /
-                         chordLengthSquared);
+        } else if (interaction_ == Interaction::ResizeControl &&
+                   annotation.kind == Annotation::Kind::Arrow &&
+                   (annotation.arrowStyle == ArrowStyle::Curved ||
+                    annotation.arrowStyle == ArrowStyle::Double)) {
+          QPointF handlePoint = point;
+          if (resizeConstraintActive_) {
+            // Keep the visible t=.5 handle centered along the chord while its
+            // perpendicular distance remains under the pointer. This preserves
+            // an adjustable, symmetric bend instead of flattening the arrow.
+            const QPointF chord = annotation.end - annotation.start;
+            const qreal chordLengthSquared = QPointF::dotProduct(chord, chord);
+            if (!qFuzzyIsNull(chordLengthSquared)) {
+              const QPointF midpoint =
+                  (annotation.start + annotation.end) * 0.5;
+              handlePoint -=
+                  chord *
+                  (QPointF::dotProduct(handlePoint - midpoint, chord) /
+                   chordLengthSquared);
+            }
           }
+          // The pointer owns the visible t=.5 point on the quadratic. Solve
+          // M=.25*S+.5*C+.25*E for C so the handle tracks it exactly.
+          annotation.curveControl =
+              handlePoint * 2.0 - (annotation.start + annotation.end) * 0.5;
         }
-        // The pointer owns the visible t=.5 point on the quadratic. Solve
-        // M=.25*S+.5*C+.25*E for C so the handle tracks it exactly.
-        annotation.curveControl =
-            handlePoint * 2.0 - (annotation.start + annotation.end) * 0.5;
-      }
       }
       dragChanged_ = true;
     }
@@ -4503,6 +4913,8 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_)
+    return;
   if (phase_ != Phase::Edit || event->button() != Qt::LeftButton ||
       !editImageRect().contains(event->position()))
     return;
@@ -4519,6 +4931,33 @@ void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
 void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   if (phase_ == Phase::Export || busy_ || capturePending_)
     return;
+  if (clipboardTextCardEditing_) {
+    cursor_ = event->position();
+    if (event->button() == Qt::LeftButton) {
+      for (const ToolbarButton &button : textCardToolbarButtons()) {
+        if (!button.rect.contains(cursor_))
+          continue;
+        if (textCardFilenameEditor_->isVisible())
+          endClipboardTextCardFilenameEdit(true);
+        if (button.action == QStringLiteral("text-card-done"))
+          finishClipboardTextCard();
+        else
+          handOffLiveTextCard();
+        event->accept();
+        return;
+      }
+    }
+    if (event->button() == Qt::LeftButton &&
+        textCardFilenameEditor_->geometry().contains(
+            event->position().toPoint())) {
+      beginClipboardTextCardFilenameEdit();
+      event->accept();
+      return;
+    }
+    textCardEditor_->setFocus(Qt::MouseFocusReason);
+    event->accept();
+    return;
+  }
   if (!ocrResultText_.isEmpty())
     dismissOcrOverlay();
   if (event->button() == Qt::RightButton) {
@@ -4892,6 +5331,10 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
+  if (clipboardTextCardEditing_) {
+    event->accept();
+    return;
+  }
   if (event->button() == Qt::MiddleButton && panning_) {
     panning_ = false;
     updatePointerCursor();
@@ -5169,6 +5612,10 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void CaptureEditor::wheelEvent(QWheelEvent *event) {
+  if (clipboardTextCardEditing_) {
+    event->accept();
+    return;
+  }
   if (phase_ != Phase::Edit) {
     QWidget::wheelEvent(event);
     return;
@@ -5180,6 +5627,7 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
     event->accept();
     return;
   }
+
   // High-resolution touchpads can arrive with an empty angleDelta and only a
   // pixelDelta; treat the two interchangeably, preferring the exact pixels
   // for panning and the notch units for discrete steps.
@@ -5347,6 +5795,16 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
 
 void CaptureEditor::updatePointerCursor() {
   highlighterPreview_.reset();
+  if (clipboardTextCardEditing_) {
+    for (const ToolbarButton &button : textCardToolbarButtons()) {
+      if (button.rect.contains(cursor_)) {
+        setCursor(Qt::PointingHandCursor);
+        return;
+      }
+    }
+    setCursor(Qt::ArrowCursor);
+    return;
+  }
   if (phase_ == Phase::Export) {
     setCursor(Qt::WaitCursor);
     return;
@@ -5418,15 +5876,14 @@ void CaptureEditor::updatePointerCursor() {
     if (highlighterMode_ == HighlighterMode::Snap) {
       highlighterPreview_ =
           dragging_ ? highlighterLock_
-                    : editImageRect().contains(cursor_)
+                    : sourceFrameWidgetRect().contains(cursor_)
                           ? highlighterLockAt(toAnnotationPoint(cursor_))
                           : std::nullopt;
     }
     // Qt's stock I-beam has a fixed text-editor height. Paint the measured
     // one ourselves so its serifs span exactly the row the stroke will lock.
     setCursor(highlighterPreview_ ? Qt::BlankCursor : Qt::CrossCursor);
-  }
-  else
+  } else
     setCursor(Qt::CrossCursor);
 }
 
@@ -5618,6 +6075,625 @@ void CaptureEditor::adoptStitched(const QImage &image) {
                                   "crop"));
 }
 
+void CaptureEditor::openClipboardTextCard() {
+  QString text;
+  QString error;
+  if (!loadClipboardText(text, error)) {
+    setStatus(error);
+    return;
+  }
+  // Reject before any content scanning: language detection over an unbounded
+  // clipboard would stall the UI thread.
+  const QString sourceError = textCardSourceError(text);
+  if (!sourceError.isEmpty()) {
+    setStatus(sourceError);
+    return;
+  }
+  beginClipboardTextCard(text, defaultTextCardFilename(text));
+}
+
+// A presentation switch flushes the live draft to a new process; a draft
+// that cannot render would dead-end there.
+bool CaptureEditor::handOffLiveTextCard() {
+  const QString sourceError =
+      textCardSourceError(textCardEditor_->toPlainText());
+  if (!sourceError.isEmpty()) {
+    setStatus(sourceError);
+    return false;
+  }
+  handOffEditor(!windowedPresentation_);
+  return true;
+}
+
+void CaptureEditor::beginClipboardTextCard(const QString &text,
+                                           const QString &filename) {
+  QString error;
+  textCardTheme_ = loadTextCardTheme();
+  textCardFilename_ = filename.trimmed().isEmpty()
+                          ? defaultTextCardFilename(text)
+                          : filename;
+  TextCardRender card = renderTextCardLayout(
+      text, textCardTheme_, error, false, QStringLiteral("NORMAL"),
+      textCardFilename_, windowedPresentation_ ? TextCardLayout::Compact
+                                               : TextCardLayout::Share);
+  if (card.image.isNull()) {
+    setStatus(error.isEmpty() ? QStringLiteral("Could not render text card")
+                              : error);
+    return;
+  }
+
+  // This frame is a live draft, not a working document. The finalized card
+  // gets the one persisted source after Ctrl+Enter.
+  const bool suppressSnapshots = suppressSnapshots_;
+  suppressSnapshots_ = true;
+  adoptImage(std::move(card.image), OperationLog(), SelectTab::Region,
+             QStringLiteral("Text card · NORMAL · hjkl move · i/a/o insert · "
+                            "v selects · F filename · Ctrl+W window · "
+                            "Ctrl+Enter renders · q exits"));
+  suppressSnapshots_ = suppressSnapshots;
+
+  textCardDocumentText_ = text;
+  textCardDocumentFilename_ = textCardFilename_;
+  textCardOpenedText_ = text;
+  textCardOpenedFilename_ = textCardFilename_;
+  textCardDiscardArmed_ = false;
+  textCardStashedLog_ = {};
+  textCardReopened_ = false;
+  textCardFontOverride_ = 0;
+  textCardNoWrap_ = false;
+  textCardTabWidth_ = kTextCardTabSpaces;
+  textCardRenderedFontSize_ = card.codePixelSize;
+  textCardWindowManual_ = false;
+  textCardWindowRequested_ = QSize();
+  textCardFrameKey_.clear();
+  textCardDetectRevision_ = -1;
+  clipboardTextCardEditing_ = true;
+  textCardModal_->reset();
+  textCardModal_->setSelectionColor(textCardTheme_.selection);
+  textCardSourceEditorRect_ = card.editorRect;
+  textCardSourceTitleRect_ = card.titleRect;
+  delete textCardHighlighter_;
+  textCardHighlighter_ = nullptr;
+  textCardSyntaxLanguage_.clear();
+  {
+    const QSignalBlocker blocker(textCardEditor_);
+    textCardEditor_->setPlainText(text);
+  }
+  reinstallClipboardTextCardHighlighter();
+  const auto cardInputStyle = [this](const QString &widget,
+                                     const QColor &background) {
+    return QStringLiteral("%1 { color: %2; background: %3; border: none; "
+                          "padding: 0; selection-color: %2; "
+                          "selection-background-color: %4; }")
+        .arg(widget, textCardTheme_.foreground.name(), background.name(),
+             textCardTheme_.selection.name());
+  };
+  textCardEditor_->setStyleSheet(
+      cardInputStyle(QStringLiteral("QPlainTextEdit"), textCardTheme_.panel));
+  textCardFilenameEditor_->setStyleSheet(
+      cardInputStyle(QStringLiteral("QLineEdit"), textCardTheme_.header));
+  textCardFilenameEditor_->setText(textCardFilename_);
+  textCardEditor_->show();
+  textCardEditor_->raise();
+  textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+  updateClipboardTextCardEditorGeometry();
+  updateTextCardCaret();
+  if (windowedPresentation_) {
+    textCardWindowRequested_ = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    if (!dispatchFloatingResize(textCardWindowRequested_))
+      resize(textCardWindowRequested_);
+  }
+  update();
+  if (windowedHandoffOnEdit_ && !suppressSnapshots_) {
+    windowedHandoffOnEdit_ = false;
+    handOffEditor(true);
+  }
+}
+
+void CaptureEditor::updateClipboardTextCardPreview() {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardDocumentText_ = textCardEditor_->toPlainText();
+  textCardDocumentFilename_ = textCardFilename_;
+  QString previewText = textCardDocumentText_;
+  if (previewText.trimmed().isEmpty())
+    previewText = QString(QChar(0x200b));
+  int wrappedLines = 0;
+  for (QTextBlock block = textCardEditor_->document()->begin();
+       block.isValid(); block = block.next())
+    wrappedLines += std::max(1, block.layout()->lineCount());
+  const QString cardMode = textCardFilenameEditor_->isVisible()
+                               ? QStringLiteral("FILENAME")
+                               : textCardModal_->mode();
+  // The widest logical line drives auto-fit; monospace columns track it
+  // closely enough to refresh the cached frame when it changes.
+  int widestColumns = 0;
+  int column = 0;
+  for (const QChar character : std::as_const(previewText)) {
+    if (character == QLatin1Char('\n')) {
+      widestColumns = std::max(widestColumns, column);
+      column = 0;
+    } else if (character == QLatin1Char('\t')) {
+      column = (column / textCardTabWidth_ + 1) * textCardTabWidth_;
+    } else {
+      ++column;
+    }
+  }
+  widestColumns = std::max(widestColumns, column);
+  const QString frameKey =
+      QStringList{cardMode, textCardFilename_, textCardSyntaxLanguage_,
+                  QString::number(wrappedLines),
+                  QString::number(textCardEditor_->document()->blockCount()),
+                  QString::number(windowedPresentation_ ? 1 : 0),
+                  QString::number(widestColumns),
+                  QString::number(textCardFontOverride_),
+                  QString::number(textCardNoWrap_ ? 1 : 0),
+                  QString::number(textCardTabWidth_)}
+          .join(QLatin1Char('\x1f'));
+  if (frameKey == textCardFrameKey_)
+    return;
+  QString error;
+  TextCardRender frame = renderTextCardLayout(
+      previewText, textCardTheme_, error, false, cardMode, textCardFilename_,
+      windowedPresentation_ ? TextCardLayout::Compact
+                            : TextCardLayout::Share,
+      1.0, textCardFontOverride_, textCardNoWrap_, textCardTabWidth_);
+  if (frame.image.isNull()) {
+    textCardFrameKey_.clear();
+    setStatus(error);
+    return;
+  }
+  textCardFrameKey_ = frameKey;
+  adoptTextCardSurface(std::move(frame.image));
+  textCardSourceEditorRect_ = frame.editorRect;
+  textCardSourceTitleRect_ = frame.titleRect;
+  textCardRenderedFontSize_ = frame.codePixelSize;
+  updateClipboardTextCardEditorGeometry();
+  scheduleTextCardWindowFollow();
+  // The state frame above stays at logical size; the painted copy is
+  // supersampled so the chrome survives being scaled to the screen.
+  textCardDisplayRatio_ = textCardIdealRatio();
+  if (textCardDisplayRatio_ > 1.02) {
+    QString displayError;
+    textCardDisplayFrame_ =
+        renderTextCardLayout(previewText, textCardTheme_, displayError, false,
+                             cardMode, textCardFilename_,
+                             windowedPresentation_ ? TextCardLayout::Compact
+                                                   : TextCardLayout::Share,
+                             textCardDisplayRatio_, textCardFontOverride_,
+                             textCardNoWrap_, textCardTabWidth_)
+            .image;
+  } else {
+    textCardDisplayFrame_ = {};
+  }
+  update();
+}
+
+// The rendered card becomes the whole working image, fully selected.
+void CaptureEditor::adoptTextCardSurface(QImage image) {
+  capture_.source = std::move(image);
+  capture_.previewSize = capture_.source.size();
+  pristineSource_ = capture_.source;
+  pristineLogicalSize_ = capture_.previewSize;
+  selection_ = QRectF(QPointF(), QSizeF(capture_.previewSize));
+  canvasRect_ = selection_;
+  redactionBaseStale_ = true;
+  backdropKey_ = 0;
+}
+
+// Supersample factor that makes the painted card frame match the screen.
+qreal CaptureEditor::textCardIdealRatio() const {
+  const QRectF source = sourceFrameWidgetRect();
+  if (source.isEmpty() || capture_.previewSize.isEmpty())
+    return 1.0;
+  const qreal scale = source.width() / capture_.previewSize.width();
+  return std::clamp(scale * devicePixelRatioF(), 1.0, 3.0);
+}
+
+// A compositor or user resize rescales the painted frame immediately; the
+// live editor widgets must follow it in the same frame or the text drifts
+// off the card until the next keystroke.
+void CaptureEditor::resizeEvent(QResizeEvent *event) {
+  QWidget::resizeEvent(event);
+  if (!clipboardTextCardEditing_)
+    return;
+  if (windowedPresentation_ && !textCardWindowRequested_.isEmpty() &&
+      size() != textCardWindowRequested_.expandedTo(minimumSize()))
+    textCardWindowManual_ = true;
+  updateClipboardTextCardEditorGeometry();
+}
+
+void CaptureEditor::updateClipboardTextCardEditorGeometry() {
+  if (!clipboardTextCardEditing_ || capture_.previewSize.isEmpty())
+    return;
+  const QRectF source = sourceFrameWidgetRect();
+  if (source.isEmpty())
+    return;
+  const qreal scale = source.width() / capture_.previewSize.width();
+  const QRectF editor(source.left() + textCardSourceEditorRect_.left() * scale,
+                      source.top() + textCardSourceEditorRect_.top() * scale,
+                      textCardSourceEditorRect_.width() * scale,
+                      textCardSourceEditorRect_.height() * scale);
+  const QRect geometry = editor.toAlignedRect();
+  if (textCardEditor_->geometry() != geometry)
+    textCardEditor_->setGeometry(geometry);
+
+  const QRectF title(source.left() + textCardSourceTitleRect_.left() * scale,
+                     source.top() + textCardSourceTitleRect_.top() * scale,
+                     textCardSourceTitleRect_.width() * scale,
+                     textCardSourceTitleRect_.height() * scale);
+  const QRect titleGeometry = title.toAlignedRect().adjusted(0, 2, 0, -2);
+  if (textCardFilenameEditor_->geometry() != titleGeometry)
+    textCardFilenameEditor_->setGeometry(titleGeometry);
+
+  QFont font(annotationTextFontName(TextFont::JetBrainsMono));
+  font.setPixelSize(
+      std::max(1, qRound(textCardRenderedFontSize_ * scale)));
+  font.setStyleHint(QFont::Monospace);
+  if (textCardEditor_->font() != font)
+    textCardEditor_->setFont(font);
+  if (textCardModal_->insertMode())
+    textCardEditor_->setCursorWidth(std::max(1, qRound(2 * scale)));
+  else
+    updateTextCardCaret();
+  const QPlainTextEdit::LineWrapMode lineWrap =
+      textCardNoWrap_ ? QPlainTextEdit::NoWrap : QPlainTextEdit::WidgetWidth;
+  if (textCardEditor_->lineWrapMode() != lineWrap)
+    textCardEditor_->setLineWrapMode(lineWrap);
+  QTextOption option = textCardEditor_->document()->defaultTextOption();
+  const qreal tabStop =
+      QFontMetricsF(font).horizontalAdvance(' ') * textCardTabWidth_;
+  if (!qFuzzyCompare(option.tabStopDistance(), tabStop)) {
+    option.setTabStopDistance(tabStop);
+    textCardEditor_->document()->setDefaultTextOption(option);
+  }
+
+  QFont filenameFont = font;
+  filenameFont.setPixelSize(
+      std::max(1, qRound(kTextCardHeaderPixelSize * scale)));
+  textCardFilenameEditor_->setFont(filenameFont);
+
+  const qreal idealRatio = textCardIdealRatio();
+  if (!textCardPreviewPending_ &&
+      std::abs(idealRatio - textCardDisplayRatio_) >
+          0.1 * textCardDisplayRatio_) {
+    textCardPreviewPending_ = true;
+    QTimer::singleShot(0, this, [this] {
+      textCardPreviewPending_ = false;
+      if (!clipboardTextCardEditing_)
+        return;
+      textCardFrameKey_.clear();
+      updateClipboardTextCardPreview();
+    });
+  }
+}
+
+// The Normal-mode block cursor is painted, not inverted: Qt's inversion
+// caret disappears on mid-tone panels.
+void CaptureEditor::updateTextCardCaret() {
+  if (!clipboardTextCardEditing_ || textCardModal_->insertMode())
+    return;
+  if (textCardModal_->visualMode()) {
+    textCardEditor_->setCursorWidth(0);
+    return;
+  }
+  QTextCursor caret = textCardEditor_->textCursor();
+  if (caret.atBlockEnd()) {
+    // An empty line has no character to paint under the block.
+    textCardEditor_->setCursorWidth(
+        std::max(2, QFontMetrics(textCardEditor_->font())
+                        .horizontalAdvance(QLatin1Char('M'))));
+    textCardEditor_->setExtraSelections({});
+    return;
+  }
+  textCardEditor_->setCursorWidth(0);
+  caret.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+  QTextEdit::ExtraSelection block;
+  block.cursor = caret;
+  block.format.setBackground(textCardTheme_.outline);
+  block.format.setForeground(textCardTheme_.panel);
+  textCardEditor_->setExtraSelections({block});
+}
+
+void CaptureEditor::beginClipboardTextCardFilenameEdit() {
+  if (!clipboardTextCardEditing_ || textCardFilenameEditor_->isVisible())
+    return;
+  textCardFilenameBeforeEdit_ = textCardFilename_;
+  textCardFilenameEditor_->setText(textCardFilename_);
+  textCardFilenameEditor_->selectAll();
+  textCardFilenameEditor_->show();
+  textCardFilenameEditor_->raise();
+  textCardFilenameEditor_->setFocus(Qt::ShortcutFocusReason);
+  updateClipboardTextCardPreview();
+  setStatus(QStringLiteral("Text card · FILENAME · type a path or name · "
+                           "Enter/Tab accepts · Ctrl+W window · Esc cancels"));
+}
+
+void CaptureEditor::endClipboardTextCardFilenameEdit(bool accept) {
+  if (!textCardFilenameEditor_->isVisible())
+    return;
+  const QString entered = textCardFilenameEditor_->text().trimmed();
+  textCardFilename_ = accept && !entered.isEmpty()
+                          ? entered
+                          : textCardFilenameBeforeEdit_;
+  textCardFilenameEditor_->hide();
+  textCardFilenameEditor_->setText(textCardFilename_);
+  reinstallClipboardTextCardHighlighter();
+  updateClipboardTextCardPreview();
+  textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+  setStatus(QStringLiteral("Text card · NORMAL · %1 · %2 syntax · "
+                           "F renames · Ctrl+W window")
+                .arg(QFileInfo(textCardFilename_).fileName(),
+                     detectTextCardLanguage(textCardEditor_->toPlainText(),
+                                            textCardFilename_)));
+}
+
+void CaptureEditor::reinstallClipboardTextCardHighlighter() {
+  if (!clipboardTextCardEditing_ || textCardHighlighterUpdating_)
+    return;
+  const int revision = textCardEditor_->document()->revision();
+  if (revision != textCardDetectRevision_ ||
+      textCardFilename_ != textCardDetectFilename_) {
+    textCardDetectedLanguage_ = detectTextCardLanguage(
+        textCardEditor_->toPlainText(), textCardFilename_);
+    textCardDetectRevision_ = revision;
+    textCardDetectFilename_ = textCardFilename_;
+  }
+  const QString language = textCardDetectedLanguage_;
+  if (textCardHighlighter_ && textCardSyntaxLanguage_ == language)
+    return;
+  textCardHighlighterUpdating_ = true;
+  QSyntaxHighlighter *oldHighlighter =
+      std::exchange(textCardHighlighter_, nullptr);
+  delete oldHighlighter;
+  textCardHighlighter_ = installTextCardHighlighter(
+      textCardEditor_->document(), textCardTheme_, textCardFilename_);
+  textCardSyntaxLanguage_ = language;
+  textCardHighlighter_->rehighlight();
+  textCardHighlighterUpdating_ = false;
+}
+
+void CaptureEditor::finishClipboardTextCard() {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardModal_->endInsertEdit();
+  const QString sourceText = textCardEditor_->toPlainText();
+  const QString sourceFilename = textCardFilename_;
+  QString error;
+  const QImage card = renderTextCardLayout(
+                          sourceText, textCardTheme_, error, true,
+                          QStringLiteral("NORMAL"), textCardFilename_,
+                          TextCardLayout::Share, 1.0, textCardFontOverride_,
+                          textCardNoWrap_, textCardTabWidth_)
+                          .image;
+  if (card.isNull()) {
+    setStatus(error);
+    textCardEditor_->setFocus(Qt::ShortcutFocusReason);
+    return;
+  }
+  textCardDocumentText_ = sourceText;
+  textCardDocumentFilename_ = sourceFilename;
+  resetClipboardTextCardEditor(false);
+  adoptTextCardSurface(card);
+  cuts_.clear();
+  // Annotations stashed at reopen come back onto the new render; their
+  // coordinates are card-absolute, so they stay where they were drawn.
+  ops_ = std::move(textCardStashedLog_.ops);
+  opIndex_ = std::clamp(textCardStashedLog_.index, 0,
+                        static_cast<int>(ops_.size()));
+  nextAnnotationId_ = std::max<quint64>(textCardStashedLog_.nextId, 1);
+  nextMarker_ = std::max(textCardStashedLog_.nextMarker, 1);
+  textCardStashedLog_ = {};
+  textCardReopened_ = false;
+  sourceWritten_ = false;
+  redactionBaseStale_ = true;
+  backdropKey_ = 0;
+  if (!ops_.isEmpty())
+    replayLog();
+  setFocus(Qt::OtherFocusReason);
+  setStatus(QStringLiteral("Text card rendered · Ctrl+E re-edits · annotate "
+                           "normally · Ctrl+C copies · Enter copies + saves"));
+  scheduleSnapshot();
+  updatePointerCursor();
+  if (windowedPresentation_) {
+    const QSize natural = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    if (!dispatchFloatingResize(natural))
+      resize(natural);
+  }
+  update();
+}
+
+void CaptureEditor::reopenClipboardTextCard() {
+  if (textCardDocumentText_.isEmpty()) {
+    setStatus(QStringLiteral("This capture has no editable text-card source"));
+    return;
+  }
+  const QString text = textCardDocumentText_;
+  const QString filename = textCardDocumentFilename_;
+  // Annotations drawn on the rendered card survive the trip back into its
+  // source: stashed here, replayed onto the next render.
+  OperationLog stash{ops_, opIndex_, nextAnnotationId_, nextMarker_,
+                     pristineLogicalSize_};
+  const int fontOverride = textCardFontOverride_;
+  const bool noWrap = textCardNoWrap_;
+  const int tabWidth = textCardTabWidth_;
+  beginClipboardTextCard(text, filename);
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardStashedLog_ = std::move(stash);
+  textCardReopened_ = true;
+  if (fontOverride != 0 || noWrap || tabWidth != kTextCardTabSpaces) {
+    textCardFontOverride_ = fontOverride;
+    textCardNoWrap_ = noWrap;
+    textCardTabWidth_ = tabWidth;
+    textCardFrameKey_.clear();
+    updateClipboardTextCardPreview();
+    updateTextCardCaret();
+    followTextCardWindow();
+  }
+}
+
+// The card hugs its content, so a font or wrap change moves its height.
+// Following it keeps the on-screen width and scale constant: text grows
+// where a fixed window would rescale the whole chrome to refit instead.
+// One batched dispatch keeps resize and center in the same compositor tick,
+// so a font change moves the window in a single motion instead of a client
+// resize with the compositor catching up.
+bool CaptureEditor::dispatchFloatingResize(const QSize &size) const {
+  if (!isVisible() || suppressSnapshots_ ||
+      !qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE"))
+    return false;
+  const QString selector = QStringLiteral("window = \"pid:%1\"")
+                               .arg(QCoreApplication::applicationPid());
+  return QProcess::startDetached(
+      QStringLiteral("hyprctl"),
+      {QStringLiteral("--batch"),
+       QStringLiteral(
+           "dispatch hl.dsp.window.resize({ x = %1, y = %2, relative = "
+           "false, %3 }) ; dispatch hl.dsp.window.center({ %3 })")
+           .arg(size.width())
+           .arg(size.height())
+           .arg(selector)});
+}
+
+void CaptureEditor::followTextCardWindow() {
+  if (!windowedPresentation_ || !clipboardTextCardEditing_)
+    return;
+  textCardWindowManual_ = false;
+  textCardWindowRequested_ = naturalWindowSize(
+      screen() ? screen()->availableGeometry().size() : QSize());
+  if (!dispatchFloatingResize(textCardWindowRequested_))
+    resize(textCardWindowRequested_);
+}
+
+// Typing moves the hugged card size too, now that the panel follows the
+// longest line; the window trails it once the burst settles, unless the
+// user has taken the window size over by hand.
+void CaptureEditor::scheduleTextCardWindowFollow() {
+  if (!windowedPresentation_ || !clipboardTextCardEditing_ ||
+      textCardWindowManual_ || textCardFollowQueued_)
+    return;
+  textCardFollowQueued_ = true;
+  QTimer::singleShot(250, this, [this] {
+    textCardFollowQueued_ = false;
+    if (!clipboardTextCardEditing_ || textCardWindowManual_ ||
+        !windowedPresentation_)
+      return;
+    const QSize natural = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    if (size() != natural)
+      followTextCardWindow();
+  });
+}
+
+void CaptureEditor::setTextCardFontOverride(int pixelSize) {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardFontOverride_ = pixelSize;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  followTextCardWindow();
+  setStatus(pixelSize > 0
+                ? QStringLiteral("Text size %1px · + and - adjust · Ctrl+0 "
+                                 "returns to auto")
+                      .arg(textCardRenderedFontSize_)
+                : QStringLiteral("Text size auto (%1px) · + and - adjust")
+                      .arg(textCardRenderedFontSize_));
+}
+
+void CaptureEditor::setTextCardTabWidth(int spaces) {
+  if (!clipboardTextCardEditing_ || textCardTabWidth_ == spaces)
+    return;
+  textCardTabWidth_ = spaces;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  followTextCardWindow();
+  setStatus(QStringLiteral("Tab width %1 spaces · keypad 2/4 switches")
+                .arg(spaces));
+}
+
+void CaptureEditor::toggleTextCardWrap() {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardNoWrap_ = !textCardNoWrap_;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  followTextCardWindow();
+  setStatus(textCardNoWrap_
+                ? QStringLiteral("Long lines cut off at the card edge · "
+                                 "Alt+Z wraps them")
+                : QStringLiteral("Long lines wrap · Alt+Z cuts them off at "
+                                 "the card edge"));
+}
+
+// Cursor and yank register carried through a presentation switch; the
+// document undo stack cannot cross processes.
+void CaptureEditor::applyTextCardRestoreState() {
+  if (!clipboardTextCardEditing_)
+    return;
+  if (textCardRestoreCursor_ >= 0) {
+    QTextCursor cursor(textCardEditor_->document());
+    cursor.setPosition(std::clamp(
+        textCardRestoreCursor_, 0,
+        static_cast<int>(textCardEditor_->toPlainText().size())));
+    textCardEditor_->setTextCursor(cursor);
+  }
+  textCardRestoreCursor_ = -1;
+  if (!textCardRestoreYank_.isEmpty())
+    textCardModal_->restoreYank(textCardRestoreYank_,
+                                textCardRestoreYankLinewise_);
+  textCardRestoreYank_.clear();
+}
+
+void CaptureEditor::cancelClipboardTextCard() {
+  if (!clipboardTextCardEditing_)
+    return;
+  const bool dirty = textCardEditor_->toPlainText() != textCardOpenedText_ ||
+                     textCardFilename_ != textCardOpenedFilename_;
+  // A reopened card always confirms: q here abandons the rendered card and
+  // its annotations, not just a pasted draft.
+  if ((dirty || textCardReopened_) && !textCardDiscardArmed_) {
+    textCardDiscardArmed_ = true;
+    setStatus(dirty ? QStringLiteral("Text card · unsaved edits · q again "
+                                     "discards them · Ctrl+Enter renders "
+                                     "instead")
+                    : QStringLiteral("Text card · q again discards the "
+                                     "rendered card and its annotations · "
+                                     "Ctrl+Enter renders instead"));
+    return;
+  }
+  resetClipboardTextCardEditor();
+  setFocus(Qt::OtherFocusReason);
+  close();
+}
+
+void CaptureEditor::resetClipboardTextCardEditor(bool clearDocument) {
+  textCardModal_->reset();
+  clipboardTextCardEditing_ = false;
+  textCardDisplayFrame_ = {};
+  textCardDisplayRatio_ = 1.0;
+  textCardEditor_->hide();
+  textCardFilenameEditor_->hide();
+  delete textCardHighlighter_;
+  textCardHighlighter_ = nullptr;
+  textCardSyntaxLanguage_.clear();
+  const QSignalBlocker blocker(textCardEditor_);
+  textCardEditor_->clear();
+  textCardFilenameEditor_->clear();
+  textCardFilename_.clear();
+  textCardFilenameBeforeEdit_.clear();
+  textCardSourceTitleRect_ = {};
+  if (clearDocument) {
+    textCardDocumentText_.clear();
+    textCardDocumentFilename_.clear();
+  }
+}
+
 void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
                                const QString &status) {
   // The editor normally works on a region of the frozen screen. Here it is
@@ -5627,6 +6703,10 @@ void CaptureEditor::adoptImage(QImage image, OperationLog log, SelectTab kind,
   // it again.
   if (scrollPanel_)
     endScrollCapture();
+  if (clipboardTextCardEditing_)
+    resetClipboardTextCardEditor();
+  textCardDocumentText_ = log.textCardText;
+  textCardDocumentFilename_ = log.textCardFilename;
   if (textEditing()) {
     textEditor_->clear();
     textEditor_->hide();
@@ -5686,6 +6766,10 @@ void CaptureEditor::returnToSelect(bool windowMode) {
   ops_.clear();
   opIndex_ = 0;
   replayLog();
+  // The retained card source belongs to the image being left behind; keeping
+  // it would arm Ctrl+E against a later, unrelated capture.
+  textCardDocumentText_.clear();
+  textCardDocumentFilename_.clear();
   if (handedImage_) {
     // A stitched result is not the screen; take the monitor again so the
     // frozen backdrop behind the next selection is current.
@@ -6114,27 +7198,40 @@ qreal selectionBoundsRadius(const Annotation &annotation, qreal inset) {
   return 0.0;
 }
 
-QVector<QPair<QString, QString>> editorHotkeyEntries() {
-  return {{QStringLiteral("V"), QStringLiteral("Select / move layer")},
-          {QStringLiteral("A"), QStringLiteral("Arrow")},
-          {QStringLiteral("L"), QStringLiteral("Line")},
-          {QStringLiteral("F / H"), QStringLiteral("Freehand / Highlighter")},
-          {QStringLiteral("C"), QStringLiteral("Marker")},
-          {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
-          {QStringLiteral("X"), QStringLiteral("Cut out a band")},
-          {QStringLiteral("T"), QStringLiteral("Text")},
-          {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
-          {QStringLiteral("1–8"), QStringLiteral("Color")},
-          {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},
-          {QStringLiteral("D / O"), QStringLiteral("Redact / OCR text")},
-          {QStringLiteral("B / P"), QStringLiteral("Backdrop / Pin on screen")},
-          {QStringLiteral("W"), QStringLiteral("Editor to window / overlay")},
-          {QStringLiteral("Ctrl+Z"), QStringLiteral("Undo")},
-          {QStringLiteral("Ctrl+Shift+Z"), QStringLiteral("Redo")},
-          {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
-          {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
-          {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
-          {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}};
+void CaptureEditor::paintClipboardTextCardEditing(QPainter &painter) {
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
+  const bool opaqueBackdrop = windowedPresentation_ && windowedBackdropOpaque_;
+  painter.fillRect(rect(), opaqueBackdrop ? textCardTheme_.background
+                                          : QColor(0, 0, 0, 176));
+  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  const QRectF image = sourceFrameWidgetRect();
+  if (!image.isEmpty())
+    painter.drawImage(image, textCardDisplayFrame_.isNull()
+                                 ? capture_.source
+                                 : textCardDisplayFrame_);
+  paintClipboardTextCardToolbar(painter);
+  drawStatusPill(painter, rect(), status_);
+}
+
+void CaptureEditor::paintClipboardTextCardToolbar(QPainter &painter) {
+  QFont font(annotationTextFontName(TextFont::JetBrainsMono));
+  font.setPixelSize(11);
+  font.setBold(true);
+  painter.setFont(font);
+  for (const ToolbarButton &button : textCardToolbarButtons()) {
+    const bool hovered = button.rect.contains(cursor_);
+    const bool done = button.action == QStringLiteral("text-card-done");
+    painter.setPen(QPen(done ? textCardTheme_.outline : textCardTheme_.muted,
+                        hovered ? 2 : 1));
+    painter.setBrush(done ? textCardTheme_.outline
+                          : (hovered ? textCardTheme_.selection
+                                     : textCardTheme_.header));
+    painter.drawRect(button.rect);
+    painter.setPen(done && textCardTheme_.outline.lightness() > 130
+                       ? textCardTheme_.header
+                       : textCardTheme_.foreground);
+    painter.drawText(button.rect, Qt::AlignCenter, button.label);
+  }
 }
 
 void CaptureEditor::paintEdit(QPainter &painter) {
@@ -6322,6 +7419,19 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   if (dragging_ && canvasBoundaryMode_ != CanvasBoundaryMode::Framed) {
     previewClip = captureCanvasRect(selection_.size(), defaultAnnotations,
                                     canvasBoundaryMode_);
+  }
+  if (!dragging_ && grown && editScale() < 1.0) {
+    // Standard and Pointy keep their tail legible while zoomed out. That
+    // screen-only widening must not grow the exported canvas, but clipping it
+    // to the natural bounds would cut the settled preview at a canvas edge.
+    for (const Annotation &annotation : defaultAnnotations) {
+      if (annotation.kind == Annotation::Kind::Arrow &&
+          (annotation.arrowStyle == ArrowStyle::Standard ||
+           annotation.arrowStyle == ArrowStyle::Pointy)) {
+        previewClip = previewClip.united(
+            arrowVisualBounds(annotation, editScale()).adjusted(-1, -1, 1, 1));
+      }
+    }
   }
   if (previewClip != canvasRect_) {
     QPainterPath overscan;
@@ -6518,27 +7628,6 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   painter.restore();
   paintOcrOverlay(painter, sourceImage, editScale());
 
-  // Screenshot chrome means "crop this source", not "this is another
-  // selected object". Keep it out of the layer-selection state entirely;
-  // clicking empty canvas puts the layers down and brings cropping back.
-  if (tool_ == Tool::Select && selectedAnnotations_.isEmpty()) {
-    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 1, Qt::DashLine));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(visibleImage.adjusted(-1, -1, 1, 1));
-    if (grown) {
-      const QRectF visibleSource = sourceImage.intersected(visibleImage);
-      if (!visibleSource.isEmpty()) {
-        painter.setPen(QPen(QColor(10, 132, 255, 100), 1, Qt::DashLine));
-        painter.drawRect(visibleSource);
-      }
-    }
-    painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 2));
-    painter.setBrush(QColor(QStringLiteral("#f5f5f7")));
-    for (const QRectF &handle : cropHandleRects())
-      painter.drawRoundedRect(handle, 3, 3);
-  }
-
-
   if (shapeMenuOpen_) {
     painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
     painter.setBrush(QColor(22, 22, 28, 248));
@@ -6646,10 +7735,20 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   if (clipViewport)
     painter.restore();
 
-  if (tool_ == Tool::Select) {
+  // Screenshot chrome means "crop this source", not "this is another
+  // selected object". Hide it whenever layer-selection chrome is active;
+  // clicking empty canvas puts the layers down and brings cropping back.
+  if (tool_ == Tool::Select && selectedAnnotations_.isEmpty()) {
     painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 1, Qt::DashLine));
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(visibleImage.adjusted(-1, -1, 1, 1));
+    if (grown) {
+      const QRectF visibleSource = sourceImage.intersected(visibleImage);
+      if (!visibleSource.isEmpty()) {
+        painter.setPen(QPen(QColor(10, 132, 255, 100), 1, Qt::DashLine));
+        painter.drawRect(visibleSource);
+      }
+    }
     painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 2));
     painter.setBrush(QColor(QStringLiteral("#f5f5f7")));
     for (const QRectF &handle : cropHandleRects())
@@ -6818,6 +7917,15 @@ void CaptureEditor::paintEvent(QPaintEvent *event) {
     startupTimingMark("first overlay paint started");
   if (scrollPanel_)
     return; // the panel owns the surface; the page shows through its hole
+  if (clipboardTextCardEditing_) {
+    updateClipboardTextCardEditorGeometry();
+    QPainter painter(this);
+    painter.setRenderHints(QPainter::Antialiasing |
+                           QPainter::SmoothPixmapTransform |
+                           QPainter::TextAntialiasing);
+    paintClipboardTextCardEditing(painter);
+    return;
+  }
   QPainter painter(this);
   painter.setRenderHints(QPainter::Antialiasing |
                          QPainter::SmoothPixmapTransform |

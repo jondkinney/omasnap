@@ -473,21 +473,11 @@ int main(int argc, char **argv) {
         filePath.isEmpty() ? QStringLiteral("omasnap")
                            : QStringLiteral("omasnap %1")
                                  .arg(QFileInfo(filePath).fileName()));
-    // Size to the visible selection, not the pristine canvas: a handed-off
-    // capture keeps its whole monitor underneath, but the window should hug
-    // what is actually being annotated.
-    const QSizeF selectionSize = editor.currentSelection().size();
-    const QSize hugged =
-        selectionSize.isEmpty() ? editingPreview : selectionSize.toSize();
-    // The guide band's height depends on how wide the card may be, so
-    // measure it at the width this window will have.
-    const int legendHeight =
-        hotkeyLegendAnchoredSize(editorHotkeyEntries(),
-                                 std::max(392, hugged.width() + 100))
-            .height();
+    // Captures reserve the complete annotation chrome. A live snippet has a
+    // compact canvas and its own two-button toolbar, so it gets a much tighter
+    // size after setWindowedPresentation restores the retained source.
     const QSize naturalSize =
-        editorWindowSize(hugged, targetScreen->availableGeometry().size(),
-                         legendHeight);
+        editor.naturalWindowSize(targetScreen->availableGeometry().size());
     // A hard floor clamps interactive floating resizes where the toolbar
     // still reads; a tiled window's compositor overrides the hint, and
     // that path is accepted as the tiled look.
