@@ -135,6 +135,7 @@ protected:
   void mousePressEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
   void paintEvent(QPaintEvent *event) override;
+  void resizeEvent(QResizeEvent *event) override;
   void wheelEvent(QWheelEvent *event) override;
 
 public:
@@ -503,6 +504,9 @@ private:
   /// 0 returns to auto-fit; the status reports the effective size.
   void setTextCardFontOverride(int pixelSize);
   void toggleTextCardWrap();
+  /// Re-hugs the floating window around the card after an explicit size or
+  /// wrap change; a manual window resize stays respected between them.
+  void followTextCardWindow();
   void updateClipboardTextCardEditorGeometry();
   void beginClipboardTextCardFilenameEdit();
   void endClipboardTextCardFilenameEdit(bool accept);
@@ -819,6 +823,8 @@ private:
   QImage textCardDisplayFrame_;
   qreal textCardDisplayRatio_ = 1.0;
   bool textCardPreviewPending_ = false;
+  /// Coalesces the compositor re-center behind a burst of +/- presses.
+  bool textCardSettleQueued_ = false;
   QString textCardHoveredAction_;
   bool textCardRepostingKey_ = false;
   int textCardDetectRevision_ = -1;

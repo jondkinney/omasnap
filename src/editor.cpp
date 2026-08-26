@@ -6176,6 +6176,15 @@ qreal CaptureEditor::textCardIdealRatio() const {
   return std::clamp(scale * devicePixelRatioF(), 1.0, 3.0);
 }
 
+// A compositor or user resize rescales the painted frame immediately; the
+// live editor widgets must follow it in the same frame or the text drifts
+// off the card until the next keystroke.
+void CaptureEditor::resizeEvent(QResizeEvent *event) {
+  QWidget::resizeEvent(event);
+  if (clipboardTextCardEditing_)
+    updateClipboardTextCardEditorGeometry();
+}
+
 void CaptureEditor::updateClipboardTextCardEditorGeometry() {
   if (!clipboardTextCardEditing_ || capture_.previewSize.isEmpty())
     return;
@@ -6425,10 +6434,27 @@ void CaptureEditor::reopenClipboardTextCard() {
     textCardFrameKey_.clear();
     updateClipboardTextCardPreview();
     updateTextCardCaret();
-    if (windowedPresentation_)
-      resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
-                                        : QSize()));
+    followTextCardWindow();
   }
+}
+
+// The card hugs its content, so a font or wrap change moves its height.
+// Following it keeps the on-screen width and scale constant: text grows
+// where a fixed window would rescale the whole chrome to refit instead.
+void CaptureEditor::followTextCardWindow() {
+  if (!windowedPresentation_ || !clipboardTextCardEditing_)
+    return;
+  resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
+                                    : QSize()));
+  if (textCardSettleQueued_)
+    return;
+  textCardSettleQueued_ = true;
+  QTimer::singleShot(300, this, [this] {
+    textCardSettleQueued_ = false;
+    if (!clipboardTextCardEditing_)
+      return;
+    settleFloatingWindow(size());
+  });
 }
 
 void CaptureEditor::setTextCardFontOverride(int pixelSize) {
@@ -6438,6 +6464,7 @@ void CaptureEditor::setTextCardFontOverride(int pixelSize) {
   textCardFrameKey_.clear();
   updateClipboardTextCardPreview();
   updateTextCardCaret();
+  followTextCardWindow();
   setStatus(pixelSize > 0
                 ? QStringLiteral("Text size %1px · + and - adjust · Ctrl+0 "
                                  "returns to auto")
@@ -6453,6 +6480,7 @@ void CaptureEditor::toggleTextCardWrap() {
   textCardFrameKey_.clear();
   updateClipboardTextCardPreview();
   updateTextCardCaret();
+  followTextCardWindow();
   setStatus(textCardNoWrap_
                 ? QStringLiteral("Long lines cut off at the card edge · "
                                  "Alt+Z wraps them")

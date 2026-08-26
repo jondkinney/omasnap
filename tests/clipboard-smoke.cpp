@@ -1969,6 +1969,64 @@ bool runTextCardTextSizeCheck(const CaptureData &capture, QString &error) {
     return false;
   }
   longEditor.close();
+
+  QStringList windowedLines;
+  for (int line = 1; line <= 10; ++line)
+    windowedLines.append(QStringLiteral("line %1").arg(line));
+  const QString windowedText = windowedLines.join(QLatin1Char('\n'));
+  QString windowedRenderError;
+  const QImage windowedCard =
+      renderTextCardLayout(windowedText, loadTextCardTheme(),
+                           windowedRenderError)
+          .image;
+  CaptureData windowedCapture;
+  windowedCapture.monitor = capture.monitor;
+  windowedCapture.source = windowedCard;
+  windowedCapture.previewSize = windowedCard.size();
+  OperationLog windowedLog;
+  windowedLog.previewSize = windowedCard.size();
+  windowedLog.textCardText = windowedText;
+  windowedLog.textCardFilename = QStringLiteral("cols.txt");
+  windowedLog.textCardEditing = true;
+  CaptureEditor windowed(std::move(windowedCapture),
+                         CaptureEditor::CaptureMode::File,
+                         QuickOutputMode::None, std::move(windowedLog));
+  windowed.setSuppressSnapshots(true);
+  windowed.setWindowedPresentation(true);
+  windowed.show();
+  QApplication::processEvents();
+  cardEditor = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!windowed.clipboardTextCardEditingForTest() || !cardEditor) {
+    error = QStringLiteral("Windowed text-size card did not open");
+    return false;
+  }
+  // The pre-show hug used the fallback room; re-hug on the real screen so
+  // both measurements share it.
+  QTest::keyClick(cardEditor, Qt::Key_0, Qt::ControlModifier);
+  QApplication::processEvents();
+  const QSize hugged = windowed.size();
+  QTest::keyClick(cardEditor, Qt::Key_Plus);
+  QApplication::processEvents();
+  if (windowed.size().height() <= hugged.height() ||
+      windowed.size().width() != hugged.width()) {
+    error = QStringLiteral(
+        "+ did not grow the floating window at constant width (%1x%2 -> "
+        "%3x%4)")
+                .arg(hugged.width())
+                .arg(hugged.height())
+                .arg(windowed.size().width())
+                .arg(windowed.size().height());
+    return false;
+  }
+  const QRect placedEditor = cardEditor->geometry();
+  windowed.resize(windowed.size() + QSize(0, 80));
+  QApplication::processEvents();
+  if (cardEditor->geometry() == placedEditor) {
+    error = QStringLiteral(
+        "A manual window resize left the live editor geometry stale");
+    return false;
+  }
+  windowed.close();
   return true;
 }
 
