@@ -962,8 +962,12 @@ QSize textCardEditorWindowSize(const QSize &card, const QSize &available) {
                        std::max(1, room.height() - kCompactWindowTop -
                                        kCompactWindowBottom));
   QSize shown = card;
-  if (shown.width() > cardRoom.width() || shown.height() > cardRoom.height())
+  if (shown.width() > cardRoom.width() || shown.height() > cardRoom.height()) {
     shown.scale(cardRoom, Qt::KeepAspectRatio);
+    // A card too tall for the room zooms out inside a stable frame; hugging
+    // the scaled width would drag the window narrower as the font grows.
+    shown.setWidth(std::min(card.width(), cardRoom.width()));
+  }
   QSize result(shown.width() + 2 * kCompactWindowSide,
                shown.height() + kCompactWindowTop + kCompactWindowBottom);
   result.setWidth(std::min(room.width(), std::max(result.width(), 640)));

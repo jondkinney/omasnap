@@ -364,6 +364,18 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
     return false;
   }
 
+  // A card taller than the room keeps its unscaled width: the window must
+  // not narrow as a growing font makes the card taller.
+  const QSize tallWindow =
+      textCardEditorWindowSize(QSize(1100, 3000), QSize(1200, 800));
+  if (tallWindow.width() != 1080 || tallWindow.height() != 720) {
+    error = QStringLiteral(
+        "A too-tall card dragged its window narrow (%1x%2)")
+                .arg(tallWindow.width())
+                .arg(tallWindow.height());
+    return false;
+  }
+
   QString hugError;
   const int wideWidth =
       renderTextCardLayout(QStringLiteral("x").repeated(58), theme, hugError)
