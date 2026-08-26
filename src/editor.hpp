@@ -509,6 +509,9 @@ private:
   void followTextCardWindow();
   /// Debounced follow for content-driven card size changes while typing.
   void scheduleTextCardWindowFollow();
+  /// Asks the compositor for the new size so its configure drives the
+  /// client, one atomic resize+center; false when the caller must resize.
+  bool dispatchFloatingResize(const QSize &size) const;
   void updateClipboardTextCardEditorGeometry();
   void beginClipboardTextCardFilenameEdit();
   void endClipboardTextCardFilenameEdit(bool accept);
@@ -518,7 +521,6 @@ private:
   void resetClipboardTextCardEditor(bool clearDocument = true);
   void adoptTextCardSurface(QImage image);
   bool handOffLiveTextCard();
-  void settleFloatingWindow(const QSize &size);
   void updateTextCardCaret();
   void applyTextCardRestoreState();
   [[nodiscard]] qreal textCardIdealRatio() const;
@@ -825,8 +827,6 @@ private:
   QImage textCardDisplayFrame_;
   qreal textCardDisplayRatio_ = 1.0;
   bool textCardPreviewPending_ = false;
-  /// Coalesces the compositor re-center behind a burst of +/- presses.
-  bool textCardSettleQueued_ = false;
   bool textCardFollowQueued_ = false;
   /// Set when a resize arrives that this process did not request: the user
   /// took over the window size, so content changes stop re-hugging it.

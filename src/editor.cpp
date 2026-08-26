@@ -6073,7 +6073,8 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   if (windowedPresentation_) {
     textCardWindowRequested_ = naturalWindowSize(
         screen() ? screen()->availableGeometry().size() : QSize());
-    resize(textCardWindowRequested_);
+    if (!dispatchFloatingResize(textCardWindowRequested_))
+      resize(textCardWindowRequested_);
   }
   update();
   if (windowedHandoffOnEdit_ && !suppressSnapshots_) {
@@ -6344,30 +6345,6 @@ void CaptureEditor::reinstallClipboardTextCardHighlighter() {
   textCardHighlighterUpdating_ = false;
 }
 
-// An in-process resize leaves a floating window where it grew, with its
-// bottom past the screen for a tall card; the compositor applies the size
-// and re-centers it. The launch path in main() does the same settling.
-void CaptureEditor::settleFloatingWindow(const QSize &size) {
-  if (!windowedPresentation_ || suppressSnapshots_)
-    return;
-  if (!qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE"))
-    return;
-  const QString selector = QStringLiteral("window = \"pid:%1\"")
-                               .arg(QCoreApplication::applicationPid());
-  QProcess::execute(
-      QStringLiteral("hyprctl"),
-      {QStringLiteral("dispatch"),
-       QStringLiteral(
-           "hl.dsp.window.resize({ x = %1, y = %2, relative = false, %3 })")
-           .arg(size.width())
-           .arg(size.height())
-           .arg(selector)});
-  QProcess::execute(
-      QStringLiteral("hyprctl"),
-      {QStringLiteral("dispatch"),
-       QStringLiteral("hl.dsp.window.center({ %1 })").arg(selector)});
-}
-
 void CaptureEditor::finishClipboardTextCard() {
   if (!clipboardTextCardEditing_)
     return;
@@ -6413,8 +6390,8 @@ void CaptureEditor::finishClipboardTextCard() {
   if (windowedPresentation_) {
     const QSize natural = naturalWindowSize(
         screen() ? screen()->availableGeometry().size() : QSize());
-    resize(natural);
-    settleFloatingWindow(natural);
+    if (!dispatchFloatingResize(natural))
+      resize(natural);
   }
   update();
 }
@@ -6450,22 +6427,34 @@ void CaptureEditor::reopenClipboardTextCard() {
 // The card hugs its content, so a font or wrap change moves its height.
 // Following it keeps the on-screen width and scale constant: text grows
 // where a fixed window would rescale the whole chrome to refit instead.
+// One batched dispatch keeps resize and center in the same compositor tick,
+// so a font change moves the window in a single motion instead of a client
+// resize with the compositor catching up.
+bool CaptureEditor::dispatchFloatingResize(const QSize &size) const {
+  if (!isVisible() || suppressSnapshots_ ||
+      !qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE"))
+    return false;
+  const QString selector = QStringLiteral("window = \"pid:%1\"")
+                               .arg(QCoreApplication::applicationPid());
+  return QProcess::startDetached(
+      QStringLiteral("hyprctl"),
+      {QStringLiteral("--batch"),
+       QStringLiteral(
+           "dispatch hl.dsp.window.resize({ x = %1, y = %2, relative = "
+           "false, %3 }) ; dispatch hl.dsp.window.center({ %3 })")
+           .arg(size.width())
+           .arg(size.height())
+           .arg(selector)});
+}
+
 void CaptureEditor::followTextCardWindow() {
   if (!windowedPresentation_ || !clipboardTextCardEditing_)
     return;
   textCardWindowManual_ = false;
   textCardWindowRequested_ = naturalWindowSize(
       screen() ? screen()->availableGeometry().size() : QSize());
-  resize(textCardWindowRequested_);
-  if (textCardSettleQueued_)
-    return;
-  textCardSettleQueued_ = true;
-  QTimer::singleShot(300, this, [this] {
-    textCardSettleQueued_ = false;
-    if (!clipboardTextCardEditing_)
-      return;
-    settleFloatingWindow(size());
-  });
+  if (!dispatchFloatingResize(textCardWindowRequested_))
+    resize(textCardWindowRequested_);
 }
 
 // Typing moves the hugged card size too, now that the panel follows the
