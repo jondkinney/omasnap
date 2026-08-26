@@ -6035,6 +6035,8 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardFontOverride_ = 0;
   textCardNoWrap_ = false;
   textCardRenderedFontSize_ = card.codePixelSize;
+  textCardWindowManual_ = false;
+  textCardWindowRequested_ = QSize();
   textCardFrameKey_.clear();
   textCardDetectRevision_ = -1;
   clipboardTextCardEditing_ = true;
@@ -6068,9 +6070,11 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardEditor_->setFocus(Qt::ShortcutFocusReason);
   updateClipboardTextCardEditorGeometry();
   updateTextCardCaret();
-  if (windowedPresentation_)
-    resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
-                                      : QSize()));
+  if (windowedPresentation_) {
+    textCardWindowRequested_ = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    resize(textCardWindowRequested_);
+  }
   update();
   if (windowedHandoffOnEdit_ && !suppressSnapshots_) {
     windowedHandoffOnEdit_ = false;
@@ -6136,6 +6140,7 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   textCardSourceTitleRect_ = frame.titleRect;
   textCardRenderedFontSize_ = frame.codePixelSize;
   updateClipboardTextCardEditorGeometry();
+  scheduleTextCardWindowFollow();
   // The state frame above stays at logical size; the painted copy is
   // supersampled so the chrome survives being scaled to the screen.
   textCardDisplayRatio_ = textCardIdealRatio();
@@ -6181,8 +6186,12 @@ qreal CaptureEditor::textCardIdealRatio() const {
 // off the card until the next keystroke.
 void CaptureEditor::resizeEvent(QResizeEvent *event) {
   QWidget::resizeEvent(event);
-  if (clipboardTextCardEditing_)
-    updateClipboardTextCardEditorGeometry();
+  if (!clipboardTextCardEditing_)
+    return;
+  if (windowedPresentation_ && !textCardWindowRequested_.isEmpty() &&
+      size() != textCardWindowRequested_.expandedTo(minimumSize()))
+    textCardWindowManual_ = true;
+  updateClipboardTextCardEditorGeometry();
 }
 
 void CaptureEditor::updateClipboardTextCardEditorGeometry() {
@@ -6444,8 +6453,10 @@ void CaptureEditor::reopenClipboardTextCard() {
 void CaptureEditor::followTextCardWindow() {
   if (!windowedPresentation_ || !clipboardTextCardEditing_)
     return;
-  resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
-                                    : QSize()));
+  textCardWindowManual_ = false;
+  textCardWindowRequested_ = naturalWindowSize(
+      screen() ? screen()->availableGeometry().size() : QSize());
+  resize(textCardWindowRequested_);
   if (textCardSettleQueued_)
     return;
   textCardSettleQueued_ = true;
@@ -6454,6 +6465,26 @@ void CaptureEditor::followTextCardWindow() {
     if (!clipboardTextCardEditing_)
       return;
     settleFloatingWindow(size());
+  });
+}
+
+// Typing moves the hugged card size too, now that the panel follows the
+// longest line; the window trails it once the burst settles, unless the
+// user has taken the window size over by hand.
+void CaptureEditor::scheduleTextCardWindowFollow() {
+  if (!windowedPresentation_ || !clipboardTextCardEditing_ ||
+      textCardWindowManual_ || textCardFollowQueued_)
+    return;
+  textCardFollowQueued_ = true;
+  QTimer::singleShot(250, this, [this] {
+    textCardFollowQueued_ = false;
+    if (!clipboardTextCardEditing_ || textCardWindowManual_ ||
+        !windowedPresentation_)
+      return;
+    const QSize natural = naturalWindowSize(
+        screen() ? screen()->availableGeometry().size() : QSize());
+    if (size() != natural)
+      followTextCardWindow();
   });
 }
 

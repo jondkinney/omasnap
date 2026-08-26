@@ -33,6 +33,8 @@ namespace {
 constexpr int kOutputWidth = 1200;
 constexpr int kMinimumOutputHeight = 675;
 constexpr int kPanelWidth = 1040;
+/// Narrowest panel whose header and statusline chrome still lay out.
+constexpr int kMinimumPanelWidth = 520;
 constexpr int kHeaderHeight = 58;
 constexpr int kStatusHeight = 32;
 constexpr int kHorizontalTextPadding = 46;
@@ -788,12 +790,28 @@ TextCardRender renderTextCardLayout(const QString &text,
   const QString language =
       detectTextCardLanguage(snippet, displayFilename);
 
-  const int textWidth = kPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth;
+  const int maxTextWidth =
+      kPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth;
   const int codeSize =
       codePixelSize > 0
           ? std::clamp(codePixelSize, kTextCardManualMinPixelSize,
                        kTextCardManualMaxPixelSize)
-          : fitTextCardPixelSize(snippet, theme, textWidth);
+          : fitTextCardPixelSize(snippet, theme, maxTextWidth);
+  // The panel hugs the longest line at the chosen size, down to the chrome
+  // minimum; only content wider than the cap wraps or clips. The slack keeps
+  // the live overlay editor from wrapping first: its font pixel size is
+  // rounded after view scaling, so its lines run slightly proportionally
+  // wide.
+  QTextDocument widthProbe;
+  prepareTextDocument(widthProbe, snippet, theme, -1, {}, false, codeSize,
+                      true);
+  const int naturalWidth = qCeil(widthProbe.idealWidth());
+  const int textWidth = std::clamp(
+      naturalWidth + naturalWidth / 25 + 8,
+      kMinimumPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth,
+      maxTextWidth);
+  const int panelWidth =
+      textWidth + kHorizontalTextPadding * 2 + kGutterWidth;
   QTextDocument document;
   prepareTextDocument(document, snippet, theme, textWidth, language, drawText,
                       codeSize, noWrap);
@@ -804,9 +822,9 @@ TextCardRender renderTextCardLayout(const QString &text,
                           kBottomTextPadding + kStatusHeight;
   const bool compact = layout == TextCardLayout::Compact;
   const int outputWidth = compact
-                              ? kCompactPadding + kPanelWidth +
+                              ? kCompactPadding + panelWidth +
                                     kPanelShadowOffset + kCompactPadding
-                              : kOutputWidth;
+                              : panelWidth + (kOutputWidth - kPanelWidth);
   const int outputHeight =
       compact ? kCompactPadding + panelHeight + kPanelShadowOffset +
                     kCompactPadding
@@ -823,10 +841,10 @@ TextCardRender renderTextCardLayout(const QString &text,
   // Hard-edged blocks and an offset frame echo Omarchy's terminal/window
   // chrome without borrowing macOS traffic lights or soft card corners.
   const int panelX = compact ? kCompactPadding
-                             : (outputWidth - kPanelWidth) / 2;
+                             : (outputWidth - panelWidth) / 2;
   const int panelY = compact ? kCompactPadding
                              : (outputHeight - panelHeight) / 2;
-  const QRect panel(panelX, panelY, kPanelWidth, panelHeight);
+  const QRect panel(panelX, panelY, panelWidth, panelHeight);
   painter.fillRect(panel.translated(kPanelShadowOffset, kPanelShadowOffset),
                    theme.header);
   painter.fillRect(panel, theme.panel);

@@ -507,6 +507,8 @@ private:
   /// Re-hugs the floating window around the card after an explicit size or
   /// wrap change; a manual window resize stays respected between them.
   void followTextCardWindow();
+  /// Debounced follow for content-driven card size changes while typing.
+  void scheduleTextCardWindowFollow();
   void updateClipboardTextCardEditorGeometry();
   void beginClipboardTextCardFilenameEdit();
   void endClipboardTextCardFilenameEdit(bool accept);
@@ -825,6 +827,11 @@ private:
   bool textCardPreviewPending_ = false;
   /// Coalesces the compositor re-center behind a burst of +/- presses.
   bool textCardSettleQueued_ = false;
+  bool textCardFollowQueued_ = false;
+  /// Set when a resize arrives that this process did not request: the user
+  /// took over the window size, so content changes stop re-hugging it.
+  bool textCardWindowManual_ = false;
+  QSize textCardWindowRequested_;
   QString textCardHoveredAction_;
   bool textCardRepostingKey_ = false;
   int textCardDetectRevision_ = -1;

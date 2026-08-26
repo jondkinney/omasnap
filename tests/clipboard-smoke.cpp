@@ -213,7 +213,7 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
         ++commandPixels;
     }
   }
-  if (card.width() != 1200 || card.height() < 675 ||
+  if (card.width() > 1200 || card.width() < 680 || card.height() < 675 ||
       card.pixelColor(0, 0) != theme.background || panelPixels < 10000 ||
       outlinePixels < 1000 || keywordPixels + commandPixels < 3) {
     error = QStringLiteral("Clipboard text card lost its Omarchy background, "
@@ -361,6 +361,29 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
         "Three-digit gutter numbers were clipped: leading pixels=%1 %2")
                 .arg(hundredsDigitPixels)
                 .arg(gutterError);
+    return false;
+  }
+
+  QString hugError;
+  const int wideWidth =
+      renderTextCardLayout(QStringLiteral("x").repeated(58), theme, hugError)
+          .image.width();
+  const int narrowWidth =
+      renderTextCardLayout(QStringLiteral("ab"), theme, hugError)
+          .image.width();
+  const int shrunkWidth =
+      renderTextCardLayout(QStringLiteral("x").repeated(58), theme, hugError,
+                           true, QStringLiteral("NORMAL"), {},
+                           TextCardLayout::Share, 1.0, 8)
+          .image.width();
+  if (narrowWidth >= wideWidth || shrunkWidth >= wideWidth) {
+    error = QStringLiteral(
+        "The panel did not hug the longest line (wide=%1 narrow=%2 "
+        "shrunk=%3) %4")
+                .arg(wideWidth)
+                .arg(narrowWidth)
+                .arg(shrunkWidth)
+                .arg(hugError);
     return false;
   }
 
@@ -1903,7 +1926,9 @@ bool runTextCardTextSizeCheck(const CaptureData &capture, QString &error) {
           QStringLiteral("x").repeated(90).toUtf8());
   CaptureEditor longEditor(capture, CaptureEditor::CaptureMode::Region);
   longEditor.setSuppressSnapshots(true);
-  longEditor.resize(640, 480);
+  // Large enough to show the card near 1:1: at a small fractional scale the
+  // live editor's rounded font would wrap lines the frame fits.
+  longEditor.resize(1280, 800);
   longEditor.show();
   QApplication::processEvents();
   QTest::keyClick(&longEditor, Qt::Key_V,
