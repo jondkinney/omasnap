@@ -85,6 +85,11 @@ QString visualModeStatus(bool linewise) {
                               "· x/d delete · c changes · Esc Normal");
 }
 
+QString blockModeStatus() {
+  return QStringLiteral("Text card · V-BLOCK · hjkl grow the box · y/x/d/c/r "
+                        "act on it · I/A insert on every line · Esc Normal");
+}
+
 /// The keystroke completing an r command; empty when it cancels instead.
 QString replacementText(const QKeyEvent *key) {
   if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)
@@ -128,12 +133,17 @@ void TextCardModal::reset() {
   stickyEol_ = false;
   insertMode_ = false;
   visualLineMode_ = false;
+  visualBlockMode_ = false;
   visualAnchor_ = -1;
   visualPosition_ = -1;
   visualSelectionStart_ = -1;
   visualSelectionEnd_ = -1;
+  blockInsertFirstBlock_ = -1;
+  blockInsertLastBlock_ = -1;
+  blockInsertColumn_ = -1;
   yank_.clear();
   yankLinewise_ = false;
+  yankBlockwise_ = false;
   pendingCommand_.clear();
   insertEditStart_ = -1;
   insertEditUndoSteps_ = 0;
@@ -205,6 +215,9 @@ bool TextCardModal::handleInsertKey(QKeyEvent *key) {
 void TextCardModal::endInsertEdit() {
   if (!insertEditActive_)
     return;
+  // Replicating first keeps a block insert inside this session's single
+  // undo mark.
+  applyBlockInsertReplication();
   insertEditActive_ = false;
   const int after = edit_->document()->availableUndoSteps();
   if (after > insertEditUndoSteps_) {
@@ -279,6 +292,7 @@ void TextCardModal::setInsertMode(bool insertMode) {
     edit_->setTextCursor(cursor);
   }
   visualLineMode_ = false;
+  visualBlockMode_ = false;
   visualAnchor_ = -1;
   visualPosition_ = -1;
   visualSelectionStart_ = -1;
@@ -295,15 +309,19 @@ void TextCardModal::setInsertMode(bool insertMode) {
 QString TextCardModal::mode() const {
   if (insertMode_)
     return QStringLiteral("INSERT");
-  if (visualAnchor_ >= 0)
+  if (visualAnchor_ >= 0) {
+    if (visualBlockMode_)
+      return QStringLiteral("V-BLOCK");
     return visualLineMode_ ? QStringLiteral("VISUAL LINE")
                            : QStringLiteral("VISUAL");
+  }
   return QStringLiteral("NORMAL");
 }
 
-void TextCardModal::startVisualMode(bool linewise) {
+void TextCardModal::startVisualMode(bool linewise, bool block) {
   pendingCommand_.clear();
   visualLineMode_ = linewise;
+  visualBlockMode_ = block;
   const int lastCharacter = edit_->toPlainText().size() - 1;
   const int position =
       lastCharacter < 0
@@ -312,8 +330,20 @@ void TextCardModal::startVisualMode(bool linewise) {
   visualAnchor_ = position;
   visualPosition_ = position;
   updateVisualSelection();
-  emit statusRequested(visualModeStatus(linewise));
+  emit statusRequested(block ? blockModeStatus() : visualModeStatus(linewise));
   emit modeChanged();
+}
+
+TextCardModal::BlockSpan TextCardModal::blockSpan() const {
+  const QTextDocument *document = edit_->document();
+  const QTextBlock anchorBlock = document->findBlock(visualAnchor_);
+  const QTextBlock activeBlock = document->findBlock(visualPosition_);
+  const int anchorColumn = visualAnchor_ - anchorBlock.position();
+  const int activeColumn = visualPosition_ - activeBlock.position();
+  return {std::min(anchorBlock.blockNumber(), activeBlock.blockNumber()),
+          std::max(anchorBlock.blockNumber(), activeBlock.blockNumber()),
+          std::min(anchorColumn, activeColumn),
+          std::max(anchorColumn, activeColumn)};
 }
 
 void TextCardModal::updateVisualSelection() {
@@ -331,6 +361,39 @@ void TextCardModal::updateVisualSelection() {
       text, std::clamp(visualAnchor_, 0, textLength - 1));
   visualPosition_ = snapToCharacterStart(
       text, std::clamp(visualPosition_, 0, textLength - 1));
+  if (visualBlockMode_) {
+    const BlockSpan span = blockSpan();
+    const QTextDocument *document = edit_->document();
+    QList<QTextEdit::ExtraSelection> highlights;
+    for (int number = span.firstBlock; number <= span.lastBlock; ++number) {
+      const QTextBlock block = document->findBlockByNumber(number);
+      const QString line = block.text();
+      const int lineLength = static_cast<int>(line.size());
+      const int left =
+          snapToCharacterStart(line, std::min(span.left, lineLength));
+      const int rightEnd =
+          span.right < lineLength
+              ? span.right + characterWidth(line, span.right)
+              : lineLength;
+      if (number == span.firstBlock)
+        visualSelectionStart_ = block.position() + left;
+      visualSelectionEnd_ = block.position() + std::max(left, rightEnd);
+      if (rightEnd <= left)
+        continue;
+      QTextEdit::ExtraSelection highlight;
+      highlight.cursor = QTextCursor(document->findBlockByNumber(number));
+      highlight.cursor.setPosition(block.position() + left);
+      highlight.cursor.setPosition(block.position() + rightEnd,
+                                   QTextCursor::KeepAnchor);
+      highlight.format.setBackground(selectionColor_);
+      highlights.append(highlight);
+    }
+    edit_->setExtraSelections(highlights);
+    QTextCursor active(edit_->document());
+    active.setPosition(visualPosition_);
+    edit_->setTextCursor(active);
+    return;
+  }
   visualSelectionStart_ = std::min(visualAnchor_, visualPosition_);
   const int activeEnd = std::max(visualAnchor_, visualPosition_);
   visualSelectionEnd_ = activeEnd + characterWidth(text, activeEnd);
@@ -368,6 +431,7 @@ void TextCardModal::updateVisualSelection() {
 void TextCardModal::leaveVisualMode(int cursorPosition) {
   const int textLength = edit_->toPlainText().size();
   visualLineMode_ = false;
+  visualBlockMode_ = false;
   visualAnchor_ = -1;
   visualPosition_ = -1;
   visualSelectionStart_ = -1;
@@ -393,6 +457,19 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     leaveVisualMode(visualPosition_);
     return true;
   }
+  if (key->modifiers().testFlag(Qt::ControlModifier) &&
+      key->key() == Qt::Key_V) {
+    if (visualBlockMode_) {
+      leaveVisualMode(visualPosition_);
+    } else {
+      visualBlockMode_ = true;
+      visualLineMode_ = false;
+      updateVisualSelection();
+      emit statusRequested(blockModeStatus());
+      emit modeChanged();
+    }
+    return true;
+  }
   if (key->modifiers() &
       (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
     pendingCommand_.clear();
@@ -415,6 +492,8 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     pendingCommand_ = command;
     return true;
   }
+  if (visualBlockMode_ && handleBlockOperation(key, command))
+    return true;
   if (pendingCommand_ == QStringLiteral("r")) {
     pendingCommand_.clear();
     const QString replacement = replacementText(key);
@@ -457,6 +536,7 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     const QString text = source.mid(first, last - first);
     yank_ = text;
     yankLinewise_ = visualLineMode_;
+    yankBlockwise_ = false;
     if (command == QStringLiteral("y")) {
       // wl-copy keeps serving the offer after omasnap exits; QClipboard's
       // offer would die with the process.
@@ -505,9 +585,10 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     return true;
   }
   if (key->key() == Qt::Key_V) {
-    if (shifted == visualLineMode_) {
+    if (!visualBlockMode_ && shifted == visualLineMode_) {
       leaveVisualMode(visualPosition_);
     } else {
+      visualBlockMode_ = false;
       visualLineMode_ = shifted;
       updateVisualSelection();
       emit statusRequested(visualModeStatus(shifted));
@@ -543,6 +624,7 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
     replace.endEditBlock();
     yank_ = removed;
     yankLinewise_ = visualLineMode_;
+    yankBlockwise_ = false;
     leaveVisualMode(first);
     recordUndoCursor(first);
     emit statusRequested(
@@ -597,6 +679,207 @@ bool TextCardModal::handleVisualKey(QKeyEvent *key) {
       lastCharacter < 0 ? 0 : std::clamp(motion.position(), 0, lastCharacter);
   updateVisualSelection();
   return true;
+}
+
+// Block-mode operations acting on the column rectangle; false lets the
+// shared motion handling run instead.
+bool TextCardModal::handleBlockOperation(QKeyEvent *key,
+                                         const QString &command) {
+  const bool shifted = key->modifiers().testFlag(Qt::ShiftModifier);
+  QTextDocument *document = edit_->document();
+  const BlockSpan span = blockSpan();
+  const auto lineSlice = [&](const QTextBlock &block, int &left,
+                             int &rightEnd) {
+    const QString line = block.text();
+    const int lineLength = static_cast<int>(line.size());
+    left = snapToCharacterStart(line, std::min(span.left, lineLength));
+    rightEnd = span.right < lineLength
+                   ? span.right + characterWidth(line, span.right)
+                   : lineLength;
+  };
+  const auto blockHome = [&] {
+    const QTextBlock first = document->findBlockByNumber(span.firstBlock);
+    return first.position() +
+           std::min(span.left, static_cast<int>(first.text().size()));
+  };
+  if (pendingCommand_ == QStringLiteral("r")) {
+    pendingCommand_.clear();
+    const QString replacement = replacementText(key);
+    if (replacement.isEmpty() || replacement == QStringLiteral("\n"))
+      return true;
+    QTextCursor edit(document);
+    edit.beginEditBlock();
+    for (int number = span.lastBlock; number >= span.firstBlock; --number) {
+      const QTextBlock block = document->findBlockByNumber(number);
+      int left = 0;
+      int rightEnd = 0;
+      lineSlice(block, left, rightEnd);
+      if (rightEnd <= left)
+        continue;
+      const QString line = block.text();
+      QString replaced;
+      for (int position = left; position < rightEnd;
+           position += characterWidth(line, position))
+        replaced += replacement;
+      edit.setPosition(block.position() + left);
+      edit.setPosition(block.position() + rightEnd, QTextCursor::KeepAnchor);
+      edit.insertText(replaced);
+    }
+    edit.endEditBlock();
+    const int home = blockHome();
+    leaveVisualMode(home);
+    recordUndoCursor(home);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · block replaced · u undoes"));
+    return true;
+  }
+  if (command == QStringLiteral("r")) {
+    pendingCommand_ = QStringLiteral("r");
+    emit statusRequested(QStringLiteral(
+        "Text card · V-BLOCK · r · type the replacement · Esc cancels"));
+    return true;
+  }
+  const bool change = !shifted && key->key() == Qt::Key_C;
+  if (command == QStringLiteral("y") || command == QStringLiteral("d") ||
+      command == QStringLiteral("x") || change) {
+    QStringList segments;
+    for (int number = span.firstBlock; number <= span.lastBlock; ++number) {
+      const QTextBlock block = document->findBlockByNumber(number);
+      int left = 0;
+      int rightEnd = 0;
+      lineSlice(block, left, rightEnd);
+      segments.append(block.text().mid(left, rightEnd - left));
+    }
+    yank_ = segments.join(QLatin1Char('\n'));
+    yankLinewise_ = false;
+    yankBlockwise_ = true;
+    const int home = blockHome();
+    if (command == QStringLiteral("y")) {
+      QString clipboardError;
+      const bool copied = copyTextToClipboard(yank_, clipboardError);
+      leaveVisualMode(home);
+      emit statusRequested(
+          copied ? QStringLiteral("Text card · NORMAL · yanked a %1-line "
+                                  "block · p puts it at the cursor column")
+                       .arg(segments.size())
+                 : clipboardError);
+      return true;
+    }
+    if (change)
+      beginInsertEdit(home);
+    QTextCursor edit(document);
+    edit.beginEditBlock();
+    for (int number = span.lastBlock; number >= span.firstBlock; --number) {
+      const QTextBlock block = document->findBlockByNumber(number);
+      int left = 0;
+      int rightEnd = 0;
+      lineSlice(block, left, rightEnd);
+      if (rightEnd <= left)
+        continue;
+      edit.setPosition(block.position() + left);
+      edit.setPosition(block.position() + rightEnd, QTextCursor::KeepAnchor);
+      edit.removeSelectedText();
+    }
+    edit.endEditBlock();
+    const int landed = blockHome();
+    if (change) {
+      blockInsertFirstBlock_ = span.firstBlock;
+      blockInsertLastBlock_ = span.lastBlock;
+      blockInsertColumn_ = span.left;
+      leaveVisualMode(landed);
+      QTextCursor cursor(document);
+      cursor.setPosition(landed);
+      edit_->setTextCursor(cursor);
+      setInsertMode(true);
+      return true;
+    }
+    leaveVisualMode(landed);
+    recordUndoCursor(landed);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · block deleted · p puts it "
+                       "back · u undoes"));
+    return true;
+  }
+  if (shifted && (key->key() == Qt::Key_I || key->key() == Qt::Key_A)) {
+    const bool append = key->key() == Qt::Key_A;
+    const int column = append ? span.right + 1 : span.left;
+    const QTextBlock first = document->findBlockByNumber(span.firstBlock);
+    beginInsertEdit(first.position() +
+                    std::min(column,
+                             static_cast<int>(first.text().size())));
+    if (append) {
+      // A appends after the block's right edge; shorter lines are padded up
+      // to it so every line takes the insert.
+      QTextCursor pad(document);
+      pad.beginEditBlock();
+      for (int number = span.firstBlock; number <= span.lastBlock;
+           ++number) {
+        const QTextBlock block = document->findBlockByNumber(number);
+        const int lineLength = static_cast<int>(block.text().size());
+        if (lineLength >= column)
+          continue;
+        pad.setPosition(block.position() + lineLength);
+        pad.insertText(QString(column - lineLength, QLatin1Char(' ')));
+      }
+      pad.endEditBlock();
+    }
+    blockInsertFirstBlock_ = span.firstBlock;
+    blockInsertLastBlock_ = span.lastBlock;
+    blockInsertColumn_ = column;
+    const QTextBlock landed = document->findBlockByNumber(span.firstBlock);
+    const int insertAt =
+        landed.position() +
+        std::min(column, static_cast<int>(landed.text().size()));
+    // The session began before the padding so one u undoes both; typing
+    // starts here, after it.
+    insertEditStart_ = insertAt;
+    leaveVisualMode(insertAt);
+    QTextCursor cursor(document);
+    cursor.setPosition(insertAt);
+    edit_->setTextCursor(cursor);
+    setInsertMode(true);
+    return true;
+  }
+  if (command == QStringLiteral("p") || command == QStringLiteral("i")) {
+    emit statusRequested(QStringLiteral(
+        "Text card · V-BLOCK · p pastes in Normal mode · y/x/d/c/r/I/A here"));
+    return true;
+  }
+  return false;
+}
+
+// Text typed on the block's first line repeats on the rest of the block
+// when the insert session ends; runs inside the session's undo span.
+void TextCardModal::applyBlockInsertReplication() {
+  const int firstBlock = std::exchange(blockInsertFirstBlock_, -1);
+  const int lastBlock = std::exchange(blockInsertLastBlock_, -1);
+  const int column = std::exchange(blockInsertColumn_, -1);
+  if (firstBlock < 0 || lastBlock <= firstBlock || column < 0 ||
+      !insertEditActive_)
+    return;
+  const QString text = edit_->toPlainText();
+  const int cursorPosition = edit_->textCursor().position();
+  if (insertEditStart_ < 0 || insertEditStart_ > text.size() ||
+      cursorPosition <= insertEditStart_)
+    return;
+  const QString typed =
+      text.mid(insertEditStart_, cursorPosition - insertEditStart_);
+  if (typed.isEmpty() || typed.contains(QLatin1Char('\n')))
+    return;
+  QTextDocument *document = edit_->document();
+  QTextCursor edit(document);
+  edit.beginEditBlock();
+  for (int number = lastBlock; number > firstBlock; --number) {
+    const QTextBlock block = document->findBlockByNumber(number);
+    if (!block.isValid())
+      continue;
+    const QString line = block.text();
+    if (static_cast<int>(line.size()) < column)
+      continue;
+    edit.setPosition(block.position() + snapToCharacterStart(line, column));
+    edit.insertText(typed);
+  }
+  edit.endEditBlock();
 }
 
 // Indents or outdents every line in the block range by one tab stop; a
@@ -802,6 +1085,7 @@ void TextCardModal::deleteRange(int first, int last, bool change,
   }
   yank_ = edit_->toPlainText().mid(first, last - first);
   yankLinewise_ = false;
+  yankBlockwise_ = false;
   if (change)
     beginInsertEdit(first);
   QTextCursor edit(edit_->document());
@@ -886,6 +1170,7 @@ void TextCardModal::yankLine() {
   const QTextCursor cursor = edit_->textCursor();
   yank_ = cursor.block().text() + QLatin1Char('\n');
   yankLinewise_ = true;
+  yankBlockwise_ = false;
   QString clipboardError;
   const bool copied = copyTextToClipboard(yank_, clipboardError);
   emit statusRequested(
@@ -903,6 +1188,55 @@ void TextCardModal::put(bool before) {
   }
   if (text.isEmpty())
     return;
+
+  if (yankBlockwise_ && !yank_.isEmpty()) {
+    // Each register line lands at the cursor column on successive lines,
+    // padding short lines and growing the document past its last line.
+    const QStringList segments = text.split(QLatin1Char('\n'));
+    QTextDocument *document = edit_->document();
+    const QTextCursor origin = edit_->textCursor();
+    const QTextBlock startBlock = origin.block();
+    int column = origin.position() - startBlock.position();
+    if (!before && column < static_cast<int>(startBlock.text().size()))
+      column += characterWidth(startBlock.text(), column);
+    const int startBlockNumber = startBlock.blockNumber();
+    QTextCursor edit(document);
+    edit.beginEditBlock();
+    for (int index = 0; index < segments.size(); ++index) {
+      QTextBlock block =
+          document->findBlockByNumber(startBlockNumber + index);
+      if (!block.isValid()) {
+        QTextCursor tail(document);
+        tail.movePosition(QTextCursor::End);
+        tail.insertText(QStringLiteral("\n"));
+        block = document->findBlockByNumber(startBlockNumber + index);
+        if (!block.isValid())
+          break;
+      }
+      const int lineLength = static_cast<int>(block.text().size());
+      edit.setPosition(block.position() + std::min(column, lineLength));
+      const QString padding =
+          lineLength < column
+              ? QString(column - lineLength, QLatin1Char(' '))
+              : QString();
+      edit.insertText(padding + segments.at(index));
+    }
+    edit.endEditBlock();
+    const QTextBlock landedBlock =
+        document->findBlockByNumber(startBlockNumber);
+    const int placedAt =
+        landedBlock.position() +
+        std::min(column, static_cast<int>(landedBlock.text().size()));
+    QTextCursor landed(document);
+    landed.setPosition(placedAt);
+    edit_->setTextCursor(landed);
+    recordUndoCursor(placedAt);
+    emit statusRequested(
+        QStringLiteral("Text card · NORMAL · %1-line block put at the "
+                       "cursor column · u undoes")
+            .arg(segments.size()));
+    return;
+  }
 
   QTextCursor cursor = edit_->textCursor();
   cursor.beginEditBlock();
@@ -1001,6 +1335,12 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
       key->key() == Qt::Key_R) {
     undo(true);
     pendingCommand_.clear();
+    return true;
+  }
+  if (key->modifiers().testFlag(Qt::ControlModifier) &&
+      key->key() == Qt::Key_V) {
+    pendingCommand_.clear();
+    startVisualMode(false, true);
     return true;
   }
   if (key->modifiers() &
@@ -1135,6 +1475,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
         yank_ = edit_->toPlainText().mid(range->first,
                                          range->second - range->first);
         yankLinewise_ = false;
+        yankBlockwise_ = false;
         emit statusRequested(QStringLiteral(
             "Text card · NORMAL · word yanked · p puts it after the cursor"));
       }
@@ -1172,6 +1513,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
         return true;
       yank_ = cursor.block().text() + QLatin1Char('\n');
       yankLinewise_ = true;
+      yankBlockwise_ = false;
       cursor.movePosition(QTextCursor::StartOfBlock);
       const int start = cursor.position();
       cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
@@ -1196,6 +1538,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
                command == QStringLiteral("c")) {
       yank_ = cursor.block().text() + QLatin1Char('\n');
       yankLinewise_ = true;
+      yankBlockwise_ = false;
       cursor.movePosition(QTextCursor::StartOfBlock);
       const int first = cursor.position();
       beginInsertEdit(first);
@@ -1229,6 +1572,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
         yank_ = edit_->toPlainText().mid(cursor.position(),
                                          stop - cursor.position());
         yankLinewise_ = false;
+        yankBlockwise_ = false;
         emit statusRequested(QStringLiteral(
             "Text card · NORMAL · yanked to next word · p puts it back"));
       }
@@ -1243,6 +1587,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
       yank_ = source.mid(first,
                          endIndex + characterWidth(source, endIndex) - first);
       yankLinewise_ = false;
+      yankBlockwise_ = false;
       emit statusRequested(QStringLiteral(
           "Text card · NORMAL · yanked through word end · p puts it back"));
       return true;
@@ -1322,6 +1667,7 @@ bool TextCardModal::handleKey(QKeyEvent *key) {
     deletion.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
     yank_ = deletion.selectedText();
     yankLinewise_ = false;
+    yankBlockwise_ = false;
     const int first = cursor.position();
     deletion.beginEditBlock();
     deletion.removeSelectedText();

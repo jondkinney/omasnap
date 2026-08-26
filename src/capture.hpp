@@ -144,6 +144,8 @@ struct OperationLog {
   /// 0 auto-fits; a manual +/- override is carried as its pixel size.
   int textCardFontSize = 0;
   bool textCardNoWrap = false;
+  /// 0 keeps the default tab-stop width.
+  int textCardTabWidth = 0;
 
   bool operator==(const OperationLog &) const = default;
 };

@@ -343,6 +343,9 @@ public:
   [[nodiscard]] bool clipboardTextCardNoWrapForTest() const {
     return textCardNoWrap_;
   }
+  [[nodiscard]] int clipboardTextCardTabWidthForTest() const {
+    return textCardTabWidth_;
+  }
   /** The log a snapshot or handoff would persist right now. Test accessor. */
   [[nodiscard]] OperationLog workingLogForTest() const {
     return composeWorkingLog();
@@ -504,6 +507,7 @@ private:
   /// 0 returns to auto-fit; the status reports the effective size.
   void setTextCardFontOverride(int pixelSize);
   void toggleTextCardWrap();
+  void setTextCardTabWidth(int spaces);
   /// Re-hugs the floating window around the card after an explicit size or
   /// wrap change; a manual window resize stays respected between them.
   void followTextCardWindow();
@@ -814,6 +818,8 @@ private:
   /// 0 auto-fits the longest line; +/- pins a manual pixel size.
   int textCardFontOverride_ = 0;
   bool textCardNoWrap_ = false;
+  /// Tab-stop width in spaces; keypad 2/4 switches it per card.
+  int textCardTabWidth_ = kTextCardTabSpaces;
   /// Effective size of the last rendered frame; geometry and +/- start here.
   int textCardRenderedFontSize_ = kTextCardCodePixelSize;
   /// Annotations stashed while the card source is re-edited, replayed onto

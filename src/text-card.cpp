@@ -555,7 +555,8 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
                          const TextCardTheme &theme, int textWidth,
                          const QString &language, bool withHighlighter,
                          int codePixelSize = kTextCardCodePixelSize,
-                         bool noWrap = false) {
+                         bool noWrap = false,
+                         int tabSpaces = kTextCardTabSpaces) {
   const QFont codeFont = textCardCodeFont(codePixelSize);
   document.setDocumentMargin(0.0);
   document.setDefaultFont(codeFont);
@@ -563,7 +564,7 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
   option.setWrapMode(noWrap ? QTextOption::NoWrap
                             : QTextOption::WrapAtWordBoundaryOrAnywhere);
   option.setTabStopDistance(QFontMetricsF(codeFont).horizontalAdvance(' ') *
-                            kTextCardTabSpaces);
+                            tabSpaces);
   document.setDefaultTextOption(option);
   document.setPlainText(snippet);
   document.setTextWidth(textWidth);
@@ -576,11 +577,11 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
 /** Largest size ≤ the base that keeps the longest line inside textWidth;
  * stops at the auto floor and lets the wrap mode handle the rest. */
 int fitTextCardPixelSize(const QString &snippet, const TextCardTheme &theme,
-                         int textWidth) {
+                         int textWidth, int tabSpaces) {
   const auto naturalWidth = [&](int pixelSize) {
     QTextDocument probe;
     prepareTextDocument(probe, snippet, theme, -1, {}, false, pixelSize,
-                        true);
+                        true, tabSpaces);
     return probe.idealWidth();
   };
   const qreal base = naturalWidth(kTextCardCodePixelSize);
@@ -778,7 +779,8 @@ TextCardRender renderTextCardLayout(const QString &text,
                                     bool drawText, const QString &mode,
                                     const QString &filename,
                                     TextCardLayout layout, qreal pixelRatio,
-                                    int codePixelSize, bool noWrap) {
+                                    int codePixelSize, bool noWrap,
+                                    int tabSpaces) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
@@ -796,7 +798,7 @@ TextCardRender renderTextCardLayout(const QString &text,
       codePixelSize > 0
           ? std::clamp(codePixelSize, kTextCardManualMinPixelSize,
                        kTextCardManualMaxPixelSize)
-          : fitTextCardPixelSize(snippet, theme, maxTextWidth);
+          : fitTextCardPixelSize(snippet, theme, maxTextWidth, tabSpaces);
   // The panel hugs the longest line at the chosen size, down to the chrome
   // minimum; only content wider than the cap wraps or clips. The slack keeps
   // the live overlay editor from wrapping first: its font pixel size is
@@ -804,7 +806,7 @@ TextCardRender renderTextCardLayout(const QString &text,
   // wide.
   QTextDocument widthProbe;
   prepareTextDocument(widthProbe, snippet, theme, -1, {}, false, codeSize,
-                      true);
+                      true, tabSpaces);
   const int naturalWidth = qCeil(widthProbe.idealWidth());
   const int textWidth = std::clamp(
       naturalWidth + naturalWidth / 25 + 8,
@@ -814,7 +816,7 @@ TextCardRender renderTextCardLayout(const QString &text,
       textWidth + kHorizontalTextPadding * 2 + kGutterWidth;
   QTextDocument document;
   prepareTextDocument(document, snippet, theme, textWidth, language, drawText,
-                      codeSize, noWrap);
+                      codeSize, noWrap, tabSpaces);
   const int documentHeight =
       std::max(1, qCeil(document.documentLayout()->documentSize().height()));
   const int editorHeight = std::max(kMinimumEditorHeight, documentHeight);

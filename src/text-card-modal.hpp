@@ -38,6 +38,7 @@ public:
   void restoreYank(const QString &text, bool linewise) {
     yank_ = text;
     yankLinewise_ = linewise;
+    yankBlockwise_ = false;
   }
   /** Drops any Visual selection or Insert session back to Normal mode. */
   void exitToNormal();
@@ -56,10 +57,21 @@ private:
   void beginInsertEdit(int cursorPosition);
   void recordUndoCursor(int cursorPosition);
   void undo(bool redo);
-  void startVisualMode(bool linewise);
+  void startVisualMode(bool linewise, bool block = false);
   void updateVisualSelection();
   void leaveVisualMode(int cursorPosition);
   [[nodiscard]] bool handleVisualKey(QKeyEvent *key);
+  /// The block rectangle: inclusive block numbers and UTF-16 unit columns.
+  struct BlockSpan {
+    int firstBlock;
+    int lastBlock;
+    int left;
+    int right;
+  };
+  [[nodiscard]] BlockSpan blockSpan() const;
+  [[nodiscard]] bool handleBlockOperation(QKeyEvent *key,
+                                          const QString &command);
+  void applyBlockInsertReplication();
   void shiftLines(int firstBlockNumber, int lastBlockNumber, bool outdent);
   void shiftSelection(bool outdent);
   void joinLines();
@@ -82,12 +94,19 @@ private:
   QColor selectionColor_;
   bool insertMode_ = false;
   bool visualLineMode_ = false;
+  bool visualBlockMode_ = false;
   int visualAnchor_ = -1;
   int visualPosition_ = -1;
   int visualSelectionStart_ = -1;
   int visualSelectionEnd_ = -1;
   QString yank_;
   bool yankLinewise_ = false;
+  bool yankBlockwise_ = false;
+  /// Text typed on a block's first line repeats on the rest when the
+  /// insert session ends; A pre-pads short lines, I skips them.
+  int blockInsertFirstBlock_ = -1;
+  int blockInsertLastBlock_ = -1;
+  int blockInsertColumn_ = -1;
   int goalColumn_ = -1;
   bool stickyEol_ = false;
   QString pendingCommand_;

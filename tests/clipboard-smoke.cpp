@@ -388,6 +388,25 @@ bool runTextCardRenderCheck(const QString &outputRoot, QString &error) {
                            true, QStringLiteral("NORMAL"), {},
                            TextCardLayout::Share, 1.0, 8)
           .image.width();
+  const QString tabbedLine = QString(20, QLatin1Char('\t')) +
+                             QStringLiteral("x");
+  const int narrowTabs =
+      renderTextCardLayout(tabbedLine, theme, hugError, true,
+                           QStringLiteral("NORMAL"), {},
+                           TextCardLayout::Share, 1.0, 0, false, 2)
+          .image.width();
+  const int wideTabs =
+      renderTextCardLayout(tabbedLine, theme, hugError, true,
+                           QStringLiteral("NORMAL"), {},
+                           TextCardLayout::Share, 1.0, 0, false, 4)
+          .image.width();
+  if (narrowTabs >= wideTabs) {
+    error = QStringLiteral(
+        "The tab-stop width did not change the hugged card (%1 vs %2)")
+                .arg(narrowTabs)
+                .arg(wideTabs);
+    return false;
+  }
   if (narrowWidth >= wideWidth || shrunkWidth >= wideWidth) {
     error = QStringLiteral(
         "The panel did not hug the longest line (wide=%1 narrow=%2 "
@@ -2067,6 +2086,124 @@ bool runTextCardTextSizeCheck(const CaptureData &capture, QString &error) {
   return true;
 }
 
+/** Ctrl+V column blocks: delete, yank/put, change, A padding, I prefix. */
+bool runTextCardBlockModeCheck(const CaptureData &capture, QString &error) {
+  const QString fixture = QStringLiteral("abc def\nxy\nmno pqr");
+  QFile::remove(qEnvironmentVariable("OMASNAP_TEST_CLIPBOARD_SINK"));
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", fixture.toUtf8());
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+  editor.setSuppressSnapshots(true);
+  editor.resize(1280, 800);
+  editor.show();
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_V,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::processEvents();
+  auto *cardEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!editor.clipboardTextCardEditingForTest() || !cardEditor) {
+    error = QStringLiteral("Block-mode card did not open");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  if (editor.clipboardTextCardModeForTest() != QStringLiteral("V-BLOCK")) {
+    error = QStringLiteral("Ctrl+V did not enter block mode");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_D);
+  if (editor.clipboardTextCardTextForTest() !=
+          QStringLiteral("c def\n\nmno pqr") ||
+      editor.clipboardTextCardModeForTest() != QStringLiteral("NORMAL")) {
+    error = QStringLiteral("Block d did not cut the column box: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != fixture) {
+    error = QStringLiteral("Block d did not undo in one step");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_Y);
+  QTest::keyClick(cardEditor, Qt::Key_L);
+  QTest::keyClick(cardEditor, Qt::Key_P);
+  if (editor.clipboardTextCardTextForTest() !=
+      QStringLiteral("abac def\nxyx\nmno pqr")) {
+    error = QStringLiteral("Blockwise p did not land at the cursor column: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClicks(cardEditor, QStringLiteral("$"));
+  QTest::keyClick(cardEditor, Qt::Key_A, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("!"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (editor.clipboardTextCardTextForTest() !=
+      QStringLiteral("abc def!\nxy     !\nmno pqr!")) {
+    error = QStringLiteral("Block A did not pad and append on every line: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != fixture) {
+    error = QStringLiteral("Block A did not undo in one step");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_C);
+  QTest::keyClicks(cardEditor, QStringLiteral("Z"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (editor.clipboardTextCardTextForTest() !=
+      QStringLiteral("Zbc def\nZy\nmno pqr")) {
+    error = QStringLiteral("Block c did not change every line: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_G);
+  QTest::keyClick(cardEditor, Qt::Key_V, Qt::ControlModifier);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_J);
+  QTest::keyClick(cardEditor, Qt::Key_I, Qt::ShiftModifier);
+  QTest::keyClicks(cardEditor, QStringLiteral("//"));
+  QTest::keyClick(cardEditor, Qt::Key_Escape);
+  if (editor.clipboardTextCardTextForTest() !=
+      QStringLiteral("//abc def\n//xy\n//mno pqr")) {
+    error = QStringLiteral("Block I did not prefix every line: %1")
+                .arg(editor.clipboardTextCardTextForTest());
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_U);
+  if (editor.clipboardTextCardTextForTest() != fixture) {
+    error = QStringLiteral("Block I did not undo in one step");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_4, Qt::KeypadModifier);
+  if (editor.clipboardTextCardTabWidthForTest() != 4) {
+    error = QStringLiteral("Keypad 4 did not widen the tab stops");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_2, Qt::KeypadModifier);
+  if (editor.clipboardTextCardTabWidthForTest() != 2) {
+    error = QStringLiteral("Keypad 2 did not restore the default tab stops");
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 /** q on a reopened card confirms even when the source is unchanged. */
 bool runTextCardReopenQuitGateCheck(const CaptureData &capture,
                                     QString &error) {
@@ -2223,6 +2360,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
                                   error) ||
       !runTextCardRenderRoundTripCheck(editor, cardEditor, error) ||
       !runTextCardTextSizeCheck(capture, error) ||
+      !runTextCardBlockModeCheck(capture, error) ||
       !runTextCardReopenQuitGateCheck(capture, error) ||
       !runTextCardRepeatGuardCheck(capture, error))
     return false;

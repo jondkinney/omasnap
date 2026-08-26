@@ -16,7 +16,8 @@ inline constexpr int kTextCardAutoMinPixelSize = 12;
 /// Manual +/- overrides stay inside these bounds.
 inline constexpr int kTextCardManualMinPixelSize = 8;
 inline constexpr int kTextCardManualMaxPixelSize = 48;
-inline constexpr int kTextCardTabSpaces = 4;
+/// Default tab-stop width in spaces; keypad 2/4 switches it per card.
+inline constexpr int kTextCardTabSpaces = 2;
 /// Header/statusline text size; the live filename overlay must match it.
 inline constexpr int kTextCardHeaderPixelSize = 14;
 
@@ -79,7 +80,9 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                                                       TextCardLayout::Share,
                                                   qreal pixelRatio = 1.0,
                                                   int codePixelSize = 0,
-                                                  bool noWrap = false);
+                                                  bool noWrap = false,
+                                                  int tabSpaces =
+                                                      kTextCardTabSpaces);
 /** Window size that hugs a compact live card plus its snippet-only toolbar. */
 [[nodiscard]] QSize textCardEditorWindowSize(const QSize &card,
                                              const QSize &available);

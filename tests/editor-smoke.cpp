@@ -6082,6 +6082,7 @@ bool runTextFontSmoke(QApplication &application, QString &error) {
   saved.textCardYankLinewise = true;
   saved.textCardFontSize = 31;
   saved.textCardNoWrap = true;
+  saved.textCardTabWidth = 4;
   const QString path =
       QDir(directory.path()).filePath(QStringLiteral("text-fonts.json"));
   OperationLog loaded;

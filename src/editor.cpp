@@ -696,6 +696,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   // Live members directly: a card reopen captures them before it resets.
   textCardFontOverride_ = log.textCardFontSize;
   textCardNoWrap_ = log.textCardNoWrap;
+  if (log.textCardTabWidth > 0)
+    textCardTabWidth_ = log.textCardTabWidth;
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultConfigPath());
@@ -1154,6 +1156,12 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     }
     if (key->key() == Qt::Key_Z && key->modifiers() == Qt::AltModifier) {
       toggleTextCardWrap();
+      return true;
+    }
+    if (key->modifiers().testFlag(Qt::KeypadModifier) &&
+        (key->key() == Qt::Key_2 || key->key() == Qt::Key_4) &&
+        !textCardModal_->insertMode() && !textCardModal_->pendingInput()) {
+      setTextCardTabWidth(key->key() == Qt::Key_2 ? 2 : 4);
       return true;
     }
     const bool sizeKey = key->key() == Qt::Key_Plus ||
@@ -3291,6 +3299,7 @@ OperationLog CaptureEditor::composeWorkingLog() const {
       clipboardTextCardEditing_ && textCardModal_->yankLinewise();
   log.textCardFontSize = textCardFontOverride_;
   log.textCardNoWrap = textCardNoWrap_;
+  log.textCardTabWidth = textCardTabWidth_;
   return log;
 }
 
@@ -6034,6 +6043,7 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardReopened_ = false;
   textCardFontOverride_ = 0;
   textCardNoWrap_ = false;
+  textCardTabWidth_ = kTextCardTabSpaces;
   textCardRenderedFontSize_ = card.codePixelSize;
   textCardWindowManual_ = false;
   textCardWindowRequested_ = QSize();
@@ -6107,7 +6117,7 @@ void CaptureEditor::updateClipboardTextCardPreview() {
       widestColumns = std::max(widestColumns, column);
       column = 0;
     } else if (character == QLatin1Char('\t')) {
-      column = (column / kTextCardTabSpaces + 1) * kTextCardTabSpaces;
+      column = (column / textCardTabWidth_ + 1) * textCardTabWidth_;
     } else {
       ++column;
     }
@@ -6120,7 +6130,8 @@ void CaptureEditor::updateClipboardTextCardPreview() {
                   QString::number(windowedPresentation_ ? 1 : 0),
                   QString::number(widestColumns),
                   QString::number(textCardFontOverride_),
-                  QString::number(textCardNoWrap_ ? 1 : 0)}
+                  QString::number(textCardNoWrap_ ? 1 : 0),
+                  QString::number(textCardTabWidth_)}
           .join(QLatin1Char('\x1f'));
   if (frameKey == textCardFrameKey_)
     return;
@@ -6129,7 +6140,7 @@ void CaptureEditor::updateClipboardTextCardPreview() {
       previewText, textCardTheme_, error, false, cardMode, textCardFilename_,
       windowedPresentation_ ? TextCardLayout::Compact
                             : TextCardLayout::Share,
-      1.0, textCardFontOverride_, textCardNoWrap_);
+      1.0, textCardFontOverride_, textCardNoWrap_, textCardTabWidth_);
   if (frame.image.isNull()) {
     textCardFrameKey_.clear();
     setStatus(error);
@@ -6153,7 +6164,7 @@ void CaptureEditor::updateClipboardTextCardPreview() {
                              windowedPresentation_ ? TextCardLayout::Compact
                                                    : TextCardLayout::Share,
                              textCardDisplayRatio_, textCardFontOverride_,
-                             textCardNoWrap_)
+                             textCardNoWrap_, textCardTabWidth_)
             .image;
   } else {
     textCardDisplayFrame_ = {};
@@ -6234,7 +6245,7 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
     textCardEditor_->setLineWrapMode(lineWrap);
   QTextOption option = textCardEditor_->document()->defaultTextOption();
   const qreal tabStop =
-      QFontMetricsF(font).horizontalAdvance(' ') * kTextCardTabSpaces;
+      QFontMetricsF(font).horizontalAdvance(' ') * textCardTabWidth_;
   if (!qFuzzyCompare(option.tabStopDistance(), tabStop)) {
     option.setTabStopDistance(tabStop);
     textCardEditor_->document()->setDefaultTextOption(option);
@@ -6356,7 +6367,7 @@ void CaptureEditor::finishClipboardTextCard() {
                           sourceText, textCardTheme_, error, true,
                           QStringLiteral("NORMAL"), textCardFilename_,
                           TextCardLayout::Share, 1.0, textCardFontOverride_,
-                          textCardNoWrap_)
+                          textCardNoWrap_, textCardTabWidth_)
                           .image;
   if (card.isNull()) {
     setStatus(error);
@@ -6409,14 +6420,16 @@ void CaptureEditor::reopenClipboardTextCard() {
                      pristineLogicalSize_};
   const int fontOverride = textCardFontOverride_;
   const bool noWrap = textCardNoWrap_;
+  const int tabWidth = textCardTabWidth_;
   beginClipboardTextCard(text, filename);
   if (!clipboardTextCardEditing_)
     return;
   textCardStashedLog_ = std::move(stash);
   textCardReopened_ = true;
-  if (fontOverride != 0 || noWrap) {
+  if (fontOverride != 0 || noWrap || tabWidth != kTextCardTabSpaces) {
     textCardFontOverride_ = fontOverride;
     textCardNoWrap_ = noWrap;
+    textCardTabWidth_ = tabWidth;
     textCardFrameKey_.clear();
     updateClipboardTextCardPreview();
     updateTextCardCaret();
@@ -6491,6 +6504,18 @@ void CaptureEditor::setTextCardFontOverride(int pixelSize) {
                       .arg(textCardRenderedFontSize_)
                 : QStringLiteral("Text size auto (%1px) · + and - adjust")
                       .arg(textCardRenderedFontSize_));
+}
+
+void CaptureEditor::setTextCardTabWidth(int spaces) {
+  if (!clipboardTextCardEditing_ || textCardTabWidth_ == spaces)
+    return;
+  textCardTabWidth_ = spaces;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  followTextCardWindow();
+  setStatus(QStringLiteral("Tab width %1 spaces · keypad 2/4 switches")
+                .arg(spaces));
 }
 
 void CaptureEditor::toggleTextCardWrap() {

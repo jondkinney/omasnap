@@ -2374,6 +2374,8 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
       root.insert(QStringLiteral("textCardFontSize"), log.textCardFontSize);
     if (log.textCardNoWrap)
       root.insert(QStringLiteral("textCardNoWrap"), log.textCardNoWrap);
+    if (log.textCardTabWidth > 0)
+      root.insert(QStringLiteral("textCardTabWidth"), log.textCardTabWidth);
   }
   root.insert(QStringLiteral("ops"), ops);
 
@@ -2436,6 +2438,8 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
       root.value(QStringLiteral("textCardFontSize")).toInt(0);
   loaded.textCardNoWrap =
       root.value(QStringLiteral("textCardNoWrap")).toBool();
+  loaded.textCardTabWidth =
+      root.value(QStringLiteral("textCardTabWidth")).toInt(0);
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)
