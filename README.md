@@ -26,8 +26,9 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   Overflow with no backdrop leaves its added pixels transparent. `Shift+B`
   toggles the current shadow directly, and undo/delete can contract grown strips.
 - Standard, pointy, curved, and double-headed arrows; straight lines; smoothed
-  freehand strokes; translucent highlighter strokes;
-  hollow or filled rectangles (optionally rounded) and ellipses, numbered markers,
+  freehand strokes; and translucent highlighter strokes with a fluid I-beam height
+  preview and optional text-line snapping, plus hollow or filled rectangles
+  (optionally rounded) and ellipses, numbered markers,
   editable text in Neucha, JetBrains Mono, or Inter Display (on a readability pill),
   and secure redaction with opaque or randomized non-spatial mosaic output.
 - Per-layer preset or custom colors (including highlighter ink), undo/redo history,
@@ -357,6 +358,7 @@ without reaching for the pointer.
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |
 | `F` | Freehand pen; medium `3/6` smoothing by default, while `0/6` preserves the raw pointer path |
+| `H` | Highlighter; Snap mode uses a mouse-following I-beam at the nearby text height, then locks the drag straight to that row. Press `H` again (or click the active toolbar button) for Normal freehand mode, where wheel or `Alt`+wheel changes thickness; Snap keeps detected-row height automatic and wheel sets only its off-text fallback |
 | `I` | Eyedropper in the color popover · sample the image as the custom color |
 | `C` | Numbered marker |
 | `R` | Rectangle; hover the shape button for rectangle, ellipse, and fill controls; `Alt`+wheel rounds corners |
