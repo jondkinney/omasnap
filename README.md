@@ -355,7 +355,7 @@ without reaching for the pointer.
 | `A` | Arrow |
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |
-| `F` | Freehand stroke |
+| `F` | Freehand pen; medium `3/6` smoothing by default, while `0/6` preserves the raw pointer path |
 | `I` | Eyedropper in the color popover · sample the image as the custom color |
 | `C` | Numbered marker |
 | `R` | Rectangle; hover the shape button for rectangle, ellipse, and fill controls; `Alt`+wheel rounds corners |
@@ -370,7 +370,7 @@ without reaching for the pointer.
 | `G` / `Shift+G` | Cycle canvas boundaries forward/backward: Framed, Overflow, Image. Framed auto-grows with the normal frame; Overflow grows only the sides needed by annotations with no frame; Image clips at the original screenshot edge |
 | `W` | Re-present the editor as a normal compositor window, or back as the fullscreen overlay; selection, layers, and undo history carry over |
 | `1`–`8` | Set annotation color; `7` is black and `8` is white |
-| Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: rectangle corner radius or spotlight border); while just viewing a zoomed capture, scroll it like a document |
+| Wheel | Scale selected layer, magnify the spotlight under the cursor, or change active tool size (`Alt`+wheel: selected pen smoothing from 0–6, the next pen's smoothing when none is selected, rectangle corner radius, or spotlight border); while just viewing a zoomed capture, scroll it like a document |
 | `Shift`+wheel | Scroll a zoomed capture sideways (a wide stitch); never changes the zoom |
 | `Ctrl`+wheel · middle-drag | Zoom about the cursor · pan by dragging |
 | `+` / `-` / `0` (also with `Ctrl`) | Zoom in / out / fit |

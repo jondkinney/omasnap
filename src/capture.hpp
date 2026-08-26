@@ -86,6 +86,10 @@ struct Annotation {
   quint64 id = 0;
   /// Wrap width for text layers in image px; 0 wraps at the canvas edge.
   qreal textWidth = 0.0;
+  /// Raw pointer geometry retained so smoothing changes never compound.
+  QVector<QPointF> rawPoints{};
+  /// Pen post-stroke smoothing level (0--6); unused by other layer kinds.
+  int smoothingLevel = 0;
 
   bool operator==(const Annotation &) const = default;
 };
