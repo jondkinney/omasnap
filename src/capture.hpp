@@ -50,6 +50,7 @@ enum class QuickOutputMode { None, Copy, Save, Both };
 enum class SpotlightShape { Ellipse, Rectangle, RoundedRectangle };
 enum class RedactionStyle { Solid, Pixelate };
 enum class TextBackground { Plain, Pill };
+enum class TextFont { Neucha, JetBrainsMono, InterDisplay };
 
 struct Annotation {
   enum class Kind {
@@ -80,6 +81,8 @@ struct Annotation {
   SpotlightShape spotlightShape = SpotlightShape::Ellipse;
   quint32 redactionSeed = 0;
   TextBackground textBackground = TextBackground::Pill;
+  /// Typeface is a layer property so reopened and duplicated labels keep it.
+  TextFont textFont = TextFont::Neucha;
   quint64 id = 0;
   /// Wrap width for text layers in image px; 0 wraps at the canvas edge.
   qreal textWidth = 0.0;
@@ -131,7 +134,11 @@ enum class AnnotationLayer { Redaction, Default };
 }
 
 [[nodiscard]] bool loadCaptureFonts();
-[[nodiscard]] QFont annotationTextFont(qreal size);
+/** User-facing name for a bundled annotation typeface. */
+[[nodiscard]] QString annotationTextFontName(TextFont textFont);
+/** Bundled annotation font at Omasnap's logical text size. */
+[[nodiscard]] QFont annotationTextFont(qreal size,
+                                       TextFont textFont = TextFont::Neucha);
 /**
  * Discovers the focused monitor (name, geometry, scale). Fast: only one
  * `hyprctl monitors` call. Safe to call on the main thread to position the
