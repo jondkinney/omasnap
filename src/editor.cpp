@@ -35,6 +35,8 @@
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QScrollBar>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QTextDocument>
 #include <QThread>
 #include <QTimer>
@@ -59,7 +61,9 @@ public:
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setWordWrapMode(QTextOption::NoWrap);
+    // Wrap like the committed text will: at word boundaries, anywhere within
+    // a word too long to fit. The width clamp decides when wrapping bites.
+    setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     document()->setDocumentMargin(0);
   }
   using QPlainTextEdit::cursorRect;
@@ -868,7 +872,7 @@ QRectF CaptureEditor::annotationBounds(const Annotation &annotation) const {
             annotation.start.y() - diameter / 2.0, diameter, diameter};
   }
   if (annotation.kind == Annotation::Kind::Text)
-    return annotationTextBounds(annotation);
+    return annotationTextBounds(annotation, selection_.width());
   if (isStrokeKind(annotation.kind)) {
     if (annotation.points.isEmpty())
       return {};
@@ -915,8 +919,18 @@ CaptureEditor::annotationHandles(const Annotation &annotation) const {
   const QRectF bounds = annotationBounds(annotation);
   // A text's handle is its wrap width, not its size: one handle, on the edge
   // the wrapping actually moves.
-  if (annotation.kind == Annotation::Kind::Text)
-    return {{bounds.bottomRight(), Interaction::ResizeEnd}};
+  if (annotation.kind == Annotation::Kind::Text) {
+    // Text moved or loaded past the canvas edge would put this handle out of
+    // reach, maybe off the screen itself; pull it back inside every edge so
+    // the wrap can always be dragged back in. Multiline text can overrun the
+    // bottom even when its width is already inside the right edge.
+    QPointF handle = bounds.bottomRight();
+    if (selection_.width() > 0)
+      handle.setX(std::clamp(handle.x(), 4.0, selection_.width() - 4.0));
+    if (selection_.height() > 0)
+      handle.setY(std::clamp(handle.y(), 4.0, selection_.height() - 4.0));
+    return {{handle, Interaction::ResizeEnd}};
+  }
   // A counter is a disc: any corner sets its size, and sides would say
   // something about width and height that a disc cannot honour.
   if (annotation.kind == Annotation::Kind::Marker) {
@@ -2875,13 +2889,26 @@ void CaptureEditor::ensureTextEditor() {
           widestLine, metrics.horizontalAdvance(line + QStringLiteral("  ")));
     const int sidePadding =
         textEditPill_ ? qRound(std::max(4.0, metrics.height() * 0.18)) : 0;
-    const int desiredWidth = std::max(48, widestLine + sidePadding * 2);
     const int availableWidth =
-        std::max(48, qRound(editImageRect().right() - textEditor_->x()));
-    const int lineCount = std::max(1, static_cast<int>(lines.size()));
+        std::max(48, qRound(editImageRect().right()) - textEditor_->x() +
+                         sidePadding);
+    // A dragged wrap width wins; otherwise the text wraps at the canvas
+    // edge rather than running off it, where its handle is unreachable.
+    const int desiredWidth =
+        textEditWrapWidth_ > 0.0
+            ? std::max(48, qRound(textEditWrapWidth_) + sidePadding * 2)
+            : std::max(48, widestLine + sidePadding * 2);
+    const int width = std::min(desiredWidth, availableWidth);
+    textEditor_->resize(width, textEditor_->height());
+    // QPlainTextEdit needs a little more than QFontMetrics::height(): its
+    // block layout keeps leading/descent outside the nominal line box.
+    // Wrapped lines are not the newline count either, so the laid-out
+    // document is the only thing that knows how tall the draft is now.
+    const int wrapped =
+        std::max(1, qRound(textEditor_->document()->size().height()));
     const int desiredHeight =
-        lineCount * metrics.lineSpacing() + metrics.descent() + 4;
-    textEditor_->resize(std::min(desiredWidth, availableWidth), desiredHeight);
+        wrapped * metrics.lineSpacing() + metrics.descent() + 4;
+    textEditor_->resize(width, desiredHeight);
     textEditor_->verticalScrollBar()->setValue(0);
     QTimer::singleShot(0, textEditor_, [editor = textEditor_] {
       editor->verticalScrollBar()->setValue(0);
@@ -2933,6 +2960,12 @@ void CaptureEditor::beginText(const QPointF &point, int annotationIndex,
           : textBackground_;
   const bool pill = background == TextBackground::Pill;
   textEditPill_ = pill;
+  // Re-editing a wrapped layer keeps its width, so the draft breaks
+  // exactly where the committed text did.
+  textEditWrapWidth_ =
+      annotationIndex >= 0 && annotationIndex < annotations_.size()
+          ? annotations_.at(annotationIndex).textWidth
+          : 0.0;
   const int pillPad = pill ? qRound(std::max(4.0, metrics.height() * 0.18)) : 0;
   textEditor_->setStyleSheet(
       QStringLiteral("QPlainTextEdit { color: %1; background: transparent; "
@@ -2966,6 +2999,21 @@ void CaptureEditor::acceptText(bool keepSelected) {
     annotation.text = text;
     annotation.color = textColor_;
     annotation.size = textSize_;
+    // Text that wrapped at the canvas edge freezes that shape on commit, as
+    // tight as its widest line, so moving the layer later never reflows the
+    // paragraph you just placed. The handle can still re-wrap it.
+    annotation.textWidth = textEditWrapWidth_;
+    if (annotation.textWidth <= 0.0) {
+      const QStringList wrapped =
+          annotationTextLines(annotation, selection_.width());
+      if (wrapped.size() > 1) {
+        const QFontMetricsF metrics(annotationTextFont(annotation.size));
+        qreal widest = 0.0;
+        for (const QString &line : wrapped)
+          widest = std::max(widest, metrics.horizontalAdvance(line));
+        annotation.textWidth = widest + 2.0;
+      }
+    }
     annotation.textBackground =
         editingAnnotation_ >= 0 && editingAnnotation_ < annotations_.size()
             ? annotations_.at(editingAnnotation_).textBackground
@@ -3921,17 +3969,12 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
           annotation.size = std::clamp(
               QLineF(annotation.start, point).length() / 3.0, 2.0, 30.0);
         } else if (annotation.kind == Annotation::Kind::Text) {
+          // The handle sets the wrap width, which is what its horizontal
+          // cursor has always promised. Size belongs to the wheel, so the two
+          // are one gesture each rather than both scaling the layer.
           const QRectF originalBounds = annotationBounds(originalAnnotation_);
-          const qreal ratio =
-              originalBounds.width() > 0
-                  ? std::abs(point.x() - originalBounds.left()) /
-                        originalBounds.width()
-                  : 1.0;
-          annotation.size =
-              std::clamp(originalAnnotation_.size * ratio, 1.0, 24.0);
-          annotation.start.setY(
-              originalBounds.top() +
-              QFontMetricsF(annotationTextFont(annotation.size)).ascent());
+          annotation.textWidth = std::max<qreal>(
+              kMinimumTextWrapWidth, point.x() - originalBounds.left());
         }
       }
       }
@@ -4167,8 +4210,18 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   }
 
   // Clicking away keeps whatever was typed; Enter belongs to multiline text.
-  if (textEditing())
+  if (textEditing()) {
+    const bool committed = !textEditor_->toPlainText().trimmed().isEmpty();
     acceptText();
+    bool overToolbar = false;
+    for (const ToolbarButton &button : toolbarButtons())
+      overToolbar = overToolbar || button.rect.contains(cursor_);
+    // Committing is the whole of that click: the text tool stays armed, but
+    // the click that put one text down must not also open the next where it
+    // landed. An empty editor committed nothing, so the click simply moves it.
+    if (committed && !overToolbar)
+      return;
+  }
 
   for (const ToolbarButton &button : toolbarButtons()) {
     if (button.rect.contains(cursor_)) {
@@ -5869,7 +5922,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                       defaultAnnotations);
   } else {
     for (const Annotation &annotation : defaultAnnotations)
-      paintAnnotation(painter, annotation);
+      paintAnnotation(painter, annotation, selection_.width());
   }
   painter.restore();
   if (tool_ == Tool::Select && marqueeSelecting_ &&
@@ -6058,10 +6111,33 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     // a caret spanning the glyph box rather than Neucha's whole line height.
     const QRectF box = textEditor_->geometry();
     if (textEditPill_) {
-      const qreal radius = std::min(box.height() / 4.0, 6.0);
+      // The widget keeps typing slack (a 48px floor plus room for the next
+      // glyph), so its geometry cannot shape the pill. Rebuild the committed
+      // pill's rect from the draft text instead, so nothing shifts on commit.
+      const QFontMetricsF pillMetrics(textEditor_->font());
+      qreal widest = 0.0;
+      for (QTextBlock block = textEditor_->document()->begin();
+           block.isValid(); block = block.next()) {
+        QTextLayout *layout = block.layout();
+        for (int lineIndex = 0; lineIndex < layout->lineCount(); ++lineIndex)
+          widest = std::max(
+              widest, layout->lineAt(lineIndex).naturalTextWidth());
+      }
+      const int lineCount =
+          std::max(1, qRound(textEditor_->document()->size().height()));
+      const qreal pad = std::max(4.0, pillMetrics.height() * 0.18);
+      const QPointF glyphOrigin =
+          box.topLeft() + textEditor_->viewport()->pos();
+      const QRectF glyphs(glyphOrigin.x(), glyphOrigin.y(), widest,
+                          pillMetrics.height() +
+                              (lineCount - 1) * pillMetrics.lineSpacing());
+      const QRectF pill = glyphs.adjusted(
+          -pad, -pad, pad,
+          std::max(pad, pillMetrics.descent() + 2.0) - pillMetrics.descent());
+      const qreal radius = std::min(pill.height() / 4.0, 6.0);
       painter.setPen(Qt::NoPen);
       painter.setBrush(QColor(248, 245, 235));
-      painter.drawRoundedRect(box, radius, radius);
+      painter.drawRoundedRect(pill, radius, radius);
     }
     if (textCaretOn_ && textEditor_->hasFocus()) {
       const QFontMetricsF metrics(textEditor_->font());
