@@ -110,12 +110,13 @@ int main(int argc, char **argv) {
   QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
   QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
   QCoreApplication::setOrganizationName(QStringLiteral("Omarchy"));
-  // The overlay is a layer surface, but a windowed editor is an ordinary
-  // compositor window the compositor tiles and floats; the shell
+  // The overlay is a layer surface, but a pin or a windowed editor is an
+  // ordinary compositor window the compositor tiles and floats; the shell
   // integration must be chosen before Qt connects, so the decision reads
   // the arguments and the config by hand. Only a file edit can be
   // windowed: a fresh capture always selects on the fullscreen overlay and
   // hands off afterward.
+  bool pinInvocation = false;
   bool editorWindowArg = false;
   bool editorOverlayArg = false;
   bool fileEditArg = false;
@@ -127,6 +128,7 @@ int main(int argc, char **argv) {
           editorOverlayArg || qstrcmp(argv[index + 1], "overlay") == 0;
       ++index;
     } else if (qstrcmp(arg, "--pin") == 0) {
+      pinInvocation = true;
       ++index;
     } else if (qstrcmp(arg, "--file") == 0) {
       fileEditArg = true;
@@ -144,9 +146,9 @@ int main(int argc, char **argv) {
   const bool windowedEditorProcess =
       !editorOverlayArg && fileEditArg &&
       (editorWindowArg || loadEditorWindowMode(defaultConfigPath()));
-  if (windowedEditorProcess) {
-    // Unset rather than merely not set: a windowed editor spawned from the
-    // overlay inherits the overlay's environment, layer-shell included.
+  if (pinInvocation || windowedEditorProcess) {
+    // Unset rather than merely not set: a pin or windowed editor spawned
+    // from the overlay inherits its environment, layer-shell included.
     qunsetenv("QT_WAYLAND_SHELL_INTEGRATION");
   } else {
     qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
