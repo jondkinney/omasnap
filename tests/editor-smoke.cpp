@@ -6080,6 +6080,8 @@ bool runTextFontSmoke(QApplication &application, QString &error) {
   saved.textCardCursor = 4;
   saved.textCardYank = QStringLiteral("puts");
   saved.textCardYankLinewise = true;
+  saved.textCardFontSize = 31;
+  saved.textCardNoWrap = true;
   const QString path =
       QDir(directory.path()).filePath(QStringLiteral("text-fonts.json"));
   OperationLog loaded;

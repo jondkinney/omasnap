@@ -336,6 +336,12 @@ public:
   }
   /** Current card mode string (NORMAL/INSERT/VISUAL/...). Test accessor. */
   [[nodiscard]] QString clipboardTextCardModeForTest() const;
+  [[nodiscard]] int clipboardTextCardFontSizeForTest() const {
+    return textCardRenderedFontSize_;
+  }
+  [[nodiscard]] bool clipboardTextCardNoWrapForTest() const {
+    return textCardNoWrap_;
+  }
   /** The log a snapshot or handoff would persist right now. Test accessor. */
   [[nodiscard]] OperationLog workingLogForTest() const {
     return composeWorkingLog();
@@ -494,6 +500,9 @@ private:
   void beginClipboardTextCard(const QString &text, const QString &filename);
   void reopenClipboardTextCard();
   void updateClipboardTextCardPreview();
+  /// 0 returns to auto-fit; the status reports the effective size.
+  void setTextCardFontOverride(int pixelSize);
+  void toggleTextCardWrap();
   void updateClipboardTextCardEditorGeometry();
   void beginClipboardTextCardFilenameEdit();
   void endClipboardTextCardFilenameEdit(bool accept);
@@ -794,6 +803,11 @@ private:
   QString textCardOpenedText_;
   QString textCardOpenedFilename_;
   bool textCardDiscardArmed_ = false;
+  /// 0 auto-fits the longest line; +/- pins a manual pixel size.
+  int textCardFontOverride_ = 0;
+  bool textCardNoWrap_ = false;
+  /// Effective size of the last rendered frame; geometry and +/- start here.
+  int textCardRenderedFontSize_ = kTextCardCodePixelSize;
   /// Annotations stashed while the card source is re-edited, replayed onto
   /// the next render; carried in the working log's otherwise-empty ops slot
   /// across a presentation switch.

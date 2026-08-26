@@ -141,6 +141,9 @@ struct OperationLog {
   int textCardCursor = -1;
   QString textCardYank{};
   bool textCardYankLinewise = false;
+  /// 0 auto-fits; a manual +/- override is carried as its pixel size.
+  int textCardFontSize = 0;
+  bool textCardNoWrap = false;
 
   bool operator==(const OperationLog &) const = default;
 };

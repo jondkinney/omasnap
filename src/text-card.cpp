@@ -520,10 +520,10 @@ QString textCardSnippet(QString text, QString &error) {
   return text;
 }
 
-QFont textCardCodeFont() {
+QFont textCardCodeFont(int pixelSize = kTextCardCodePixelSize) {
   static_cast<void>(loadCaptureFonts());
   QFont codeFont(annotationTextFontName(TextFont::JetBrainsMono));
-  codeFont.setPixelSize(kTextCardCodePixelSize);
+  codeFont.setPixelSize(pixelSize);
   codeFont.setStyleHint(QFont::Monospace);
   return codeFont;
 }
@@ -551,12 +551,15 @@ QPainterPath powerlineSegment(const QRect &status, int left, int right,
 
 void prepareTextDocument(QTextDocument &document, const QString &snippet,
                          const TextCardTheme &theme, int textWidth,
-                         const QString &language, bool withHighlighter) {
-  const QFont codeFont = textCardCodeFont();
+                         const QString &language, bool withHighlighter,
+                         int codePixelSize = kTextCardCodePixelSize,
+                         bool noWrap = false) {
+  const QFont codeFont = textCardCodeFont(codePixelSize);
   document.setDocumentMargin(0.0);
   document.setDefaultFont(codeFont);
   QTextOption option;
-  option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+  option.setWrapMode(noWrap ? QTextOption::NoWrap
+                            : QTextOption::WrapAtWordBoundaryOrAnywhere);
   option.setTabStopDistance(QFontMetricsF(codeFont).horizontalAdvance(' ') *
                             kTextCardTabSpaces);
   document.setDefaultTextOption(option);
@@ -566,6 +569,28 @@ void prepareTextDocument(QTextDocument &document, const QString &snippet,
     auto *highlighter = new TextCardHighlighter(&document, theme, language);
     highlighter->rehighlight();
   }
+}
+
+/** Largest size ≤ the base that keeps the longest line inside textWidth;
+ * stops at the auto floor and lets the wrap mode handle the rest. */
+int fitTextCardPixelSize(const QString &snippet, const TextCardTheme &theme,
+                         int textWidth) {
+  const auto naturalWidth = [&](int pixelSize) {
+    QTextDocument probe;
+    prepareTextDocument(probe, snippet, theme, -1, {}, false, pixelSize,
+                        true);
+    return probe.idealWidth();
+  };
+  const qreal base = naturalWidth(kTextCardCodePixelSize);
+  if (base <= textWidth)
+    return kTextCardCodePixelSize;
+  int size = std::clamp(
+      qFloor(kTextCardCodePixelSize * textWidth / base),
+      kTextCardAutoMinPixelSize, kTextCardCodePixelSize);
+  // Integer glyph metrics do not scale exactly; verify the guess.
+  while (size > kTextCardAutoMinPixelSize && naturalWidth(size) > textWidth)
+    --size;
+  return size;
 }
 } // namespace
 
@@ -750,7 +775,8 @@ TextCardRender renderTextCardLayout(const QString &text,
                                     const TextCardTheme &theme, QString &error,
                                     bool drawText, const QString &mode,
                                     const QString &filename,
-                                    TextCardLayout layout, qreal pixelRatio) {
+                                    TextCardLayout layout, qreal pixelRatio,
+                                    int codePixelSize, bool noWrap) {
   error.clear();
   const QString snippet = textCardSnippet(text, error);
   if (snippet.isEmpty())
@@ -763,8 +789,14 @@ TextCardRender renderTextCardLayout(const QString &text,
       detectTextCardLanguage(snippet, displayFilename);
 
   const int textWidth = kPanelWidth - kHorizontalTextPadding * 2 - kGutterWidth;
+  const int codeSize =
+      codePixelSize > 0
+          ? std::clamp(codePixelSize, kTextCardManualMinPixelSize,
+                       kTextCardManualMaxPixelSize)
+          : fitTextCardPixelSize(snippet, theme, textWidth);
   QTextDocument document;
-  prepareTextDocument(document, snippet, theme, textWidth, language, drawText);
+  prepareTextDocument(document, snippet, theme, textWidth, language, drawText,
+                      codeSize, noWrap);
   const int documentHeight =
       std::max(1, qCeil(document.documentLayout()->documentSize().height()));
   const int editorHeight = std::max(kMinimumEditorHeight, documentHeight);
@@ -829,10 +861,13 @@ TextCardRender renderTextCardLayout(const QString &text,
   painter.setPen(QPen(theme.header, 1));
   painter.drawLine(editorRect.left() - 18, editorRect.top(),
                    editorRect.left() - 18, editorRect.bottom());
-  const QFont codeFont = textCardCodeFont();
-  painter.setFont(codeFont);
+  // The gutter never grows past the base size: three digits must still fit
+  // its fixed box when the code is manually enlarged.
+  const QFont gutterFont =
+      textCardCodeFont(std::min(codeSize, kTextCardCodePixelSize));
+  painter.setFont(gutterFont);
   painter.setPen(theme.muted);
-  const QFontMetrics codeMetrics(codeFont);
+  const QFontMetrics codeMetrics(gutterFont);
   int lineNumber = 1;
   for (QTextBlock block = document.begin(); block.isValid();
        block = block.next(), ++lineNumber) {
@@ -897,7 +932,7 @@ TextCardRender renderTextCardLayout(const QString &text,
   painter.setBrush(Qt::NoBrush);
   painter.drawRect(panel.adjusted(1, 1, -1, -1));
   painter.end();
-  return {std::move(image), editorRect, titleRect};
+  return {std::move(image), editorRect, titleRect, codeSize};
 }
 
 QSize textCardEditorWindowSize(const QSize &card, const QSize &available) {

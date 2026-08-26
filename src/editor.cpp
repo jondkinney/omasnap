@@ -693,6 +693,9 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   textCardRestoreCursor_ = log.textCardCursor;
   textCardRestoreYank_ = log.textCardYank;
   textCardRestoreYankLinewise_ = log.textCardYankLinewise;
+  // Live members directly: a card reopen captures them before it resets.
+  textCardFontOverride_ = log.textCardFontSize;
+  textCardNoWrap_ = log.textCardNoWrap;
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
   paletteConfig_ = loadPaletteConfig(defaultConfigPath());
@@ -1141,6 +1144,30 @@ bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
     if (isPlainControlChord(key, Qt::Key_W)) {
       if (!key->isAutoRepeat())
         handOffLiveTextCard();
+      return true;
+    }
+    // Size and wrap shape the card, not the text, so they live outside the
+    // modal keymap; +/- stay typable in Insert and replaceable after r.
+    if (isPlainControlChord(key, Qt::Key_0)) {
+      setTextCardFontOverride(0);
+      return true;
+    }
+    if (key->key() == Qt::Key_Z && key->modifiers() == Qt::AltModifier) {
+      toggleTextCardWrap();
+      return true;
+    }
+    const bool sizeKey = key->key() == Qt::Key_Plus ||
+                         key->key() == Qt::Key_Equal ||
+                         key->key() == Qt::Key_Minus;
+    if (sizeKey && !textCardModal_->insertMode() &&
+        !textCardModal_->pendingInput() &&
+        !key->modifiers().testAnyFlags(Qt::ControlModifier |
+                                       Qt::AltModifier | Qt::MetaModifier)) {
+      const int step = key->key() == Qt::Key_Minus ? -2 : 2;
+      setTextCardFontOverride(
+          std::clamp(textCardRenderedFontSize_ + step,
+                     kTextCardManualMinPixelSize,
+                     kTextCardManualMaxPixelSize));
       return true;
     }
     const bool editFilename =
@@ -3262,6 +3289,8 @@ OperationLog CaptureEditor::composeWorkingLog() const {
       clipboardTextCardEditing_ ? textCardModal_->yankText() : QString();
   log.textCardYankLinewise =
       clipboardTextCardEditing_ && textCardModal_->yankLinewise();
+  log.textCardFontSize = textCardFontOverride_;
+  log.textCardNoWrap = textCardNoWrap_;
   return log;
 }
 
@@ -6003,6 +6032,9 @@ void CaptureEditor::beginClipboardTextCard(const QString &text,
   textCardDiscardArmed_ = false;
   textCardStashedLog_ = {};
   textCardReopened_ = false;
+  textCardFontOverride_ = 0;
+  textCardNoWrap_ = false;
+  textCardRenderedFontSize_ = card.codePixelSize;
   textCardFrameKey_.clear();
   textCardDetectRevision_ = -1;
   clipboardTextCardEditing_ = true;
@@ -6061,11 +6093,29 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   const QString cardMode = textCardFilenameEditor_->isVisible()
                                ? QStringLiteral("FILENAME")
                                : textCardModal_->mode();
+  // The widest logical line drives auto-fit; monospace columns track it
+  // closely enough to refresh the cached frame when it changes.
+  int widestColumns = 0;
+  int column = 0;
+  for (const QChar character : std::as_const(previewText)) {
+    if (character == QLatin1Char('\n')) {
+      widestColumns = std::max(widestColumns, column);
+      column = 0;
+    } else if (character == QLatin1Char('\t')) {
+      column = (column / kTextCardTabSpaces + 1) * kTextCardTabSpaces;
+    } else {
+      ++column;
+    }
+  }
+  widestColumns = std::max(widestColumns, column);
   const QString frameKey =
       QStringList{cardMode, textCardFilename_, textCardSyntaxLanguage_,
                   QString::number(wrappedLines),
                   QString::number(textCardEditor_->document()->blockCount()),
-                  QString::number(windowedPresentation_ ? 1 : 0)}
+                  QString::number(windowedPresentation_ ? 1 : 0),
+                  QString::number(widestColumns),
+                  QString::number(textCardFontOverride_),
+                  QString::number(textCardNoWrap_ ? 1 : 0)}
           .join(QLatin1Char('\x1f'));
   if (frameKey == textCardFrameKey_)
     return;
@@ -6073,7 +6123,8 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   TextCardRender frame = renderTextCardLayout(
       previewText, textCardTheme_, error, false, cardMode, textCardFilename_,
       windowedPresentation_ ? TextCardLayout::Compact
-                            : TextCardLayout::Share);
+                            : TextCardLayout::Share,
+      1.0, textCardFontOverride_, textCardNoWrap_);
   if (frame.image.isNull()) {
     textCardFrameKey_.clear();
     setStatus(error);
@@ -6083,6 +6134,7 @@ void CaptureEditor::updateClipboardTextCardPreview() {
   adoptTextCardSurface(std::move(frame.image));
   textCardSourceEditorRect_ = frame.editorRect;
   textCardSourceTitleRect_ = frame.titleRect;
+  textCardRenderedFontSize_ = frame.codePixelSize;
   updateClipboardTextCardEditorGeometry();
   // The state frame above stays at logical size; the painted copy is
   // supersampled so the chrome survives being scaled to the screen.
@@ -6094,7 +6146,8 @@ void CaptureEditor::updateClipboardTextCardPreview() {
                              cardMode, textCardFilename_,
                              windowedPresentation_ ? TextCardLayout::Compact
                                                    : TextCardLayout::Share,
-                             textCardDisplayRatio_)
+                             textCardDisplayRatio_, textCardFontOverride_,
+                             textCardNoWrap_)
             .image;
   } else {
     textCardDisplayFrame_ = {};
@@ -6147,7 +6200,8 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
     textCardFilenameEditor_->setGeometry(titleGeometry);
 
   QFont font(annotationTextFontName(TextFont::JetBrainsMono));
-  font.setPixelSize(std::max(1, qRound(kTextCardCodePixelSize * scale)));
+  font.setPixelSize(
+      std::max(1, qRound(textCardRenderedFontSize_ * scale)));
   font.setStyleHint(QFont::Monospace);
   if (textCardEditor_->font() != font)
     textCardEditor_->setFont(font);
@@ -6155,12 +6209,14 @@ void CaptureEditor::updateClipboardTextCardEditorGeometry() {
     textCardEditor_->setCursorWidth(std::max(1, qRound(2 * scale)));
   else
     updateTextCardCaret();
+  const QPlainTextEdit::LineWrapMode lineWrap =
+      textCardNoWrap_ ? QPlainTextEdit::NoWrap : QPlainTextEdit::WidgetWidth;
+  if (textCardEditor_->lineWrapMode() != lineWrap)
+    textCardEditor_->setLineWrapMode(lineWrap);
   QTextOption option = textCardEditor_->document()->defaultTextOption();
   const qreal tabStop =
       QFontMetricsF(font).horizontalAdvance(' ') * kTextCardTabSpaces;
-  if (option.wrapMode() != QTextOption::WrapAtWordBoundaryOrAnywhere ||
-      !qFuzzyCompare(option.tabStopDistance(), tabStop)) {
-    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+  if (!qFuzzyCompare(option.tabStopDistance(), tabStop)) {
     option.setTabStopDistance(tabStop);
     textCardEditor_->document()->setDefaultTextOption(option);
   }
@@ -6302,8 +6358,10 @@ void CaptureEditor::finishClipboardTextCard() {
   const QString sourceFilename = textCardFilename_;
   QString error;
   const QImage card = renderTextCardLayout(
-                          sourceText, textCardTheme_, error,
-                          true, QStringLiteral("NORMAL"), textCardFilename_)
+                          sourceText, textCardTheme_, error, true,
+                          QStringLiteral("NORMAL"), textCardFilename_,
+                          TextCardLayout::Share, 1.0, textCardFontOverride_,
+                          textCardNoWrap_)
                           .image;
   if (card.isNull()) {
     setStatus(error);
@@ -6354,11 +6412,52 @@ void CaptureEditor::reopenClipboardTextCard() {
   // source: stashed here, replayed onto the next render.
   OperationLog stash{ops_, opIndex_, nextAnnotationId_, nextMarker_,
                      pristineLogicalSize_};
+  const int fontOverride = textCardFontOverride_;
+  const bool noWrap = textCardNoWrap_;
   beginClipboardTextCard(text, filename);
   if (!clipboardTextCardEditing_)
     return;
   textCardStashedLog_ = std::move(stash);
   textCardReopened_ = true;
+  if (fontOverride != 0 || noWrap) {
+    textCardFontOverride_ = fontOverride;
+    textCardNoWrap_ = noWrap;
+    textCardFrameKey_.clear();
+    updateClipboardTextCardPreview();
+    updateTextCardCaret();
+    if (windowedPresentation_)
+      resize(naturalWindowSize(screen() ? screen()->availableGeometry().size()
+                                        : QSize()));
+  }
+}
+
+void CaptureEditor::setTextCardFontOverride(int pixelSize) {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardFontOverride_ = pixelSize;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  setStatus(pixelSize > 0
+                ? QStringLiteral("Text size %1px · + and - adjust · Ctrl+0 "
+                                 "returns to auto")
+                      .arg(textCardRenderedFontSize_)
+                : QStringLiteral("Text size auto (%1px) · + and - adjust")
+                      .arg(textCardRenderedFontSize_));
+}
+
+void CaptureEditor::toggleTextCardWrap() {
+  if (!clipboardTextCardEditing_)
+    return;
+  textCardNoWrap_ = !textCardNoWrap_;
+  textCardFrameKey_.clear();
+  updateClipboardTextCardPreview();
+  updateTextCardCaret();
+  setStatus(textCardNoWrap_
+                ? QStringLiteral("Long lines cut off at the card edge · "
+                                 "Alt+Z wraps them")
+                : QStringLiteral("Long lines wrap · Alt+Z cuts them off at "
+                                 "the card edge"));
 }
 
 // Cursor and yank register carried through a presentation switch; the

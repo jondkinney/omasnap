@@ -2370,6 +2370,10 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
       root.insert(QStringLiteral("textCardYankLinewise"),
                   log.textCardYankLinewise);
     }
+    if (log.textCardFontSize > 0)
+      root.insert(QStringLiteral("textCardFontSize"), log.textCardFontSize);
+    if (log.textCardNoWrap)
+      root.insert(QStringLiteral("textCardNoWrap"), log.textCardNoWrap);
   }
   root.insert(QStringLiteral("ops"), ops);
 
@@ -2428,6 +2432,10 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.textCardYank = root.value(QStringLiteral("textCardYank")).toString();
   loaded.textCardYankLinewise =
       root.value(QStringLiteral("textCardYankLinewise")).toBool();
+  loaded.textCardFontSize =
+      root.value(QStringLiteral("textCardFontSize")).toInt(0);
+  loaded.textCardNoWrap =
+      root.value(QStringLiteral("textCardNoWrap")).toBool();
   if (loaded.previewSize.isEmpty())
     loaded.previewSize = QSize();
   if (loaded.nextId == 0)

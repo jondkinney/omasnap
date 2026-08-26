@@ -296,6 +296,8 @@ massaging a snippet without embedding a full editor:
 | `p`, `Shift+P` | Put after/below or before/above the cursor/current line; deleted text fills the register `p` puts |
 | `u`, `Ctrl+R` | Undo or redo; the cursor returns to the start of that change |
 | `Tab` | Insert a literal tab in Insert mode |
+| `+` / `-` | Grow or shrink the card text in Normal or Visual mode; sizing starts automatic, shrinking until the longest line fits unwrapped, and `Ctrl+0` returns to that auto fit |
+| `Alt+Z` | Toggle long lines between wrapping and cutting off at the card edge |
 | `Ctrl+W` | Re-present the live source editor as a normal window or fullscreen overlay |
 | `Ctrl+Enter` | Render the card and continue in the annotation editor |
 | `q` | Exit Omasnap from the live snippet editor; unsaved edits or a reopened card ask for a second `q` |

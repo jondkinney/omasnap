@@ -1873,6 +1873,105 @@ bool runTextCardHandoffCheck(const CaptureData &capture,
   return true;
 }
 
+/** Auto-fit sizing, +/- overrides, Ctrl+0, and the Alt+Z wrap toggle. */
+bool runTextCardTextSizeCheck(const CaptureData &capture, QString &error) {
+  // Earlier yanks filled the sink, which shadows the TEXT env on reads.
+  QFile::remove(qEnvironmentVariable("OMASNAP_TEST_CLIPBOARD_SINK"));
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT", "short()\n");
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
+  editor.setSuppressSnapshots(true);
+  editor.resize(640, 480);
+  editor.show();
+  QApplication::processEvents();
+  QTest::keyClick(&editor, Qt::Key_V,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::processEvents();
+  auto *cardEditor =
+      qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!editor.clipboardTextCardEditingForTest() || !cardEditor) {
+    error = QStringLiteral("Text-size card did not open");
+    return false;
+  }
+  if (editor.clipboardTextCardFontSizeForTest() != kTextCardCodePixelSize) {
+    error = QStringLiteral("A short line did not keep the base text size");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Q);
+  QApplication::processEvents();
+
+  qputenv("OMASNAP_TEST_CLIPBOARD_TEXT",
+          QStringLiteral("x").repeated(90).toUtf8());
+  CaptureEditor longEditor(capture, CaptureEditor::CaptureMode::Region);
+  longEditor.setSuppressSnapshots(true);
+  longEditor.resize(640, 480);
+  longEditor.show();
+  QApplication::processEvents();
+  QTest::keyClick(&longEditor, Qt::Key_V,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::processEvents();
+  cardEditor = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  const int autoSize = longEditor.clipboardTextCardFontSizeForTest();
+  if (!longEditor.clipboardTextCardEditingForTest() || !cardEditor ||
+      autoSize >= kTextCardCodePixelSize ||
+      autoSize < kTextCardAutoMinPixelSize) {
+    error = QStringLiteral("A long line did not auto-fit (size=%1)")
+                .arg(autoSize);
+    return false;
+  }
+  if (cardEditor->document()->begin().layout()->lineCount() != 1) {
+    error = QStringLiteral("The auto-fit line still wraps");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Plus);
+  QApplication::processEvents();
+  if (longEditor.clipboardTextCardFontSizeForTest() != autoSize + 2) {
+    error = QStringLiteral("+ did not grow the text size by one step");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Minus);
+  QTest::keyClick(cardEditor, Qt::Key_Minus);
+  QApplication::processEvents();
+  if (longEditor.clipboardTextCardFontSizeForTest() != autoSize - 2) {
+    error = QStringLiteral("- did not shrink the text size below auto");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_0, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (longEditor.clipboardTextCardFontSizeForTest() != autoSize) {
+    error = QStringLiteral("Ctrl+0 did not return to the auto fit");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Plus);
+  QTest::keyClick(cardEditor, Qt::Key_Plus);
+  QTest::keyClick(cardEditor, Qt::Key_Plus);
+  QApplication::processEvents();
+  const int enlarged = longEditor.clipboardTextCardFontSizeForTest();
+  if (cardEditor->document()->begin().layout()->lineCount() < 2) {
+    error = QStringLiteral("An enlarged long line did not wrap");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Z, Qt::AltModifier);
+  QApplication::processEvents();
+  if (!longEditor.clipboardTextCardNoWrapForTest() ||
+      cardEditor->document()->begin().layout()->lineCount() != 1) {
+    error = QStringLiteral("Alt+Z did not cut the long line off unwrapped");
+    return false;
+  }
+  QTest::keyClick(cardEditor, Qt::Key_Return, Qt::ControlModifier);
+  QApplication::processEvents();
+  QTest::keyClick(&longEditor, Qt::Key_E, Qt::ControlModifier);
+  QApplication::processEvents();
+  if (!longEditor.clipboardTextCardEditingForTest() ||
+      longEditor.clipboardTextCardFontSizeForTest() != enlarged ||
+      !longEditor.clipboardTextCardNoWrapForTest()) {
+    error = QStringLiteral(
+        "Size and wrap overrides did not survive commit and reopen");
+    return false;
+  }
+  longEditor.close();
+  return true;
+}
+
 /** q on a reopened card confirms even when the source is unchanged. */
 bool runTextCardReopenQuitGateCheck(const CaptureData &capture,
                                     QString &error) {
@@ -2028,6 +2127,7 @@ bool runTextCardCheck(const QString &outputRoot, QString &error) {
       !runTextCardVisualModeCheck(editor, cardEditor, outputRoot,
                                   error) ||
       !runTextCardRenderRoundTripCheck(editor, cardEditor, error) ||
+      !runTextCardTextSizeCheck(capture, error) ||
       !runTextCardReopenQuitGateCheck(capture, error) ||
       !runTextCardRepeatGuardCheck(capture, error))
     return false;

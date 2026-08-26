@@ -11,6 +11,11 @@ class QSyntaxHighlighter;
 class QTextDocument;
 
 inline constexpr int kTextCardCodePixelSize = 25;
+/// Auto-fit shrinks toward this floor before letting long lines wrap or clip.
+inline constexpr int kTextCardAutoMinPixelSize = 12;
+/// Manual +/- overrides stay inside these bounds.
+inline constexpr int kTextCardManualMinPixelSize = 8;
+inline constexpr int kTextCardManualMaxPixelSize = 48;
 inline constexpr int kTextCardTabSpaces = 4;
 /// Header/statusline text size; the live filename overlay must match it.
 inline constexpr int kTextCardHeaderPixelSize = 14;
@@ -41,6 +46,8 @@ struct TextCardRender {
   QImage image;
   QRect editorRect;
   QRect titleRect;
+  /// Code pixel size actually used; reports what auto-fit chose.
+  int codePixelSize = kTextCardCodePixelSize;
 };
 
 /** Reads Omarchy's UI and semantic syntax palettes, falling back to Nord. */
@@ -58,7 +65,9 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                            const QString &filename = {});
 /** Renders a card and reports the image-space rectangle used by its editor.
  * pixelRatio > 1 supersamples the image for crisp on-screen scaling; the
- * reported rectangles stay in logical card coordinates. */
+ * reported rectangles stay in logical card coordinates. codePixelSize 0
+ * auto-fits the longest line inside the panel; noWrap clips long lines at
+ * the panel edge instead of wrapping them. */
 [[nodiscard]] TextCardRender renderTextCardLayout(const QString &text,
                                                   const TextCardTheme &theme,
                                                   QString &error,
@@ -68,7 +77,9 @@ installTextCardHighlighter(QTextDocument *document, const TextCardTheme &theme,
                                                   const QString &filename = {},
                                                   TextCardLayout layout =
                                                       TextCardLayout::Share,
-                                                  qreal pixelRatio = 1.0);
+                                                  qreal pixelRatio = 1.0,
+                                                  int codePixelSize = 0,
+                                                  bool noWrap = false);
 /** Window size that hugs a compact live card plus its snippet-only toolbar. */
 [[nodiscard]] QSize textCardEditorWindowSize(const QSize &card,
                                              const QSize &available);

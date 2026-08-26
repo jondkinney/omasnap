@@ -29,6 +29,8 @@ public:
   [[nodiscard]] QString mode() const;
   [[nodiscard]] bool insertMode() const { return insertMode_; }
   [[nodiscard]] bool visualMode() const { return visualAnchor_ >= 0; }
+  /// True while a prefix (r, d, c, y, g, >, <) waits for its next key.
+  [[nodiscard]] bool pendingInput() const { return !pendingCommand_.isEmpty(); }
   void setInsertMode(bool insertMode);
   void endInsertEdit();
   [[nodiscard]] QString yankText() const { return yank_; }
