@@ -21,7 +21,7 @@ Every background operation in the codebase follows the same shape:
 4. A `busy_`-style flag (or a more specific one) blocks reentrancy while the
    watcher is in flight, and the status pill says what is happening.
 
-`src/editor.hpp` currently has six watchers, each the entry point for
+`src/editor.hpp` keeps dedicated watchers, each the entry point for
 reading its corresponding worker:
 
 | Watcher | Worker does |
@@ -32,6 +32,8 @@ reading its corresponding worker:
 | `snapshotWatcher_` | Writes the crash-recovery working snapshot + operation log |
 | `pinWatcher_` | Renders the image for a pinned layer surface |
 | `recentsWatcher_` | Lists and decodes thumbnails for the recents shelf |
+| `backdropWatcher_` | Decodes an optional user-supplied backdrop image |
+| `highlighterProbeWatcher_` | Detects a nearby screenshot text row for highlighter Snap mode |
 
 `src/scroll-capture.cpp` follows the same rule with a plain `QFuture<void>`:
 the capture loop (grab → crop → classify → accumulate) runs on a worker
@@ -51,6 +53,22 @@ frames come in, however slow the compositor's damage-driven capture is.
 - **Scroll capture**: reading the screen back after every wheel tick, at
   whatever cadence the page's animation settles at, never stalls painting
   the overlay's own chrome.
+
+## Pointer motion on large monitors
+
+Input and `QWidget` painting necessarily share Qt's GUI thread, but pointer
+motion must not turn into a full-surface render. This matters on a 6K display:
+a single full ARGB frame is over 80 MB before compositor copies.
+
+`CaptureEditor` therefore treats pointer chrome as damaged regions. Crosshair
+lines, measurement badges, toolbar hover, annotation previews, and drag shapes
+invalidate only their old/new pixels; Qt's backing store preserves the rest.
+High-rate mouse samples are coalesced to at most one repaint per 16 ms. The
+text-aware highlighter is stricter still: scanning screenshot pixels happens
+through `highlighterProbeWatcher_`, and mouse-down uses the latest completed
+probe rather than scanning in the input handler. Reintroducing a bare
+`update()` in `mouseMoveEvent`, or image analysis from `updatePointerCursor()`,
+turns that bounded path back into a full-display stall.
 
 ## The one documented exception
 
@@ -94,7 +112,7 @@ moved to a worker because the auto-scroll injector is the most delicate,
 most recently hardened part of the codebase and depends on live
 Hyprland/Wayland state that the offline smoke suite cannot exercise —
 changing its threading needs a live re-verification pass, not just a
-green `make check`. Fix it the same way as the two cases above
+green `make check`. Fix it with the same worker/watcher shape above
 (`QtConcurrent::run` wrapping the whole call, a small watcher applying the
 result) when you can test it live.
 
@@ -102,7 +120,7 @@ result) when you can test it live.
 
 If you're adding an operation that touches disk, spawns a process, or does
 anything non-trivial with an image, it does not go on the UI thread. Follow
-the six existing watchers as templates — the shape (copy in, run, watch,
+the existing watchers as templates — the shape (copy in, run, watch,
 apply) is the same every time, on purpose, so new code doesn't invent a
 seventh way to do it. If a signal needs to fire when the worker is truly
 finished, remember `QFutureWatcher::finished` is a queued connection: it
