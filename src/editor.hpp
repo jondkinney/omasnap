@@ -1,3 +1,4 @@
+#include <functional>
 #pragma once
 
 #include "background-config.hpp"
@@ -297,10 +298,11 @@ public:
   }
   /** Top of the content band (below the pinned chrome in a window). */
   [[nodiscard]] qreal contentBandTop() const;
-  /** Flushes the working document and copies it to a private handoff path
-   *  with the selection recorded as a leading crop. Public for the smoke:
-   *  the round trip back through file mode is what proves the handoff. */
-  [[nodiscard]] bool prepareHandoff(QString &path, QString &error);
+  /// Injects the process launcher for a smoke test of the actual W action.
+  void setHandoffLauncherForTest(
+      std::function<bool(const QString &, const QStringList &)> launcher) {
+    handoffLauncher_ = std::move(launcher);
+  }
   /** Re-presents this edit in the other editor (window or overlay) by
    *  spawning it on the handoff document and closing this one. */
   void handOffEditor(bool toWindow);
@@ -629,6 +631,7 @@ private:
   QSize pristineLogicalSize_;
   QVector<CutOp> cuts_;
   bool windowedPresentation_ = false;
+  std::function<bool(const QString &, const QStringList &)> handoffLauncher_;
   bool windowedHandoffOnEdit_ = false;
   bool windowedBackdropOpaque_ = true;
   Phase phase_ = Phase::Select;

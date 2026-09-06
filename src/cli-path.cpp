@@ -1,3 +1,5 @@
+#include <QCommandLineParser>
+#include <QCommandLineOption>
 /** @fileoverview Resolves local image targets accepted by the command line. */
 #include "cli-path.hpp"
 
@@ -21,4 +23,89 @@ QString resolveLocalImagePath(const QString &target) {
 
   const QFileInfo file(path);
   return file.isFile() ? file.absoluteFilePath() : QString{};
+}
+
+void configureCaptureCommandLine(QCommandLineParser &parser) {
+  parser.setApplicationDescription(QStringLiteral(
+      "Native Wayland screenshot and annotation overlay for Hyprland and "
+      "Omarchy.\n"
+      "\n"
+      "Only one capture overlay runs at a time. Starting omasnap again while "
+      "an\noverlay is open dismisses it: the running instance is asked to "
+      "quit and the\nnew process exits without capturing, so the same hotkey "
+      "opens and closes the\noverlay. Quick output (--copy, --save) dismisses "
+      "it the same way instead of\nscreenshotting the overlay. With --file (or "
+      "an image path) or --clipboard, the running\ninstance is stopped and "
+      "the editor opens on that image instead.\n"
+      "\n"
+      "Exit codes: 0 success, including dismissing a running overlay; 1 "
+      "capture,\nimage, or single-instance lock failure; 2 usage error."));
+  parser.addHelpOption();
+  parser.addVersionOption();
+  const QCommandLineOption fullscreenOption(
+      QStringLiteral("capture-fullscreen"),
+      QStringLiteral("Start with the entire focused monitor selected."));
+  const QCommandLineOption windowOption(
+      {QStringLiteral("capture-window"), QStringLiteral("capture-windows")},
+      QStringLiteral("Start in window selection mode."));
+  const QCommandLineOption regionOption(
+      QStringLiteral("capture-region"),
+      QStringLiteral("Start in freeform region selection mode (default)."));
+  parser.addOption(fullscreenOption);
+  parser.addOption(windowOption);
+  parser.addOption(regionOption);
+  const QCommandLineOption copyOption(
+      QStringLiteral("copy"),
+      QStringLiteral("Copy the capture directly without opening the editor."));
+  const QCommandLineOption saveOption(
+      QStringLiteral("save"),
+      QStringLiteral("Save the capture directly without opening the editor."));
+  parser.addOption(copyOption);
+  parser.addOption(saveOption);
+  const QCommandLineOption fileOption(
+      QStringLiteral("file"),
+      QStringLiteral("Open an existing image file in the annotation editor "
+                     "instead of capturing the screen."),
+      QStringLiteral("path"));
+  parser.addOption(fileOption);
+  const QCommandLineOption clipboardOption(
+      QStringLiteral("clipboard"),
+      QStringLiteral("Open the current clipboard image in the annotation "
+                     "editor instead of capturing the screen."));
+  parser.addOption(clipboardOption);
+  const QCommandLineOption pinOption(
+      QStringLiteral("pin"),
+      QStringLiteral("Show an image as a pinned always-visible layer."),
+      QStringLiteral("path"));
+  parser.addOption(pinOption);
+  const QCommandLineOption editorOption(
+      QStringLiteral("editor"),
+      QStringLiteral("Editor presentation: overlay (fullscreen, default) or "
+                     "window (a normal compositor window). Also configurable "
+                     "as [editor] mode in omasnap.conf; W switches a live "
+                     "editor between the two."),
+      QStringLiteral("mode"));
+  parser.addOption(editorOption);
+  const QCommandLineOption scrollOption(
+      QStringLiteral("scroll"),
+      QStringLiteral("Capture a scrolling region and stitch it into one tall "
+                     "image, then open it in the editor."));
+  parser.addOption(scrollOption);
+  parser.addPositionalArgument(
+      QStringLiteral("target"),
+      QStringLiteral("Capture mode (smart, region, windows, fullscreen) or the "
+                     "path of an image file to edit."),
+      QStringLiteral("[target]"));
+}
+
+bool windowedEditorRequested(const QCommandLineParser &parser, bool defaultWindow) {
+  const QString mode = parser.value(QStringLiteral("editor")).trimmed().toLower();
+  const bool window = mode.isEmpty() ? defaultWindow : mode == QStringLiteral("window");
+  if (!window || parser.isSet(QStringLiteral("pin")))
+    return false;
+  if (!parser.value(QStringLiteral("file")).isEmpty() ||
+      parser.isSet(QStringLiteral("clipboard")))
+    return true;
+  const QStringList positional = parser.positionalArguments();
+  return positional.size() == 1 && !resolveLocalImagePath(positional.first()).isEmpty();
 }

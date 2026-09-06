@@ -1,3 +1,4 @@
+#include <QCommandLineParser>
 /** @fileoverview Exercises capture editor behavior without a live compositor.
  */
 #include "capture.hpp"
@@ -2017,9 +2018,55 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
     return false;
   }
 
-  QString path;
-  if (!editor.prepareHandoff(path, error))
+  QTest::keyClick(&editor, Qt::Key_V);
+  const Annotation beforeNudge = editor.currentAnnotationsForTest().constFirst();
+  const QPoint hit = editor.annotationPointToWidgetForTest(beforeNudge.start).toPoint();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, hit);
+  QTest::keyClick(&editor, Qt::Key_Right);
+  const Annotation nudged = editor.currentAnnotationsForTest().constFirst();
+  if (nudged.start == beforeNudge.start) {
+    error = QStringLiteral("Handoff fixture did not nudge its rectangle");
     return false;
+  }
+  QString path;
+  QStringList launchArguments;
+  editor.setHandoffLauncherForTest([&](const QString &, const QStringList &arguments) {
+    launchArguments = arguments;
+    path = arguments.at(1);
+    return true;
+  });
+  QTest::keyClick(&editor, Qt::Key_W);
+  for (int attempt = 0; attempt < 500 && editor.isVisible(); ++attempt)
+    QTest::qWait(10);
+  if (editor.isVisible() || path.isEmpty() ||
+      launchArguments != QStringList{QStringLiteral("--file"), path,
+                                      QStringLiteral("--editor"), QStringLiteral("window")}) {
+    error = QStringLiteral("W did not launch the window presentation asynchronously");
+    return false;
+  }
+  // The same parser chooses the shell before QApplication and validates it
+  // afterward, including equals syntax, normalization, and last-value wins.
+  const QList<QStringList> windowArguments{
+      launchArguments,
+      {QStringLiteral("--file=") + path, QStringLiteral("--editor=WINDOW")},
+      {path, QStringLiteral("--editor=overlay"), QStringLiteral("--editor"), QStringLiteral(" window ")}};
+  for (const QStringList &arguments : windowArguments) {
+    QCommandLineParser parser;
+    configureCaptureCommandLine(parser);
+    if (!parser.parse(QStringList{QStringLiteral("omasnap")} + arguments) ||
+        !windowedEditorRequested(parser, false)) {
+      error = QStringLiteral("Handoff argv selected the wrong Wayland shell");
+      return false;
+    }
+  }
+  QCommandLineParser overlayParser;
+  configureCaptureCommandLine(overlayParser);
+  if (!overlayParser.parse({QStringLiteral("omasnap"), path,
+                            QStringLiteral("--editor=window"), QStringLiteral("--editor=OVERLAY")}) ||
+      windowedEditorRequested(overlayParser, true)) {
+    error = QStringLiteral("Repeated editor options did not use the final value");
+    return false;
+  }
   const QString logPath = operationLogPath(path);
   const auto cleanup = [&] {
     QFile::remove(path);
@@ -2041,6 +2088,7 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   describeFileCapture(reopened, std::move(image), log);
   CaptureEditor window(reopened, CaptureEditor::CaptureMode::File,
                        QuickOutputMode::None, log);
+  window.setWindowedPresentation(true);
   window.setSuppressSnapshots(true);
   window.resize(800, 600);
   window.show();
@@ -2053,6 +2101,17 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   if (window.annotationCountForTest() != 1) {
     cleanup();
     error = QStringLiteral("The annotation did not survive the handoff");
+    return false;
+  }
+  if (window.currentAnnotationsForTest().constFirst().start != nudged.start) {
+    cleanup();
+    error = QStringLiteral("Handoff lost the pending keyboard nudge");
+    return false;
+  }
+  QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);
+  if (window.currentAnnotationsForTest().constFirst().start != beforeNudge.start) {
+    cleanup();
+    error = QStringLiteral("Handoff nudge did not remain undoable");
     return false;
   }
   QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);

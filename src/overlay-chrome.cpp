@@ -217,8 +217,7 @@ struct AnchoredLegendLayout {
 };
 
 QFont anchoredLegendFont() {
-  QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-  font.setPixelSize(11);
+  QFont font = chromeFont(11);
   return font;
 }
 

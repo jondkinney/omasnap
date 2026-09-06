@@ -2924,51 +2924,54 @@ void CaptureEditor::waitForExport() {
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
-bool CaptureEditor::prepareHandoff(QString &path, QString &error) {
-  scheduleSnapshot();
-  if (!waitForSnapshot()) {
-    error = QStringLiteral("Could not flush the working document");
-    return false;
-  }
-  pruneEditorHandoffs();
-  path = editorHandoffPath();
-  if (path.isEmpty()) {
-    error = QStringLiteral("Could not create private runtime directory");
-    return false;
-  }
-  if (!QFile::copy(snapshotPath_, path) ||
-      !QFile::copy(workingLogPath(), operationLogPath(path))) {
-    QFile::remove(path);
-    QFile::remove(operationLogPath(path));
-    error = QStringLiteral("Could not copy the working document");
-    return false;
-  }
-  return true;
-}
-
 void CaptureEditor::handOffEditor(bool toWindow) {
   if (busy_)
     return;
-  QString path;
-  QString error;
-  if (!prepareHandoff(path, error)) {
-    setStatus(error);
-    return;
-  }
-  // The presentation is a property of the process (the shell integration is
-  // chosen before Qt connects), so switching means handing the working
-  // document to a fresh process and closing this one. The op log carries the
-  // selection, the layers, and the undo history across.
-  if (!QProcess::startDetached(
-          QCoreApplication::applicationFilePath(),
-          {path, QStringLiteral("--editor"),
-           toWindow ? QStringLiteral("window") : QStringLiteral("overlay")})) {
+  endNudgeRun();
+  acceptText();
+  busy_ = true;
+  setEnabled(false);
+  setStatus(QStringLiteral("Preparing editor window…"));
+  // Persist a value snapshot directly: waiting for the autosave and copying
+  // its files would block input and race later coalesced snapshot writes.
+  const QImage source = pristineSource_;
+  const OperationLog log{ops_, opIndex_, nextAnnotationId_, nextMarker_,
+                         pristineLogicalSize_};
+  const QString program = QCoreApplication::applicationFilePath();
+  const auto launcher = handoffLauncher_;
+  auto *watcher = new QFutureWatcher<QString>(this);
+  connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {
+    const QString error = watcher->result();
+    watcher->deleteLater();
+    busy_ = false;
+    setEnabled(true);
+    if (error.isEmpty())
+      close();
+    else
+      setStatus(error);
+  });
+  watcher->setFuture(QtConcurrent::run([source, log, program, toWindow, launcher] {
+    pruneEditorHandoffs();
+    const QString path = editorHandoffPath();
+    if (path.isEmpty())
+      return QStringLiteral("Could not create private runtime directory");
+    QString error;
+    if (saveTemporarySnapshot(source, path, error, -1) &&
+        saveOperationLog(operationLogPath(path), log, error)) {
+      const QStringList arguments{QStringLiteral("--file"), path,
+                                   QStringLiteral("--editor"),
+                                   toWindow ? QStringLiteral("window")
+                                            : QStringLiteral("overlay")};
+      const bool launched = launcher ? launcher(program, arguments)
+                                    : QProcess::startDetached(program, arguments);
+      if (launched)
+        return QString();
+      error = QStringLiteral("Could not start omasnap");
+    }
     QFile::remove(path);
     QFile::remove(operationLogPath(path));
-    setStatus(QStringLiteral("Could not start omasnap"));
-    return;
-  }
-  close();
+    return error;
+  }));
 }
 
 void CaptureEditor::waitForReopen() {
@@ -3727,7 +3730,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     if (key == Qt::Key_Escape)
       return;
   }
-  if (phase_ == Phase::Export) {
+  if (phase_ == Phase::Export || busy_) {
     event->accept();
     return;
   }
