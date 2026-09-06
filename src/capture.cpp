@@ -146,20 +146,8 @@ QRectF captureCanvasRect(const QSizeF &sourceFrameSize,
 
     QRectF bounds(annotation.start, annotation.end);
     bounds = bounds.normalized();
-    if (annotation.kind == Annotation::Kind::Arrow) {
-      const QLineF line(annotation.start, annotation.end);
-      if (line.length() >= 1.0) {
-        const qreal angle = std::atan2(line.dy(), line.dx());
-        const qreal headLength = std::max<qreal>(14.0, annotation.size * 4.2);
-        const qreal halfWidth = headLength * 0.46;
-        const QPointF direction(std::cos(angle), std::sin(angle));
-        const QPointF perpendicular(-direction.y(), direction.x());
-        const QPointF base = annotation.end - direction * headLength;
-        bounds = pointBounds({annotation.start, annotation.end,
-                              base + perpendicular * halfWidth,
-                              base - perpendicular * halfWidth});
-      }
-    }
+    if (annotation.kind == Annotation::Kind::Arrow)
+      return arrowVisualBounds(annotation).adjusted(-1, -1, 1, 1);
     qreal extent = 1.0;
     if (annotation.kind == Annotation::Kind::Line ||
         annotation.kind == Annotation::Kind::Arrow ||
@@ -530,11 +518,15 @@ ArrowGeometry makeArrowGeometry(const Annotation &annotation,
     geometry.stroke.moveTo(annotation.start);
     geometry.stroke.quadTo(control, annotation.end);
     const qreal headSide = arrowMetric(annotation.size, kCurvedHeadSides);
-    addOpenArrowHead(geometry.stroke, annotation.end, annotation.end - control,
-                     headSide);
+    const auto tangentOrChord = [&](const QPointF &tangent,
+                                    const QPointF &fallback) {
+      return QLineF(QPointF(), tangent).length() < 0.001 ? fallback : tangent;
+    };
+    addOpenArrowHead(geometry.stroke, annotation.end,
+                     tangentOrChord(annotation.end - control, chord), headSide);
     if (annotation.arrowStyle == ArrowStyle::Double)
       addOpenArrowHead(geometry.stroke, annotation.start,
-                       annotation.start - control, headSide);
+                       tangentOrChord(annotation.start - control, -chord), headSide);
     geometry.strokeWidth = arrowMetric(annotation.size, kCurvedShaftWidths);
     return geometry;
   }

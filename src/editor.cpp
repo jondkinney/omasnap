@@ -4177,6 +4177,12 @@ QRegion CaptureEditor::pointerMotionRegion(const QPointF &point) const {
   };
   const auto annotationRegion = [&](const Annotation &annotation) {
     QRegion region;
+    if (annotation.kind == Annotation::Kind::Arrow) {
+      const QRectF bounds = arrowVisualBounds(annotation, scale);
+      return QRegion(QRectF(widgetPoint(bounds.topLeft()), bounds.size() * scale)
+                         .adjusted(-4, -4, 4, 4).toAlignedRect()) &
+             QRegion(widgetBounds);
+    }
     const bool stroke = annotation.kind == Annotation::Kind::Arrow ||
                         annotation.kind == Annotation::Kind::Line ||
                         annotation.kind == Annotation::Kind::Freehand ||
@@ -4283,6 +4289,7 @@ QRegion CaptureEditor::pointerMotionRegion(const QPointF &point) const {
     preview.end = toUnclampedAnnotationPoint(point);
   } else {
     preview.kind = dragShapeKind(tool_);
+    preview.arrowStyle = arrowStyle_;
     const QLineF span = creationSpan(toUnclampedAnnotationPoint(point));
     preview.start = span.p1();
     preview.end = span.p2();
