@@ -1,3 +1,9 @@
+#include <QThreadPool>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QLockFile>
+#include <QSaveFile>
+#include <QDateTime>
 #include "pin.hpp"
 #include "capture.hpp"
 #include "pin-file.hpp"
@@ -63,204 +69,180 @@ QString pinTitle() {
       QCoreApplication::applicationPid());
 }
 
-// The compositors a pin knows how to ask for placement. Wayland has no
-// protocol for a window to position itself, so corner placement goes
-// through compositor IPC; anywhere else the pin still opens, drags, edits,
-// copies and drags out, it just lands where the compositor decides.
-enum class Desktop { Hyprland, Sway, Unknown };
-
-Desktop detectDesktop() {
-  if (qEnvironmentVariableIsSet("HYPRLAND_INSTANCE_SIGNATURE"))
-    return Desktop::Hyprland;
-  if (qEnvironmentVariableIsSet("SWAYSOCK"))
-    return Desktop::Sway;
-  return Desktop::Unknown;
+// A single worker preserves each process's dispatch order. Cross-process
+// placement is protected separately by the runtime transaction below.
+QThreadPool &pinPool() {
+  static QThreadPool pool;
+  pool.setMaxThreadCount(1);
+  return pool;
 }
 
 QString runForOutput(const QString &program, const QStringList &arguments) {
   QProcess process;
   process.start(program, arguments);
-  if (!process.waitForFinished(1000))
+  if (!process.waitForFinished(500)) {
+    process.kill();
+    process.waitForFinished(500);
     return {};
+  }
   return QString::fromUtf8(process.readAllStandardOutput());
 }
 
-// Dispatchers rather than window rules: rules have to exist before a window
-// maps and live in the user's config, and a pin should need neither.
 void hyprDispatch(const QString &expression) {
   static_cast<void>(runForOutput(QStringLiteral("hyprctl"),
                                  {QStringLiteral("dispatch"), expression}));
 }
 
-void swayCommand(const QString &command) {
-  static_cast<void>(runForOutput(QStringLiteral("swaymsg"), {command}));
-}
-
-// The focused output's size in logical pixels; windows are placed in
-// logical pixels while Hyprland reports device ones.
-QSize compositorScreenSize(Desktop desktop) {
-  if (desktop == Desktop::Hyprland) {
-    const QJsonDocument document = QJsonDocument::fromJson(
-        runForOutput(QStringLiteral("hyprctl"),
-                     {QStringLiteral("-j"), QStringLiteral("monitors")})
-            .toUtf8());
-    for (const QJsonValue &value : document.array()) {
-      const QJsonObject monitor = value.toObject();
-      if (!monitor.value(QStringLiteral("focused")).toBool())
-        continue;
-      const double scale =
-          std::max(0.0001, monitor.value(QStringLiteral("scale")).toDouble(1.0));
-      return {qRound(monitor.value(QStringLiteral("width")).toDouble() / scale),
-              qRound(monitor.value(QStringLiteral("height")).toDouble() /
-                     scale)};
-    }
-    return {};
+QRect compositorScreenRect(const QPoint &point = {}, bool usePoint = false) {
+  const QJsonArray monitors = QJsonDocument::fromJson(
+      runForOutput(QStringLiteral("hyprctl"),
+                   {QStringLiteral("-j"), QStringLiteral("monitors")}).toUtf8()).array();
+  QRect focused;
+  for (const QJsonValue &value : monitors) {
+    const QJsonObject monitor = value.toObject();
+    const QRect geometry = pinMonitorGeometry(monitor);
+    if (usePoint && geometry.contains(point))
+      return geometry;
+    if (monitor.value(QStringLiteral("focused")).toBool())
+      focused = geometry;
   }
-  if (desktop == Desktop::Sway) {
-    const QJsonDocument document = QJsonDocument::fromJson(
-        runForOutput(QStringLiteral("swaymsg"),
-                     {QStringLiteral("-t"), QStringLiteral("get_outputs"),
-                      QStringLiteral("-r")})
-            .toUtf8());
-    for (const QJsonValue &value : document.array()) {
-      const QJsonObject output = value.toObject();
-      if (!output.value(QStringLiteral("focused")).toBool())
-        continue;
-      const QJsonObject rect = output.value(QStringLiteral("rect")).toObject();
-      return {rect.value(QStringLiteral("width")).toInt(),
-              rect.value(QStringLiteral("height")).toInt()};
-    }
-  }
-  return {};
+  return focused;
 }
 
 struct CompositorPin {
   QString title;
   QRect rect;
+  bool floating = false;
+  bool pinned = false;
 };
 
-// Where every pin currently sits, by title; the title is how a move
-// addresses one pin and not the others.
-QVector<CompositorPin> compositorPinRects(Desktop desktop) {
+QVector<CompositorPin> compositorPinRects() {
   QVector<CompositorPin> pins;
-  if (desktop == Desktop::Hyprland) {
-    const QJsonDocument document = QJsonDocument::fromJson(
-        runForOutput(QStringLiteral("hyprctl"),
-                     {QStringLiteral("-j"), QStringLiteral("clients")})
-            .toUtf8());
-    for (const QJsonValue &value : document.array()) {
-      const QJsonObject client = value.toObject();
-      const QString title = client.value(QStringLiteral("title")).toString();
-      if (!title.startsWith(kPinTitlePrefix))
-        continue;
-      const QJsonArray at = client.value(QStringLiteral("at")).toArray();
-      const QJsonArray size = client.value(QStringLiteral("size")).toArray();
-      if (at.size() == 2 && size.size() == 2) {
-        pins.push_back({title, QRect(at.at(0).toInt(), at.at(1).toInt(),
-                                     size.at(0).toInt(), size.at(1).toInt())});
-      }
-    }
-    return pins;
-  }
-  if (desktop == Desktop::Sway) {
-    // The tree is nested: a floating pin hangs off a workspace's floating
-    // list rather than sitting beside the tiled windows.
-    const QJsonDocument document = QJsonDocument::fromJson(
-        runForOutput(QStringLiteral("swaymsg"),
-                     {QStringLiteral("-t"), QStringLiteral("get_tree"),
-                      QStringLiteral("-r")})
-            .toUtf8());
-    QVector<QJsonObject> pending{document.object()};
-    while (!pending.isEmpty()) {
-      const QJsonObject node = pending.takeLast();
-      const QString name = node.value(QStringLiteral("name")).toString();
-      if (name.startsWith(kPinTitlePrefix)) {
-        const QJsonObject rect = node.value(QStringLiteral("rect")).toObject();
-        pins.push_back({name, QRect(rect.value(QStringLiteral("x")).toInt(),
-                                    rect.value(QStringLiteral("y")).toInt(),
-                                    rect.value(QStringLiteral("width")).toInt(),
-                                    rect.value(QStringLiteral("height"))
-                                        .toInt())});
-      }
-      for (const char *key : {"nodes", "floating_nodes"}) {
-        for (const QJsonValue &child :
-             node.value(QLatin1String(key)).toArray())
-          pending.push_back(child.toObject());
-      }
-    }
+  const QJsonArray clients = QJsonDocument::fromJson(
+      runForOutput(QStringLiteral("hyprctl"),
+                   {QStringLiteral("-j"), QStringLiteral("clients")}).toUtf8()).array();
+  for (const QJsonValue &value : clients) {
+    const QJsonObject client = value.toObject();
+    const QString title = client.value(QStringLiteral("title")).toString();
+    if (!title.startsWith(kPinTitlePrefix + QLatin1Char(' ')))
+      continue;
+    const QJsonArray at = client.value(QStringLiteral("at")).toArray();
+    const QJsonArray size = client.value(QStringLiteral("size")).toArray();
+    if (at.size() == 2 && size.size() == 2)
+      pins.push_back({title, QRect(at.at(0).toInt(), at.at(1).toInt(),
+                                   size.at(0).toInt(), size.at(1).toInt()),
+                      client.value(QStringLiteral("floating")).toBool(),
+                      client.value(QStringLiteral("pinned")).toBool()});
   }
   return pins;
 }
 
-bool compositorSeesPin(Desktop desktop, const QString &title) {
-  for (const CompositorPin &pin : compositorPinRects(desktop)) {
-    if (pin.title == title)
-      return true;
+// Dispatch completion precedes the compositor's animation. Reserve targets
+// under one lock so another pin cannot claim the same corner in that gap.
+// Reservations disappear once reached, on drag, or after a bounded timeout;
+// they are never a persistent substitute for actual compositor geometry.
+class PinPlacement {
+public:
+  PinPlacement() : root_(secureRuntimeDirectory()),
+                   lock_(QDir(root_).filePath(QStringLiteral("pin-placement.lock"))) {
+    ready_ = !root_.isEmpty() && lock_.tryLock(1000);
+    if (!ready_)
+      return;
+    QFile file(QDir(root_).filePath(QStringLiteral("pin-targets.json")));
+    if (file.open(QIODevice::ReadOnly))
+      targets_ = QJsonDocument::fromJson(file.readAll()).object();
+    pins = compositorPinRects();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const QString &title : targets_.keys()) {
+      const QJsonObject target = targets_.value(title).toObject();
+      const QRect rect(target.value(QStringLiteral("x")).toInt(),
+                        target.value(QStringLiteral("y")).toInt(),
+                        target.value(QStringLiteral("w")).toInt(),
+                        target.value(QStringLiteral("h")).toInt());
+      auto pin = std::find_if(pins.begin(), pins.end(), [&](const CompositorPin &p) {
+        return p.title == title;
+      });
+      if (now - target.value(QStringLiteral("time")).toInteger() > 5000 ||
+          pin == pins.end() || pin->rect == rect) {
+        targets_.remove(title);
+      } else {
+        pin->rect = rect;
+      }
+    }
   }
-  return false;
+  bool ready() const { return ready_; }
+  void release(const QString &title) {
+    targets_.remove(title);
+    save();
+  }
+  bool move(const QString &title, const QRect &rect) {
+    targets_.insert(title, QJsonObject{{QStringLiteral("x"), rect.x()},
+                                      {QStringLiteral("y"), rect.y()},
+                                      {QStringLiteral("w"), rect.width()},
+                                      {QStringLiteral("h"), rect.height()},
+                                      {QStringLiteral("time"), QDateTime::currentMSecsSinceEpoch()}});
+    if (!save())
+      return false;
+    hyprDispatch(pinMoveDispatch(title, rect.x(), rect.y()));
+    return true;
+  }
+  QVector<CompositorPin> pins;
+private:
+  bool save() {
+    QSaveFile file(QDir(root_).filePath(QStringLiteral("pin-targets.json")));
+    const QByteArray data = QJsonDocument(targets_).toJson(QJsonDocument::Compact);
+    return file.open(QIODevice::WriteOnly) && file.write(data) == data.size() && file.commit();
+  }
+  QString root_;
+  QLockFile lock_;
+  QJsonObject targets_;
+  bool ready_ = false;
+};
+
+void movePin(const QString &title, const QRect &target) {
+  static_cast<void>(QtConcurrent::run(&pinPool(), [title, target] {
+    PinPlacement placement;
+    if (placement.ready())
+      placement.move(title, target);
+  }));
 }
 
-void movePin(Desktop desktop, const QString &title, const QPoint &position) {
-  if (desktop == Desktop::Hyprland)
-    hyprDispatch(pinMoveDispatch(title, position.x(), position.y()));
-  else if (desktop == Desktop::Sway)
-    swayCommand(pinSwayMoveCommand(title, position.x(), position.y()));
-}
-
-// Where a new pin lands: ask the compositor where the existing pins are
-// rather than keeping a count. Every pin is its own process, a file of
-// positions goes stale the first time one crashes, and every pin on screen
-// blocks the space it covers, whatever its shape, so a new pin packs snugly
-// above what is there and never lands on a pin the user placed or an older
-// build left behind.
-QPoint nextPinPosition(Desktop desktop, const QSize &screen,
-                       const QSize &frame, const QString &ownTitle) {
-  QVector<QRect> blockers;
-  for (const CompositorPin &pin : compositorPinRects(desktop)) {
-    if (pin.title != ownTitle)
-      blockers.push_back(pin.rect);
-  }
-  return pinPackedPosition(blockers, screen, frame, kPinGap,
-                           qRound(kCornerMargin));
-}
-
-// A pin left the column: pack the survivors back down, keeping their order.
-// Only pins still hugging the right edge take part; one dragged elsewhere
-// is left alone and packed around. `excludedTitle` names one to leave out
-// even if the compositor still lists it, which it may while that pin is
-// closing.
-void compactPinColumn(Desktop desktop, const QString &excludedTitle) {
-  const QSize screen = compositorScreenSize(desktop);
-  if (screen.isEmpty())
-    return;
-  QVector<CompositorPin> column;
-  QVector<QRect> blockers;
-  for (const CompositorPin &pin : compositorPinRects(desktop)) {
-    if (pin.title == excludedTitle)
-      continue;
-    if (pinInColumn(pin.rect, screen, qRound(kCornerMargin)))
-      column.push_back(pin);
-    else
-      blockers.push_back(pin.rect);
-  }
-  std::sort(column.begin(), column.end(),
-            [](const CompositorPin &a, const CompositorPin &b) {
-              return a.rect.y() > b.rect.y();
-            });
-  for (const CompositorPin &pin : column) {
-    const QPoint target = pinPackedPosition(
-        blockers, screen, pin.rect.size(), kPinGap, qRound(kCornerMargin));
-    if ((target - pin.rect.topLeft()).manhattanLength() > 4)
-      movePin(desktop, pin.title, target);
-    blockers.push_back(QRect(target, pin.rect.size()));
-  }
+void compactPinColumn(const QString &excludedTitle, const QRect &screen) {
+  static_cast<void>(QtConcurrent::run(&pinPool(), [excludedTitle, screen] {
+    PinPlacement placement;
+    if (!placement.ready() || screen.isEmpty())
+      return;
+    QVector<CompositorPin> column;
+    QVector<QRect> blockers;
+    for (CompositorPin pin : placement.pins) {
+      if (pin.title == excludedTitle || !screen.intersects(pin.rect))
+        continue;
+      pin.rect.translate(-screen.topLeft());
+      if (pinInColumn(pin.rect, screen.size(), qRound(kCornerMargin)))
+        column.push_back(pin);
+      else
+        blockers.push_back(pin.rect);
+    }
+    std::sort(column.begin(), column.end(), [](const CompositorPin &a, const CompositorPin &b) {
+      return a.rect.y() > b.rect.y();
+    });
+    for (const CompositorPin &pin : column) {
+      const auto at = pinPackedPosition(blockers, screen.size(), pin.rect.size(),
+                                        kPinGap, qRound(kCornerMargin));
+      if (!at)
+        return;
+      const QRect target(*at, pin.rect.size());
+      if ((*at - pin.rect.topLeft()).manhattanLength() > 4)
+        placement.move(pin.title, target.translated(screen.topLeft()));
+      blockers.push_back(target);
+    }
+  }));
 }
 
 class PinWindow final : public QWidget {
 public:
   explicit PinWindow(QImage image, QString path, const QSize &frame)
-      : image_(std::move(image)), path_(std::move(path)), snapshotFile_(path_),
-        desktop_(detectDesktop()) {
+      : image_(std::move(image)), path_(std::move(path)), snapshotFile_(path_) {
     setWindowTitle(pinTitle());
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     // Fixed, not merely sized: min equal to max is the hint a compositor
@@ -270,8 +252,51 @@ public:
     setAttribute(Qt::WA_AlwaysShowToolTips, true);
     dragWatchTimer_.setInterval(80);
     connect(&dragWatchTimer_, &QTimer::timeout, this,
-            [this] { observeDrag(); });
+            [this] { requestDragSnapshot(); });
   }
+
+  void setPlacementSnapshot(const QRect &screen, const QVector<CompositorPin> &pins) {
+    dragScreen_ = screen;
+    cachedPins_ = pins;
+  }
+
+  void requestDragSnapshot() {
+    if (queryPending_)
+      return;
+    queryPending_ = true;
+    using Snapshot = QPair<QRect, QVector<CompositorPin>>;
+    auto *watcher = new QFutureWatcher<Snapshot>(this);
+    connect(watcher, &QFutureWatcher<Snapshot>::finished, this, [this, watcher] {
+      const auto snapshot = watcher->result();
+      cachedPins_ = snapshot.second;
+      if (!snapshot.first.isEmpty() && snapshot.first != dragScreen_) {
+        compactPinColumn(windowTitle(), dragScreen_);
+        dragScreen_ = snapshot.first;
+        commandedTargets_.clear();
+      }
+      watcher->deleteLater();
+      queryPending_ = false;
+      if (closing_)
+        return;
+      if (finishRequested_) {
+        finishRequested_ = false;
+        finishDragFromSnapshot();
+      } else if (dragWatchTimer_.isActive()) {
+        observeDrag();
+      }
+    });
+    const QString title = windowTitle();
+    watcher->setFuture(QtConcurrent::run(&pinPool(), [title]() -> Snapshot {
+      const auto pins = compositorPinRects();
+      for (const CompositorPin &pin : pins) {
+        if (pin.title == title)
+          return {compositorScreenRect(pin.rect.center(), true), pins};
+      }
+      return {{}, pins};
+    }));
+  }
+
+  ~PinWindow() override { closeButtonWatch(); }
 
   [[nodiscard]] bool hasPinLock() const { return snapshotFile_.isLocked(); }
 
@@ -375,12 +400,16 @@ protected:
   // that never moves the window was a click and times out instead. Either
   // way the column closes the gap behind a pin that was dragged away.
   void beginDragWatch() {
-    if (desktop_ == Desktop::Unknown)
-      return;
+    const QString title = windowTitle();
+    static_cast<void>(QtConcurrent::run(&pinPool(), [title] {
+      PinPlacement placement;
+      if (placement.ready())
+        placement.release(title);
+    }));
     dragStartRect_ = ownCompositorRect();
     if (dragStartRect_.isNull())
       return;
-    dragScreen_ = compositorScreenSize(desktop_);
+
     dragPreviousRect_ = {};
     commandedTargets_.clear();
     dragMoved_ = false;
@@ -400,7 +429,7 @@ protected:
       dragWatchTimer_.stop();
       closeButtonWatch();
       if (spreadActive_)
-        compactPinColumn(desktop_, windowTitle());
+        compactPinColumn(windowTitle(), dragScreen_);
       spreadActive_ = false;
       return;
     }
@@ -451,13 +480,7 @@ protected:
         if (events[index].type != EV_KEY || events[index].code != BTN_LEFT ||
             events[index].value != 0 || !dragWatchTimer_.isActive())
           continue;
-        const QRect rect = ownCompositorRect();
-        dragMoved_ =
-            dragMoved_ || (!rect.isNull() && rect != dragStartRect_);
-        if (dragMoved_)
-          finishDrag();
-        else
-          dragWatchTimer_.stop();
+        finishDrag();
         closeButtonWatch();
         return;
       }
@@ -480,28 +503,28 @@ protected:
   void pointerWokeDuringWatch() {
     if (!dragWatchTimer_.isActive())
       return;
-    const QRect rect = ownCompositorRect();
-    dragMoved_ = dragMoved_ || (!rect.isNull() && rect != dragStartRect_);
-    if (!dragMoved_) {
-      // A click, not a drag: nothing moved, nothing to restore.
-      dragWatchTimer_.stop();
-      return;
-    }
     finishDrag();
   }
 
   void finishDrag() {
+    finishRequested_ = true;
+    requestDragSnapshot();
+  }
+
+  void finishDragFromSnapshot() {
     dragWatchTimer_.stop();
     closeButtonWatch();
     // One last look at the true final position; the last poll can be a
     // frame behind it.
     const QRect rect = ownCompositorRect();
+    if (!dragMoved_ && rect == dragStartRect_)
+      return;
     if (!rect.isNull())
       previewInsertion(rect);
     if (!snapSpot_.isNull())
-      movePin(desktop_, windowTitle(), snapSpot_.topLeft());
+      movePin(windowTitle(), snapSpot_);
     else
-      compactPinColumn(desktop_, QString());
+      compactPinColumn(QString(), dragScreen_);
     spreadActive_ = false;
   }
 
@@ -512,19 +535,19 @@ protected:
       return;
     QVector<QPair<QString, QRect>> column;
     QVector<QRect> blockers;
-    for (const CompositorPin &pin : compositorPinRects(desktop_)) {
-      if (pin.title == windowTitle())
+    for (const CompositorPin &pin : cachedPins_) {
+      if (pin.title == windowTitle() || !dragScreen_.intersects(pin.rect))
         continue;
-      if (pinInColumn(pin.rect, dragScreen_, qRound(kCornerMargin)))
-        column.push_back({pin.title, pin.rect});
+      if (pinInColumn(pin.rect.translated(-dragScreen_.topLeft()), dragScreen_.size(), qRound(kCornerMargin)))
+        column.push_back({pin.title, pin.rect.translated(-dragScreen_.topLeft())});
       else
-        blockers.push_back(pin.rect);
+        blockers.push_back(pin.rect.translated(-dragScreen_.topLeft()));
     }
     const PinInsertionPlan plan = pinInsertionPlan(
-        column, blockers, rect, dragScreen_, kPinGap, qRound(kCornerMargin));
+        column, blockers, rect.translated(-dragScreen_.topLeft()), dragScreen_.size(), kPinGap, qRound(kCornerMargin));
     if (plan.index < 0) {
       if (spreadActive_)
-        compactPinColumn(desktop_, windowTitle());
+        compactPinColumn(windowTitle(), dragScreen_);
       spreadActive_ = false;
       snapSpot_ = {};
       commandedTargets_.clear();
@@ -537,16 +560,16 @@ protected:
     for (const auto &[title, target] : plan.spread) {
       if (commandedTargets_.value(title, QPoint(INT_MIN, INT_MIN)) !=
           target.topLeft()) {
-        movePin(desktop_, title, target.topLeft());
+        movePin(title, target.translated(dragScreen_.topLeft()));
         commandedTargets_.insert(title, target.topLeft());
       }
     }
     spreadActive_ = true;
-    snapSpot_ = plan.spot;
+    snapSpot_ = plan.spot.translated(dragScreen_.topLeft());
   }
 
   [[nodiscard]] QRect ownCompositorRect() const {
-    for (const CompositorPin &pin : compositorPinRects(desktop_)) {
+    for (const CompositorPin &pin : cachedPins_) {
       if (pin.title == windowTitle())
         return pin.rect;
     }
@@ -616,7 +639,7 @@ protected:
   }
 
   void wheelEvent(QWheelEvent *event) override {
-    // Pinned captures deliberately keep a stable 250x200 frame so the
+    // Pinned captures deliberately keep a stable display-shaped frame so the
     // controls remain usable and the image area never reflows.
     event->accept();
   }
@@ -637,9 +660,12 @@ protected:
   }
 
   void closeEvent(QCloseEvent *event) override {
+    closing_ = true;
+    dragWatchTimer_.stop();
+    closeButtonWatch();
     // The compositor may still list this window while it closes, so it is
     // excluded by name rather than trusted to be gone.
-    compactPinColumn(desktop_, windowTitle());
+    compactPinColumn(windowTitle(), dragScreen_);
     QWidget::closeEvent(event);
   }
 
@@ -700,11 +726,14 @@ private:
   QImage image_;
   QString path_;
   PinSnapshotFile snapshotFile_;
-  Desktop desktop_;
+  QVector<CompositorPin> cachedPins_;
+  bool closing_ = false;
+  bool queryPending_ = false;
+  bool finishRequested_ = false;
   QTimer dragWatchTimer_;
   QRect dragStartRect_;
   QRect dragPreviousRect_;
-  QSize dragScreen_;
+  QRect dragScreen_;
   QHash<QString, QPoint> commandedTargets_;
   QVector<QPair<int, QSocketNotifier *>> buttonWatches_;
   QRect snapSpot_;
@@ -726,55 +755,61 @@ int runPinnedCapture(const QString &path) {
     return 1;
   }
 
-  const Desktop desktop = detectDesktop();
-  PinWindow window(std::move(image), path,
-                   pinFrameSize(compositorScreenSize(desktop)));
+  const QRect screen = compositorScreenRect();
+  PinWindow window(std::move(image), path, pinFrameSize(screen.size()));
   if (!window.hasPinLock()) {
     qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;
   }
   window.show();
-
-  // A normal window, floated and pinned through the compositor, instead of
-  // a layer surface: the compositor draws its frame, moves it, and keeps it
-  // on every workspace. Not immediately though: showing is this side's word
-  // for mapped, and the compositor has not necessarily registered the
-  // window under its title yet; dispatches sent then report success and do
-  // nothing, which leaves a pin centered and unpinned. Retry until the
-  // client list has it, then float first (a tiled window has no position of
-  // its own to set), pin it, and drop it into the lowest free slot.
-  if (desktop != Desktop::Unknown) {
-    auto attempts = std::make_shared<int>(0);
-    QTimer *settle = new QTimer(&window);
-    settle->setInterval(50);
-    QObject::connect(settle, &QTimer::timeout, &window,
-                     [&window, desktop, settle, attempts] {
-                       ++*attempts;
-                       if (!compositorSeesPin(desktop, window.windowTitle())) {
-                         if (*attempts >= 10)
-                           settle->stop();
-                         return;
-                       }
-                       settle->stop();
-                       const QString title = window.windowTitle();
-                       if (desktop == Desktop::Hyprland) {
-                         hyprDispatch(pinFloatDispatch(title));
-                         hyprDispatch(pinPinDispatch(title));
-                       }
-                       const QSize screen = compositorScreenSize(desktop);
-                       if (screen.isEmpty())
-                         return;
-                       const QPoint origin =
-                           nextPinPosition(desktop, screen, window.size(),
-                                           window.windowTitle());
-                       if (desktop == Desktop::Hyprland) {
-                         movePin(desktop, title, origin);
-                       } else {
-                         swayCommand(pinSwayArrangeCommand(title, origin.x(),
-                                                           origin.y()));
-                       }
-                     });
-    settle->start();
-  }
+  auto *settle = new QTimer(&window);
+  settle->setSingleShot(true);
+  settle->setInterval(50);
+  using PlacementResult = QPair<QRect, QVector<CompositorPin>>;
+  auto *watcher = new QFutureWatcher<PlacementResult>(&window);
+  QObject::connect(watcher, &QFutureWatcher<PlacementResult>::finished, &window,
+                   [&window, watcher, settle, attempts = 0]() mutable {
+    const auto result = watcher->result();
+    if (!result.first.isEmpty()) {
+      window.setPlacementSnapshot(result.first, result.second);
+      watcher->deleteLater();
+      settle->deleteLater();
+    } else if (++attempts < 10) {
+      settle->start();
+    } else {
+      watcher->deleteLater();
+      settle->deleteLater();
+    }
+  });
+  QObject::connect(settle, &QTimer::timeout, &window, [&window, watcher, screen] {
+    const QString title = window.windowTitle();
+    const QSize frame = window.size();
+    watcher->setFuture(QtConcurrent::run(&pinPool(), [title, frame, screen]() -> PlacementResult {
+      PinPlacement placement;
+      if (!placement.ready() || screen.isEmpty())
+        return {};
+      auto own = std::find_if(placement.pins.begin(), placement.pins.end(),
+                              [&](const CompositorPin &pin) { return pin.title == title; });
+      if (own == placement.pins.end())
+        return {};
+      if (!own->floating)
+        hyprDispatch(pinFloatDispatch(title));
+      if (!own->pinned)
+        hyprDispatch(pinPinDispatch(title));
+      QVector<QRect> blockers;
+      for (const CompositorPin &pin : placement.pins) {
+        if (pin.title != title && screen.intersects(pin.rect))
+          blockers.push_back(pin.rect.translated(-screen.topLeft()));
+      }
+      const auto at = pinPackedPosition(blockers, screen.size(), frame,
+                                        kPinGap, qRound(kCornerMargin));
+      if (at) {
+        own->rect = QRect(*at + screen.topLeft(), frame);
+        placement.move(title, own->rect);
+      }
+      return {screen, placement.pins};
+    }));
+  });
+  settle->start();
   return QApplication::exec();
 }

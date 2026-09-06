@@ -2,6 +2,8 @@
 #pragma once
 
 #include <QPair>
+#include <QJsonObject>
+#include <optional>
 #include <QPoint>
 #include <QRect>
 #include <QSize>
@@ -19,7 +21,8 @@
 /// is full. Blockers can be any size; the pin packs against what is
 /// actually there rather than onto a grid that wastes a slot for every
 /// straddled boundary.
-[[nodiscard]] QPoint pinPackedPosition(const QVector<QRect> &blockers,
+// Returns no position when the output is full or smaller than the frame.
+[[nodiscard]] std::optional<QPoint> pinPackedPosition(const QVector<QRect> &blockers,
                                        const QSize &screenSize,
                                        const QSize &frame, int gap,
                                        int margin);
@@ -51,8 +54,8 @@ pinInsertionPlan(QVector<QPair<QString, QRect>> column,
 [[nodiscard]] QString pinFloatDispatch(const QString &title);
 [[nodiscard]] QString pinPinDispatch(const QString &title);
 [[nodiscard]] QString pinMoveDispatch(const QString &title, int x, int y);
-[[nodiscard]] QString pinSwayArrangeCommand(const QString &title, int x, int y);
-[[nodiscard]] QString pinSwayMoveCommand(const QString &title, int x, int y);
+/// Global logical geometry, including scale and quarter-turn transforms.
+[[nodiscard]] QRect pinMonitorGeometry(const QJsonObject &monitor);
 
 /** The hover tip for a pin control, empty outside the known controls. */
 [[nodiscard]] QString pinControlTip(int index);

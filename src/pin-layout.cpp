@@ -15,11 +15,13 @@ QSize pinFrameSize(const QSize &screenSize) {
   return {width, height};
 }
 
-QPoint pinPackedPosition(const QVector<QRect> &blockers,
+std::optional<QPoint> pinPackedPosition(const QVector<QRect> &blockers,
                          const QSize &screenSize, const QSize &frame, int gap,
                          int margin) {
   int x = screenSize.width() - margin - frame.width();
-  for (int column = 0; column < 8; ++column) {
+  if (frame.isEmpty() || gap < 0 || margin < 0)
+    return std::nullopt;
+  while (x >= margin) {
     int y = screenSize.height() - margin - frame.height();
     while (y >= margin) {
       const QRect candidate(x, y, frame.width(), frame.height());
@@ -29,15 +31,14 @@ QPoint pinPackedPosition(const QVector<QRect> &blockers,
           lowestTop = std::max(lowestTop, blocker.top());
       }
       if (lowestTop < 0)
-        return {x, y};
+        return QPoint(x, y);
       // Climb to one gap above the lowest pin in the way, then look again:
       // the spot up there may graze another one.
       y = lowestTop - gap - frame.height();
     }
     x -= frame.width() + gap;
   }
-  return {screenSize.width() - margin - frame.width(),
-          screenSize.height() - margin - frame.height()};
+  return std::nullopt;
 }
 
 PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
@@ -57,11 +58,13 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
   QVector<QRect> packed;
   QVector<int> packedCenters;
   for (const auto &pair : column) {
-    const QPoint at =
+    const auto at =
         pinPackedPosition(seed, screenSize, pair.second.size(), gap, margin);
-    seed.push_back(QRect(at, pair.second.size()));
-    packed.push_back(QRect(at, pair.second.size()));
-    packedCenters.push_back(at.y() + pair.second.height() / 2);
+    if (!at)
+      return {};
+    seed.push_back(QRect(*at, pair.second.size()));
+    packed.push_back(QRect(*at, pair.second.size()));
+    packedCenters.push_back(at->y() + pair.second.height() / 2);
   }
   // Touching any part of the stack joins it; fully outside stays out. The
   // stack includes the open spot on top, which is where a pin dragged off
@@ -69,9 +72,9 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
   // dragged fully past where it would sit. For an empty column that spot
   // is the corner itself.
   QVector<QRect> stack = packed;
-  stack.push_back(
-      QRect(pinPackedPosition(seed, screenSize, dragged.size(), gap, margin),
-            dragged.size()));
+  const auto vacant = pinPackedPosition(seed, screenSize, dragged.size(), gap, margin);
+  if (vacant)
+    stack.push_back(QRect(*vacant, dragged.size()));
   // The pins' live positions count too: a stack that has not packed down
   // yet is still the stack the user sees and aims for.
   for (const auto &pair : column)
@@ -95,21 +98,27 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
   seed = blockers;
   for (int position = 0; position < column.size(); ++position) {
     if (position == index) {
-      const QPoint at =
+      const auto at =
           pinPackedPosition(seed, screenSize, dragged.size(), gap, margin);
-      plan.spot = QRect(at, dragged.size());
+      if (!at)
+        return {};
+      plan.spot = QRect(*at, dragged.size());
       seed.push_back(plan.spot);
     }
     const auto &pair = column.at(position);
-    const QPoint at =
+    const auto at =
         pinPackedPosition(seed, screenSize, pair.second.size(), gap, margin);
-    seed.push_back(QRect(at, pair.second.size()));
-    plan.spread.push_back({pair.first, QRect(at, pair.second.size())});
+    if (!at)
+      return {};
+    seed.push_back(QRect(*at, pair.second.size()));
+    plan.spread.push_back({pair.first, QRect(*at, pair.second.size())});
   }
   if (index == column.size()) {
-    const QPoint at =
+    const auto at =
         pinPackedPosition(seed, screenSize, dragged.size(), gap, margin);
-    plan.spot = QRect(at, dragged.size());
+    if (!at)
+      return {};
+    plan.spot = QRect(*at, dragged.size());
   }
   return plan;
 }
@@ -145,19 +154,15 @@ QString pinMoveDispatch(const QString &title, int x, int y) {
       .arg(windowSelector(title));
 }
 
-QString pinSwayArrangeCommand(const QString &title, int x, int y) {
-  return QStringLiteral("[title=\"^%1$\"] floating enable, sticky enable, "
-                        "move absolute position %2 %3")
-      .arg(title)
-      .arg(x)
-      .arg(y);
-}
-
-QString pinSwayMoveCommand(const QString &title, int x, int y) {
-  return QStringLiteral("[title=\"^%1$\"] move absolute position %2 %3")
-      .arg(title)
-      .arg(x)
-      .arg(y);
+QRect pinMonitorGeometry(const QJsonObject &monitor) {
+  const qreal scale = std::max<qreal>(0.0001, monitor.value(QStringLiteral("scale")).toDouble(1));
+  QSize pixels(monitor.value(QStringLiteral("width")).toInt(),
+               monitor.value(QStringLiteral("height")).toInt());
+  if (monitor.value(QStringLiteral("transform")).toInt() % 2 != 0)
+    pixels.transpose();
+  return {monitor.value(QStringLiteral("x")).toInt(),
+          monitor.value(QStringLiteral("y")).toInt(),
+          qRound(pixels.width() / scale), qRound(pixels.height() / scale)};
 }
 
 QString pinControlTip(int index) {

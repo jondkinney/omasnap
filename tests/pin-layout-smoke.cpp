@@ -39,13 +39,13 @@ bool runPinLayoutSmoke(QString &error) {
   // An empty corner takes the first pin snug against the margins; the next
   // ones pack one gap above whatever is there, whatever its size, and a
   // full column starts a new one to the left.
-  const QPoint first = pinPackedPosition({}, screen, pin, 10, 14);
+  const QPoint first = pinPackedPosition({}, screen, pin, 10, 14).value_or(QPoint());
   if (first != QPoint(286, 206)) {
     error = QStringLiteral("The first pin did not land in the corner");
     return false;
   }
   const QPoint second =
-      pinPackedPosition({QRect(first, pin)}, screen, pin, 10, 14);
+      pinPackedPosition({QRect(first, pin)}, screen, pin, 10, 14).value_or(QPoint());
   if (second != QPoint(286, 116)) {
     error = QStringLiteral("The second pin did not pack above the first");
     return false;
@@ -172,7 +172,7 @@ bool runPinLayoutSmoke(QString &error) {
   }
 
   // The dispatch expressions are Lua for a Lua-configured Hyprland and the
-  // classic criteria grammar for sway; a placement that silently does
+  // a placement that silently does
   // nothing is exactly the failure these guard.
   const QString title = QStringLiteral("omasnap-pin 1234");
   if (pinFloatDispatch(title) !=
@@ -187,13 +187,35 @@ bool runPinLayoutSmoke(QString &error) {
     error = QStringLiteral("Hyprland dispatch expressions were malformed");
     return false;
   }
-  if (pinSwayArrangeCommand(title, 120, 40) !=
-          QStringLiteral("[title=\"^omasnap-pin 1234$\"] floating enable, "
-                         "sticky enable, move absolute position 120 40") ||
-      pinSwayMoveCommand(title, 120, 40) !=
-          QStringLiteral(
-              "[title=\"^omasnap-pin 1234$\"] move absolute position 120 40")) {
-    error = QStringLiteral("Sway commands were malformed");
+  QVector<QRect> occupied;
+  const QSize wide(2400, 110);
+  for (int index = 0; index < 21; ++index) {
+    const auto at = pinPackedPosition(occupied, wide, pin, 10, 14);
+    if (!at || !QRect(QPoint(), wide).contains(QRect(*at, pin))) {
+      error = QStringLiteral("Packing stopped before all visible columns were used");
+      return false;
+    }
+    for (const QRect &blocker : occupied) {
+      if (blocker.intersects(QRect(*at, pin))) {
+        error = QStringLiteral("Packing reused an occupied slot");
+        return false;
+      }
+    }
+    occupied.push_back(QRect(*at, pin));
+  }
+  if (pinPackedPosition(occupied, wide, pin, 10, 14) ||
+      pinPackedPosition({}, QSize(90, 70), pin, 10, 14)) {
+    error = QStringLiteral("A full or undersized output returned an unsafe slot");
+    return false;
+  }
+  const QJsonObject rotated{{QStringLiteral("x"), -1080},
+                             {QStringLiteral("y"), 200},
+                             {QStringLiteral("width"), 3840},
+                             {QStringLiteral("height"), 2160},
+                             {QStringLiteral("scale"), 2},
+                             {QStringLiteral("transform"), 1}};
+  if (pinMonitorGeometry(rotated) != QRect(-1080, 200, 1080, 1920)) {
+    error = QStringLiteral("Pin monitor geometry lost origin, scale or transform");
     return false;
   }
   return true;

@@ -37,7 +37,7 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   mesh-gradient backdrops, and rendered drop shadows on standard backdrop cards.
 - Cut tool: drag across a band of the image to remove it and collapse the gap, with a
   live preview and dashed seam marker while dragging; annotations shift to follow.
-- Pin a finished capture as a bottom-right always-on-top layer surface, launched
+- Pin a finished capture as a bottom-right floating compositor window, launched
   from the same `omasnap` executable and visible on every workspace.
 - Crash-resistant working documents under `/run/user/<UID>/omasnap/` (falling back to
   a private `/tmp/omasnap-<UID>/`): the original source image plus a sidecar JSON
@@ -396,11 +396,19 @@ without reaching for the pointer.
 
 `P` renders the current capture, writes it to a `pin-<pid>-<n>-<random>.png` under
 the runtime snapshot directory, and launches the same `omasnap` executable in
-detached pin mode. Active pins stack from the bottom-right and can be dragged
-by the image background. The layer stays visible on every workspace without
-compositor window rules. It preserves the image
-aspect ratio, with a maximum width of one third of the screen and a maximum height of one
-half.
+detached pin mode. Hyprland floats and pins each window on every workspace;
+its border and shadow come from the compositor. Pins pack upward from the focused
+monitor's bottom-right corner, then into further columns. Placement accounts for
+monitor origins, scaling and rotation, and reserves each new target while the
+compositor animates it. If no on-screen slot fits, automatic packing leaves the
+window where the compositor placed it.
+
+The preview is 200 logical pixels wide with the display's aspect ratio (height
+clamped to 50–400 pixels). It fills that frame with a top-anchored cover crop;
+copy, edit and drag-out still use the complete full-resolution image. Drag the
+image background to move a pin; dragging over the stack opens an insertion gap,
+and releasing snaps it into that gap. Moving or closing a stacked pin packs the
+remaining column down.
 
 Pinning neither touches the clipboard nor writes to the screenshot directory; it is a
 fourth output alongside copy, save, and copy-and-save. `P` closes the editor and releases
@@ -415,12 +423,12 @@ Hover the pin to reveal its controls:
 | Link button | Copy the source file path |
 | Copy button, `Ctrl+C` | Copy the full-resolution PNG |
 | Double-wide top-left drag handle | Drag the PNG into a file-capable drop target |
-| Wheel | Resize within the screen caps, preserving aspect ratio |
+| Wheel | Keep the fixed preview size |
 | Close button, `Esc`, middle-click | Close |
 
 Image and path copying use `wl-copy` rather than `QClipboard`, so clipboard data remains
-available after the pin is closed. No font-based symbol set or compositor-specific window
-rule is required; the controls use the same vector icon renderer as the annotation toolbar.
+available after the pin is closed. Hyprland placement uses runtime dispatches and
+requires no user window rules. The controls use the annotation toolbar’s vector icons.
 
 Canvas boundary changes affect only preview and export clipping. The complete vector
 geometry stays in the operation log, so switching back to Grow restores every off-canvas

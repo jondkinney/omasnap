@@ -1,4 +1,4 @@
-/** @fileoverview Owns locks for pinned snapshot files and layout slots. */
+/** @fileoverview Owns locks for pinned snapshot files. */
 #pragma once
 
 #include <QString>

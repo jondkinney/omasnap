@@ -30,7 +30,7 @@ reading its corresponding worker:
 | `ocrWatcher_` | Renders the OCR crop and runs `tesseract` |
 | `finishWatcher_` | Renders the export, encodes PNG, does the clipboard round trip, moves the file |
 | `snapshotWatcher_` | Writes the crash-recovery working snapshot + operation log |
-| `pinWatcher_` | Renders the image for a pinned layer surface |
+| `pinWatcher_` | Renders the image for a pinned compositor window |
 | `recentsWatcher_` | Lists and decodes thumbnails for the recents shelf |
 | `backdropWatcher_` | Decodes an optional user-supplied backdrop image |
 | `highlighterProbeWatcher_` | Detects a nearby screenshot text row for highlighter Snap mode |
@@ -130,3 +130,11 @@ earlier in the same call.
 See also [editing-model.md](editing-model.md) for what state a background
 render is allowed to read, and [dependencies.md](dependencies.md) for the
 processes (`tesseract`, `wl-copy`/`wl-paste`, `hyprctl`) these workers spawn.
+
+## Floating pins
+
+Pin placement, compositor polling, and move dispatches run on a single worker
+per pin process. The GUI applies completed geometry snapshots through a watcher;
+it never waits for `hyprctl` during a drag. A runtime lock serializes placement
+across pin processes, with short-lived target reservations covering compositor
+animation latency. The initial monitor query is bounded and runs before mapping.
