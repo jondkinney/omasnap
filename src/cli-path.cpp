@@ -25,7 +25,26 @@ QString resolveLocalImagePath(const QString &target) {
   return file.isFile() ? file.absoluteFilePath() : QString{};
 }
 
-void configureCaptureCommandLine(QCommandLineParser &parser) {
+void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
+  // QApplication consumes these before the normal parse. Recognize them in
+  // the early shell-role parse too, without exposing or applying them here.
+  if (beforeQt) {
+    parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
+    for (const char *name : {"platform", "platformpluginpath", "platformtheme",
+                             "plugin", "qmljsdebugger", "qwindowgeometry",
+                             "qwindowicon", "qwindowtitle", "session",
+                             "style", "stylesheet"}) {
+      QCommandLineOption option(QString::fromLatin1(name), QString(),
+                                 QStringLiteral("value"));
+      option.setFlags(QCommandLineOption::HiddenFromHelp);
+      parser.addOption(option);
+    }
+    for (const char *name : {"reverse", "widgetcount"}) {
+      QCommandLineOption option(QString::fromLatin1(name));
+      option.setFlags(QCommandLineOption::HiddenFromHelp);
+      parser.addOption(option);
+    }
+  }
   parser.setApplicationDescription(QStringLiteral(
       "Native Wayland screenshot and annotation overlay for Hyprland and "
       "Omarchy.\n"

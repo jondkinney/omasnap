@@ -320,6 +320,8 @@ void prunePinnedSnapshots();
  *  presentation (overlay to window or back). */
 [[nodiscard]] QString editorHandoffPath();
 void pruneEditorHandoffs();
+/** Removes a consumed private handoff pair; never removes ordinary image files. */
+bool removeEditorHandoff(const QString &path);
 /** Window size for a windowed editor: the capture at its logical size
  *  plus the chrome, where `legendHeight` is the measured key guide band,
  *  scaled down to fit inside `available` with a little margin, never

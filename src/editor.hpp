@@ -296,6 +296,10 @@ public:
   /** Top of the content band (below the pinned chrome in a window). */
   [[nodiscard]] qreal contentBandTop() const;
   /// Injects the process launcher for a smoke test of the actual W action.
+  void setSnapshotFutureForTest(const QFuture<bool> &future) {
+    snapshotBusy_ = true;
+    snapshotWatcher_.setFuture(future);
+  }
   void setHandoffLauncherForTest(
       std::function<bool(const QString &, const QStringList &)> launcher) {
     handoffLauncher_ = std::move(launcher);

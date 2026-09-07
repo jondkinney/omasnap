@@ -2930,6 +2930,10 @@ void CaptureEditor::handOffEditor(bool toWindow) {
     return;
   endNudgeRun();
   acceptText();
+  const bool snapshotsSuppressed = suppressSnapshots_;
+  suppressSnapshots_ = true;
+  snapshotDirty_ = false;
+  QFuture<bool> pendingSnapshot = snapshotWatcher_.future();
   busy_ = true;
   setEnabled(false);
   setStatus(toWindow ? QStringLiteral("Preparing editor window…")
@@ -2942,17 +2946,24 @@ void CaptureEditor::handOffEditor(bool toWindow) {
   const QString program = QCoreApplication::applicationFilePath();
   const auto launcher = handoffLauncher_;
   auto *watcher = new QFutureWatcher<QString>(this);
-  connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {
+  connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, snapshotsSuppressed] {
     const QString error = watcher->result();
     watcher->deleteLater();
     busy_ = false;
     setEnabled(true);
     if (error.isEmpty())
       close();
-    else
+    else {
+      suppressSnapshots_ = snapshotsSuppressed;
+      scheduleSnapshot();
       setStatus(error);
+    }
   });
-  watcher->setFuture(QtConcurrent::run([source, log, program, toWindow, launcher] {
+  watcher->setFuture(QtConcurrent::run([source, log, program, toWindow, launcher, pendingSnapshot]() mutable {
+    // A replacement process waits only briefly for the instance lock.
+    // Finish existing persistence here, without blocking the GUI, before it
+    // can ask this process to exit. Coalesced autosaves are suppressed above.
+    pendingSnapshot.waitForFinished();
     pruneEditorHandoffs();
     const QString path = editorHandoffPath();
     if (path.isEmpty())

@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
   for (int index = 0; index < argc; ++index)
     rawArguments.push_back(QString::fromLocal8Bit(argv[index]));
   QCommandLineParser startupParser;
-  configureCaptureCommandLine(startupParser);
+  configureCaptureCommandLine(startupParser, true);
   const bool startupParsed = startupParser.parse(rawArguments);
   const bool windowedEditorProcess = startupParsed &&
       windowedEditorRequested(startupParser, loadEditorWindowMode(defaultConfigPath()));
@@ -331,6 +331,9 @@ int main(int argc, char **argv) {
             << QStringLiteral("Could not restore operation log: %1").arg(error);
         return 1;
       }
+      // Ownership of private handoff files ends once both source and log
+      // are in memory. Ordinary user files are excluded by the helper.
+      removeEditorHandoff(localFile);
     }
     describeFileCapture(capture, image, restoredLog);
     captureMode = CaptureEditor::CaptureMode::File;

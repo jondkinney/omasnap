@@ -1,4 +1,5 @@
 #include <QCommandLineParser>
+#include <QPromise>
 /** @fileoverview Exercises capture editor behavior without a live compositor.
  */
 #include "capture.hpp"
@@ -2018,6 +2019,11 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
     return false;
   }
 
+  if (!editor.waitForSnapshot())
+    return false;
+  QPromise<bool> slowSnapshot;
+  slowSnapshot.start();
+  editor.setSnapshotFutureForTest(slowSnapshot.future());
   QTest::keyClick(&editor, Qt::Key_V);
   const Annotation beforeNudge = editor.currentAnnotationsForTest().constFirst();
   const QPoint hit = editor.annotationPointToWidgetForTest(beforeNudge.start).toPoint();
@@ -2036,6 +2042,15 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
     return true;
   });
   QTest::keyClick(&editor, Qt::Key_W);
+  QTest::qWait(30);
+  if (!path.isEmpty()) {
+    slowSnapshot.addResult(true);
+    slowSnapshot.finish();
+    error = QStringLiteral("Handoff launched before pending persistence completed");
+    return false;
+  }
+  slowSnapshot.addResult(true);
+  slowSnapshot.finish();
   for (int attempt = 0; attempt < 500 && editor.isVisible(); ++attempt)
     QTest::qWait(10);
   if (editor.isVisible() || path.isEmpty() ||
@@ -2048,11 +2063,13 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   // afterward, including equals syntax, normalization, and last-value wins.
   const QList<QStringList> windowArguments{
       launchArguments,
+      launchArguments + QStringList{QStringLiteral("-platformtheme"), QStringLiteral("gtk3")},
+      launchArguments + QStringList{QStringLiteral("-platform"), QStringLiteral("offscreen")},
       {QStringLiteral("--file=") + path, QStringLiteral("--editor=WINDOW")},
       {path, QStringLiteral("--editor=overlay"), QStringLiteral("--editor"), QStringLiteral(" window ")}};
   for (const QStringList &arguments : windowArguments) {
     QCommandLineParser parser;
-    configureCaptureCommandLine(parser);
+    configureCaptureCommandLine(parser, true);
     if (!parser.parse(QStringList{QStringLiteral("omasnap")} + arguments) ||
         !windowedEditorRequested(parser, false)) {
       error = QStringLiteral("Handoff argv selected the wrong Wayland shell");
@@ -2082,6 +2099,17 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   OperationLog log;
   if (image.isNull() || !loadOperationLog(logPath, log, error)) {
     cleanup();
+    return false;
+  }
+  if (!removeEditorHandoff(path) || QFile::exists(path) || QFile::exists(logPath)) {
+    error = QStringLiteral("Consumed handoff files were not removed");
+    return false;
+  }
+  QTemporaryDir ordinary;
+  const QString ordinaryPath = ordinary.filePath(QStringLiteral("edit-123-0123456789abcdef.png"));
+  image.save(ordinaryPath);
+  if (removeEditorHandoff(ordinaryPath) || !QFile::exists(ordinaryPath)) {
+    error = QStringLiteral("Handoff cleanup removed an ordinary image");
     return false;
   }
   CaptureData reopened;

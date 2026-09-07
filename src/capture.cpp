@@ -20,6 +20,7 @@
 #include <QPainterPath>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 
@@ -1447,6 +1448,19 @@ QString editorHandoffPath() {
                          .arg(QCoreApplication::applicationPid())
                          .arg(QRandomGenerator::global()->generate64(), 16, 16,
                               QChar('0')));
+}
+
+bool removeEditorHandoff(const QString &path) {
+  const QString runtime = secureRuntimeDirectory();
+  const QFileInfo file(path);
+  static const QRegularExpression name(QStringLiteral("^edit-[0-9]+-[0-9a-f]{16}\\.png$"));
+  if (runtime.isEmpty() || file.absolutePath() != runtime ||
+      !name.match(file.fileName()).hasMatch())
+    return false;
+  const QString log = operationLogPath(path);
+  const bool sourceRemoved = !QFile::exists(path) || QFile::remove(path);
+  const bool logRemoved = !QFile::exists(log) || QFile::remove(log);
+  return sourceRemoved && logRemoved;
 }
 
 void pruneEditorHandoffs() {
