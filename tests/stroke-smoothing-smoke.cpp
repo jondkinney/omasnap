@@ -22,6 +22,7 @@
 #include <QtTest/qtestmouse.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -457,6 +458,19 @@ bool runStrokeSmoothingSmoke(QApplication &application, QString &error) {
       error = QStringLiteral(
           "Smoothed pen points did not round-trip in the op log");
     return false;
+  }
+  for (const int level : {std::numeric_limits<int>::min(),
+                          std::numeric_limits<int>::max()}) {
+    OperationLog invalid = saved;
+    invalid.ops.last().annotations.first().smoothingLevel = level;
+    if (!saveOperationLog(logPath, invalid, error) ||
+        !loadOperationLog(logPath, reloaded, error) ||
+        reloaded.ops.last().annotations.first().smoothingLevel !=
+            std::clamp(level, stroke::minimumSmoothingLevel,
+                        stroke::maximumSmoothingLevel)) {
+      error = QStringLiteral("Loaded pen smoothing escaped its valid range");
+      return false;
+    }
   }
   editor.close();
   return true;

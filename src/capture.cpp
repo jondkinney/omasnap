@@ -1,5 +1,6 @@
 /** @fileoverview Captures, renders, saves, and shares screenshots. */
 #include "capture.hpp"
+#include "stroke-smoothing.hpp"
 #include "output-config.hpp"
 #include "startup-timing.hpp"
 
@@ -1764,8 +1765,9 @@ bool annotationFromJson(const QJsonObject &object, Annotation &annotation,
   for (const QJsonValue point :
        object.value(QStringLiteral("rawPoints")).toArray())
     annotation.rawPoints.push_back(pointFromArray(point));
-  annotation.smoothingLevel =
-      object.value(QStringLiteral("smoothingLevel")).toInt(0);
+  annotation.smoothingLevel = std::clamp(
+      object.value(QStringLiteral("smoothingLevel")).toInt(0),
+      stroke::minimumSmoothingLevel, stroke::maximumSmoothingLevel);
   const QString redactionStyle =
       object.value(QStringLiteral("redactionStyle")).toString();
   annotation.redactionStyle = redactionStyle == QStringLiteral("solid")

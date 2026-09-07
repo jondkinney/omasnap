@@ -104,13 +104,22 @@ QVector<QPointF> rdpSimplify(const QVector<QPointF> &points,
   keep[points.size() - 1] = true;
   QVector<Span> pending{{0, points.size() - 1}};
   const qreal toleranceSquared = tolerance * tolerance;
+  qsizetype remainingComparisons = maximumSmoothingInput * 16;
 
-  // An explicit stack avoids recursive call depth on long scribbles. Typical
-  // pen input is simplified by the first few spans, so the release stays fast.
+  // Bound work as well as recursion: a zig-zag can make RDP quadratic.
+  // Once the comparison budget is spent, retain the unexamined spans rather
+  // than approximating them with chords. Chaikin still smooths those points.
   while (!pending.isEmpty()) {
     const Span span = pending.takeLast();
     if (span.last - span.first < 2)
       continue;
+    const qsizetype comparisons = span.last - span.first - 1;
+    if (comparisons > remainingComparisons) {
+      for (qsizetype index = span.first + 1; index < span.last; ++index)
+        keep[index] = true;
+      continue;
+    }
+    remainingComparisons -= comparisons;
     qreal farthestDistance = -1.0;
     qsizetype farthest = span.first;
     for (qsizetype index = span.first + 1; index < span.last; ++index) {
@@ -165,7 +174,7 @@ QVector<QPointF> smoothFreehand(const QVector<QPointF> &points, int level) {
   if (points.size() < 3 || clampedLevel == minimumSmoothingLevel)
     return points;
   const SmoothingStage stage = stageForLevel(clampedLevel);
-  // Bound RDP's quadratic worst case and Chaikin's point expansion before
+  // Bound the input and Chaikin's point expansion before
   // either sees an adversarial scribble. Arc-length resampling keeps corners
   // independent of the input event rate; ordinary strokes pass through
   // byte-for-byte before their configured stage.

@@ -130,3 +130,11 @@ earlier in the same call.
 See also [editing-model.md](editing-model.md) for what state a background
 render is allowed to read, and [dependencies.md](dependencies.md) for the
 processes (`tesseract`, `wl-copy`/`wl-paste`, `hyprctl`) these workers spawn.
+
+## Pen smoothing budget
+
+Release-time smoothing bounds the iterative RDP pass to 32,768 point-to-segment
+comparisons over at most 2,048 samples. When that budget runs out, unexamined
+spans retain their samples; no quadratic scan continues on the input thread.
+At most three Chaikin passes then produce 16,384 points. The initial arc-length
+resampling remains linear in the raw stroke length.
