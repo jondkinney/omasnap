@@ -38,12 +38,16 @@ bool runPinLayoutSmoke(QString &error) {
   const QList<QPair<QStringList, bool>> invocations{
       {{QStringLiteral("--pin"), QStringLiteral("image.png")}, true},
       {{QStringLiteral("--pin=image.png")}, true},
+      {{QStringLiteral("-platform"), QStringLiteral("offscreen"),
+         QStringLiteral("--pin=image.png")}, true},
+      {{QStringLiteral("--pin"), QStringLiteral("image.png"),
+         QStringLiteral("-platformtheme"), QStringLiteral("gtk3")}, true},
       {{QStringLiteral("--"), QStringLiteral("--pin")}, false},
       {{QStringLiteral("--"), QStringLiteral("--pin=image.png")}, false},
       {{QStringLiteral("--file"), QStringLiteral("--pin")}, false}};
   for (const auto &[arguments, pinned] : invocations) {
     QCommandLineParser parser;
-    configureCaptureCommandLine(parser);
+    configureCaptureCommandLine(parser, true);
     if (!parser.parse(QStringList{QStringLiteral("omasnap")} + arguments) ||
         parser.isSet(QStringLiteral("pin")) != pinned) {
       error = QStringLiteral("Pin argv selected the wrong Wayland shell");
@@ -79,6 +83,12 @@ bool runPinLayoutSmoke(QString &error) {
   if (pinPackedPosition(fullColumn, screen, pin, 10, 14) !=
       QPoint(176, 206)) {
     error = QStringLiteral("A full column did not wrap to a new one");
+    return false;
+  }
+  const QRect negativeTop(280, -20, 110, 310);
+  const auto besideNegative = pinPackedPosition({negativeTop}, screen, pin, 10, 14);
+  if (!besideNegative || QRect(*besideNegative, pin).intersects(negativeTop)) {
+    error = QStringLiteral("A negative-top blocker was ignored during packing");
     return false;
   }
   const QRect elsewhere(QPoint(20, 20), QSize(100, 80));

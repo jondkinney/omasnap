@@ -8,4 +8,4 @@ QString resolveLocalImagePath(const QString &target);
 
 class QCommandLineParser;
 /** Shared by the pre-QApplication shell choice and normal CLI validation. */
-void configureCaptureCommandLine(QCommandLineParser &parser);
+void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt = false);

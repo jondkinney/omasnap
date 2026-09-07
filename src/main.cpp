@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
   for (int index = 0; index < argc; ++index)
     rawArguments.push_back(QString::fromLocal8Bit(argv[index]));
   QCommandLineParser startupParser;
-  configureCaptureCommandLine(startupParser);
+  configureCaptureCommandLine(startupParser, true);
   const bool pinInvocation = startupParser.parse(rawArguments) &&
                              startupParser.isSet(QStringLiteral("pin"));
   if (pinInvocation) {

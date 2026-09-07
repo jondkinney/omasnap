@@ -77,7 +77,10 @@ QThreadPool &pinPool() {
   return pool;
 }
 
-QString runForOutput(const QString &program, const QStringList &arguments) {
+QString runForOutput(const QString &program, const QStringList &arguments,
+                     bool *ok = nullptr) {
+  if (ok)
+    *ok = false;
   QProcess process;
   process.start(program, arguments);
   if (!process.waitForFinished(500)) {
@@ -85,12 +88,18 @@ QString runForOutput(const QString &program, const QStringList &arguments) {
     process.waitForFinished(500);
     return {};
   }
+  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+    return {};
+  if (ok)
+    *ok = true;
   return QString::fromUtf8(process.readAllStandardOutput());
 }
 
-void hyprDispatch(const QString &expression) {
-  static_cast<void>(runForOutput(QStringLiteral("hyprctl"),
-                                 {QStringLiteral("dispatch"), expression}));
+bool hyprDispatch(const QString &expression) {
+  bool ok = false;
+  const QString output = runForOutput(QStringLiteral("hyprctl"),
+                                      {QStringLiteral("dispatch"), expression}, &ok);
+  return ok && output.trimmed() == QStringLiteral("ok");
 }
 
 QRect compositorScreenRect(const QPoint &point = {}, bool usePoint = false) {
@@ -183,8 +192,11 @@ public:
                                       {QStringLiteral("time"), QDateTime::currentMSecsSinceEpoch()}});
     if (!save())
       return false;
-    hyprDispatch(pinMoveDispatch(title, rect.x(), rect.y()));
-    return true;
+    if (hyprDispatch(pinMoveDispatch(title, rect.x(), rect.y())))
+      return true;
+    targets_.remove(title);
+    save();
+    return false;
   }
   QVector<CompositorPin> pins;
 private:
@@ -232,8 +244,9 @@ void compactPinColumn(const QString &excludedTitle, const QRect &screen) {
       if (!at)
         return;
       const QRect target(*at, pin.rect.size());
-      if ((*at - pin.rect.topLeft()).manhattanLength() > 4)
-        placement.move(pin.title, target.translated(screen.topLeft()));
+      if ((*at - pin.rect.topLeft()).manhattanLength() > 4 &&
+          !placement.move(pin.title, target.translated(screen.topLeft())))
+        return;
       blockers.push_back(target);
     }
   }));
@@ -793,10 +806,10 @@ int runPinnedCapture(const QString &path) {
                               [&](const CompositorPin &pin) { return pin.title == title; });
       if (own == placement.pins.end())
         return {};
-      if (!own->floating)
-        hyprDispatch(pinFloatDispatch(title));
-      if (!own->pinned)
-        hyprDispatch(pinPinDispatch(title));
+      if (!own->floating && !hyprDispatch(pinFloatDispatch(title)))
+        return {};
+      if (!own->pinned && !hyprDispatch(pinPinDispatch(title)))
+        return {};
       QVector<QRect> blockers;
       for (const CompositorPin &pin : placement.pins) {
         if (pin.title != title && screen.intersects(pin.rect))
@@ -806,7 +819,8 @@ int runPinnedCapture(const QString &path) {
                                         kPinGap, qRound(kCornerMargin));
       if (at) {
         own->rect = QRect(*at + screen.topLeft(), frame);
-        placement.move(title, own->rect);
+        if (!placement.move(title, own->rect))
+          return {};
       }
       return {screen, placement.pins};
     }));

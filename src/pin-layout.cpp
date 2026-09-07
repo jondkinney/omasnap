@@ -25,16 +25,17 @@ std::optional<QPoint> pinPackedPosition(const QVector<QRect> &blockers,
     int y = screenSize.height() - margin - frame.height();
     while (y >= margin) {
       const QRect candidate(x, y, frame.width(), frame.height());
-      int lowestTop = -1;
+      std::optional<int> lowestTop;
       for (const QRect &blocker : blockers) {
         if (candidate.intersects(blocker))
-          lowestTop = std::max(lowestTop, blocker.top());
+          lowestTop = lowestTop ? std::max(*lowestTop, blocker.top())
+                                : blocker.top();
       }
-      if (lowestTop < 0)
+      if (!lowestTop)
         return QPoint(x, y);
       // Climb to one gap above the lowest pin in the way, then look again:
       // the spot up there may graze another one.
-      y = lowestTop - gap - frame.height();
+      y = *lowestTop - gap - frame.height();
     }
     x -= frame.width() + gap;
   }
