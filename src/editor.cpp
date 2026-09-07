@@ -3151,8 +3151,13 @@ void CaptureEditor::ensureTextEditor() {
     const int sidePadding =
         textEditPill_ ? qRound(std::max(4.0, metrics.height() * 0.18)) : 0;
     const int desiredWidth = std::max(48, widestLine + sidePadding * 2);
+    const bool newOffCanvasText = editingAnnotation_ < 0 &&
+        canvasBoundaryMode_ != CanvasBoundaryMode::Image &&
+        !canvasRect_.contains(textPoint_);
+    const qreal rightEdge = newOffCanvasText ? annotationWorkspaceRect().right()
+                                             : editImageRect().right();
     const int availableWidth =
-        std::max(48, qRound(editImageRect().right() - textEditor_->x()));
+        std::max(48, qRound(rightEdge - textEditor_->x()));
     const int lineCount = std::max(1, static_cast<int>(lines.size()));
     const int desiredHeight =
         lineCount * metrics.lineSpacing() + metrics.descent() + 4;
