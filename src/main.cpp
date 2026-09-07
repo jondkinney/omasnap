@@ -398,7 +398,7 @@ int main(int argc, char **argv) {
 
   const QSize editingPreview = capture.previewSize;
   CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
-                       restoredLog);
+                       restoredLog, nullptr, editorWindowMode && !editingImage);
   startupTimingMark("CaptureEditor constructed");
   editor.setScreen(targetScreen);
   if (windowedEditorProcess && editingImage) {
@@ -491,9 +491,6 @@ int main(int argc, char **argv) {
     }));
     return application.exec();
   }
-  if (editorWindowMode && !editingImage)
-    editor.setWindowedHandoffOnEdit(captureMode !=
-                                    CaptureEditor::CaptureMode::Scroll);
   editor.setGeometry(targetScreen->geometry());
   editor.winId();
   QWindow *window = editor.windowHandle();

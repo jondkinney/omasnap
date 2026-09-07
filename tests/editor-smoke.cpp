@@ -2121,6 +2121,33 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
     error = QStringLiteral("The undo history did not survive the handoff");
     return false;
   }
+  for (const auto mode : {CaptureEditor::CaptureMode::Fullscreen,
+                          CaptureEditor::CaptureMode::Scroll}) {
+    CaptureEditor automatic(capture, mode, QuickOutputMode::None, {}, nullptr, true);
+    QString automaticPath;
+    automatic.setHandoffLauncherForTest([&](const QString &, const QStringList &arguments) {
+      automaticPath = arguments.at(1);
+      return true;
+    });
+    automatic.resize(800, 600);
+    automatic.show();
+    if (mode == CaptureEditor::CaptureMode::Scroll) {
+      application.processEvents();
+      if (!automaticPath.isEmpty()) {
+        error = QStringLiteral("Scroll handed off before stitching completed");
+        return false;
+      }
+      automatic.adoptStitchedForTest(capture.source);
+    }
+    for (int attempt = 0; attempt < 500 && automatic.isVisible(); ++attempt)
+      QTest::qWait(10);
+    if (automatic.isVisible() || automaticPath.isEmpty()) {
+      error = QStringLiteral("Configured window handoff missed fullscreen or stitched scroll");
+      return false;
+    }
+    QFile::remove(automaticPath);
+    QFile::remove(operationLogPath(automaticPath));
+  }
   cleanup();
   return true;
 }
@@ -5019,6 +5046,20 @@ bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
     error = QStringLiteral("Shadow left the visible image edge when zoomed "
                            "(probe %1)")
                 .arg(belowShadow.name());
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_A);
+  const QPoint chrome(60, bandBottom + 12);
+  if (!editor.editImageRectForTest().contains(chrome)) {
+    error = QStringLiteral("Window chrome fixture did not overlap the zoomed image");
+    return false;
+  }
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, chrome);
+  QTest::mouseMove(&editor, QPoint(300, bandBottom - 80), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(300, bandBottom - 80));
+  if (editor.annotationCountForTest() != 0) {
+    error = QStringLiteral("Window chrome created an invisible annotation");
     return false;
   }
   editor.close();

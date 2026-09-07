@@ -624,9 +624,10 @@ QPointF centeredCreationStart(CaptureEditor::Tool tool, const QPointF &center,
 
 CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
                              QuickOutputMode quickOutput, OperationLog log,
-                             QWidget *parent)
+                             QWidget *parent, bool windowedHandoff)
     : QWidget(parent), capture_(std::move(capture)),
       quickOutputMode_(quickOutput) {
+  windowedHandoffOnEdit_ = windowedHandoff;
   startupTimingMark("CaptureEditor constructor entered");
   pristineSource_ = capture_.source;
   pristineLogicalSize_ = capture_.previewSize;
@@ -1090,7 +1091,7 @@ CaptureEditor::selectedHandleAt(const QPointF &point) const {
 }
 
 CaptureEditor::Interaction CaptureEditor::pointerHandle() const {
-  if (!editImageRect().contains(cursor_))
+  if (!visibleEditImageRect().contains(cursor_))
     return Interaction::None;
   return selectedHandleAt(toAnnotationPoint(cursor_));
 }
@@ -1442,7 +1443,7 @@ bool CaptureEditor::toolGrabsLayer(int index) const {
 }
 
 bool CaptureEditor::pointerGrabsLayer() const {
-  return editImageRect().contains(cursor_) &&
+  return visibleEditImageRect().contains(cursor_) &&
          toolGrabsLayer(annotationEdgeAt(toAnnotationPoint(cursor_)));
 }
 
@@ -1476,7 +1477,7 @@ int CaptureEditor::annotationEdgeAt(const QPointF &point) const {
 }
 
 int CaptureEditor::hoveredSpotlightAt(const QPointF &position) const {
-  if (dragging_ || !editImageRect().contains(position))
+  if (dragging_ || !visibleEditImageRect().contains(position))
     return -1;
   const int index = annotationAt(toAnnotationPoint(position));
   if (index < 0 || annotations_.at(index).kind != Annotation::Kind::Spotlight)
@@ -1875,15 +1876,15 @@ QRectF CaptureEditor::editImageRect() const {
       .translated(viewOffset_);
 }
 
+QRectF CaptureEditor::editViewportRect() const {
+  const qreal top = windowedPresentation_ ? contentBandTop() : imageTopMargin();
+  const qreal bottom = windowedPresentation_ ? 64 : 58;
+  return {0, top, static_cast<qreal>(width()),
+          std::max<qreal>(1, height() - top - bottom)};
+}
+
 QRectF CaptureEditor::visibleEditImageRect() const {
-  const QRectF image = editImageRect();
-  if (viewZoom_ <= 1.0)
-    return image;
-  const qreal bandTop =
-      windowedPresentation_ ? contentBandTop() : imageTopMargin();
-  const qreal bandBottom = windowedPresentation_ ? 64 : 58;
-  return image.intersected(QRectF(
-      0, bandTop, width(), std::max<qreal>(1, height() - bandTop - bandBottom)));
+  return editImageRect().intersected(editViewportRect());
 }
 
 qreal CaptureEditor::maxViewZoom() const {
@@ -2931,7 +2932,8 @@ void CaptureEditor::handOffEditor(bool toWindow) {
   acceptText();
   busy_ = true;
   setEnabled(false);
-  setStatus(QStringLiteral("Preparing editor window…"));
+  setStatus(toWindow ? QStringLiteral("Preparing editor window…")
+                     : QStringLiteral("Preparing editor overlay…"));
   // Persist a value snapshot directly: waiting for the autosave and copying
   // its files would block input and race later coalesced snapshot writes.
   const QImage source = pristineSource_;
@@ -3055,9 +3057,15 @@ void CaptureEditor::enterEdit(QString status) {
     commitCrop(selection_);
   else
     scheduleSnapshot();
-  if (windowedHandoffOnEdit_ && captureMode_ != CaptureMode::Scroll) {
-    windowedHandoffOnEdit_ = false;
-    handOffEditor(true);
+  if (windowedHandoffOnEdit_) {
+    // Fullscreen can enter Edit in the constructor. Defer launching until
+    // construction and the caller's surface setup have completed.
+    QTimer::singleShot(0, this, [this] {
+      if (windowedHandoffOnEdit_ && phase_ == Phase::Edit) {
+        windowedHandoffOnEdit_ = false;
+        handOffEditor(true);
+      }
+    });
   }
 }
 
@@ -4209,7 +4217,7 @@ QRegion CaptureEditor::pointerMotionRegion(const QPointF &point) const {
            QRegion(widgetBounds);
   };
 
-  if (tool_ == Tool::Marker && !dragging_ && editImageRect().contains(point) &&
+  if (tool_ == Tool::Marker && !dragging_ && visibleEditImageRect().contains(point) &&
       !pointerGrabsLayer()) {
     Annotation marker;
     marker.kind = Annotation::Kind::Marker;
@@ -4608,7 +4616,7 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
 
 void CaptureEditor::mouseDoubleClickEvent(QMouseEvent *event) {
   if (phase_ != Phase::Edit || event->button() != Qt::LeftButton ||
-      !editImageRect().contains(event->position()))
+      !visibleEditImageRect().contains(event->position()))
     return;
   const int index = annotationAt(toAnnotationPoint(event->position()));
   if (index < 0 || annotations_.at(index).kind != Annotation::Kind::Text)
@@ -4649,7 +4657,7 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   }
   if (event->button() == Qt::MiddleButton) {
     if (phase_ == Phase::Edit && viewZoom_ > 1.0 &&
-        !textEditing()) {
+        editViewportRect().contains(event->position()) && !textEditing()) {
       panning_ = true;
       panAnchor_ = event->position();
       setCursor(Qt::ClosedHandCursor);
@@ -4744,10 +4752,12 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
       return;
     }
   }
+  if (!editViewportRect().contains(cursor_))
+    return;
   // A layer that ran off the capture keeps its handles and body live outside
   // the canvas, so it can be resized or dragged back in instead of being
   // stranded. Anything else outside the canvas stays inert.
-  const bool insideImage = editImageRect().contains(cursor_);
+  const bool insideImage = visibleEditImageRect().contains(cursor_);
   const QPointF point = insideImage ? toAnnotationPoint(cursor_)
                                     : toUnclampedAnnotationPoint(cursor_);
   if (!insideImage &&
@@ -5501,7 +5511,7 @@ void CaptureEditor::updatePointerCursor() {
       if (dragging_) {
         highlighterPreview_ = highlighterLock_;
         highlighterPreviewPoint_.reset();
-      } else if (editImageRect().contains(cursor_)) {
+      } else if (visibleEditImageRect().contains(cursor_)) {
         scheduleHighlighterProbe(toAnnotationPoint(cursor_));
       } else {
         clearHighlighterPreview();
@@ -6289,14 +6299,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   const bool clipViewport = viewZoom_ > 1.0;
   if (clipViewport) {
     painter.save();
-    // The band between the pinned chrome above and the status below; zoomed
-    // content must not overdraw either.
-    const qreal bandTop =
-        windowedPresentation_ ? contentBandTop() : imageTopMargin();
-    const qreal bandBottom = windowedPresentation_ ? 64 : 58;
-    painter.setClipRect(QRectF(0, bandTop, width(),
-                               std::max<qreal>(1, height() - bandTop -
-                                                      bandBottom)));
+    painter.setClipRect(editViewportRect());
   }
   if (grown) {
     // Extension is the canvas itself, while the source remains the image card
@@ -6424,7 +6427,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                        ? highlighterLock_->annotationSize
                        : annotationSize_;
     defaultAnnotations.push_back(std::move(preview));
-  } else if (tool_ == Tool::Marker && image.contains(cursor_) && !dragging_ &&
+  } else if (tool_ == Tool::Marker && visibleEditImageRect().contains(cursor_) && !dragging_ &&
              !pointerGrabsLayer()) {
     // The ghost counter shows where the next one would land, so it belongs
     // only where the press would actually place one: over another counter the

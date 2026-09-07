@@ -51,11 +51,13 @@ class CaptureEditor final : public QWidget {
 public:
   enum class CaptureMode { Region, Scroll, Window, Fullscreen, File };
 
+  /// windowedHandoff applies to fresh captures once they enter the edit phase.
   explicit CaptureEditor(CaptureData capture,
                          CaptureMode mode = CaptureMode::Region,
                          QuickOutputMode quickOutput = QuickOutputMode::None,
                          OperationLog log = {},
-                         QWidget *parent = nullptr);
+                         QWidget *parent = nullptr,
+                         bool windowedHandoff = false);
   ~CaptureEditor() override;
 
 signals:
@@ -291,11 +293,6 @@ public:
     if (windowedPresentation_ && opaque)
       setAttribute(Qt::WA_TranslucentBackground, false);
   }
-  /** Hand a fresh capture straight to a windowed editor when it enters the
-   *  edit phase (the [editor] mode = window flow). */
-  void setWindowedHandoffOnEdit(bool handoff) {
-    windowedHandoffOnEdit_ = handoff;
-  }
   /** Top of the content band (below the pinned chrome in a window). */
   [[nodiscard]] qreal contentBandTop() const;
   /// Injects the process launcher for a smoke test of the actual W action.
@@ -451,6 +448,7 @@ private:
   /// runs beyond the band; the chrome that frames it (crop outline, handles,
   /// shadow) frames what is visible, not the off-screen edges.
   [[nodiscard]] QRectF visibleEditImageRect() const;
+  [[nodiscard]] QRectF editViewportRect() const;
   /// Top edge the chrome (toolbar, popovers) anchors above: the fit rect at
   /// zoom 1, the viewport band once zoomed (the content fills it then).
   [[nodiscard]] qreal chromeAnchorTop() const;
