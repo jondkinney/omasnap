@@ -2,6 +2,8 @@
 #include "pin-layout-smoke.hpp"
 
 #include "pin-layout.hpp"
+#include "cli-path.hpp"
+#include <QCommandLineParser>
 
 #include <QSet>
 
@@ -31,6 +33,22 @@ bool runPinLayoutSmoke(QString &error) {
       !pinControlTip(-1).isEmpty()) {
     error = QStringLiteral("Pin control tooltips repeat or overflow");
     return false;
+  }
+
+  const QList<QPair<QStringList, bool>> invocations{
+      {{QStringLiteral("--pin"), QStringLiteral("image.png")}, true},
+      {{QStringLiteral("--pin=image.png")}, true},
+      {{QStringLiteral("--"), QStringLiteral("--pin")}, false},
+      {{QStringLiteral("--"), QStringLiteral("--pin=image.png")}, false},
+      {{QStringLiteral("--file"), QStringLiteral("--pin")}, false}};
+  for (const auto &[arguments, pinned] : invocations) {
+    QCommandLineParser parser;
+    configureCaptureCommandLine(parser);
+    if (!parser.parse(QStringList{QStringLiteral("omasnap")} + arguments) ||
+        parser.isSet(QStringLiteral("pin")) != pinned) {
+      error = QStringLiteral("Pin argv selected the wrong Wayland shell");
+      return false;
+    }
   }
 
   const QSize screen(400, 300);
@@ -171,9 +189,8 @@ bool runPinLayoutSmoke(QString &error) {
     return false;
   }
 
-  // The dispatch expressions are Lua for a Lua-configured Hyprland and the
-  // a placement that silently does
-  // nothing is exactly the failure these guard.
+  // The dispatch expressions are Lua for a Lua-configured Hyprland;
+  // a placement that silently does nothing is exactly the failure these guard.
   const QString title = QStringLiteral("omasnap-pin 1234");
   if (pinFloatDispatch(title) !=
           QStringLiteral(

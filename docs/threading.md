@@ -137,4 +137,5 @@ Pin placement, compositor polling, and move dispatches run on a single worker
 per pin process. The GUI applies completed geometry snapshots through a watcher;
 it never waits for `hyprctl` during a drag. A runtime lock serializes placement
 across pin processes, with short-lived target reservations covering compositor
-animation latency. The initial monitor query is bounded and runs before mapping.
+animation latency. The initial monitor query uses the same worker pool; a fallback frame maps
+immediately and adopts the display-shaped size when the query finishes.

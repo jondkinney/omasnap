@@ -755,8 +755,7 @@ int runPinnedCapture(const QString &path) {
     return 1;
   }
 
-  const QRect screen = compositorScreenRect();
-  PinWindow window(std::move(image), path, pinFrameSize(screen.size()));
+  PinWindow window(std::move(image), path, pinFrameSize({}));
   if (!window.hasPinLock()) {
     qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;
@@ -781,10 +780,12 @@ int runPinnedCapture(const QString &path) {
       settle->deleteLater();
     }
   });
+  auto screen = std::make_shared<QRect>();
   QObject::connect(settle, &QTimer::timeout, &window, [&window, watcher, screen] {
     const QString title = window.windowTitle();
     const QSize frame = window.size();
-    watcher->setFuture(QtConcurrent::run(&pinPool(), [title, frame, screen]() -> PlacementResult {
+    const QRect geometry = *screen;
+    watcher->setFuture(QtConcurrent::run(&pinPool(), [title, frame, screen = geometry]() -> PlacementResult {
       PinPlacement placement;
       if (!placement.ready() || screen.isEmpty())
         return {};
@@ -810,6 +811,18 @@ int runPinnedCapture(const QString &path) {
       return {screen, placement.pins};
     }));
   });
-  settle->start();
+  auto *monitor = new QFutureWatcher<QRect>(&window);
+  QObject::connect(monitor, &QFutureWatcher<QRect>::finished, &window,
+                   [&window, monitor, settle, screen] {
+    *screen = monitor->result();
+    monitor->deleteLater();
+    if (screen->isEmpty())
+      return;
+    window.setFixedSize(pinFrameSize(screen->size()));
+    settle->start();
+  });
+  monitor->setFuture(QtConcurrent::run(&pinPool(), [] {
+    return compositorScreenRect();
+  }));
   return QApplication::exec();
 }
