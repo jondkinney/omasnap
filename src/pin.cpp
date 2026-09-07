@@ -553,7 +553,7 @@ protected:
     if (!snapSpot_.isNull())
       movePin(windowTitle(), snapSpot_);
     else
-      compactPinColumn(QString(), dragScreen_);
+      compactPinColumn(windowTitle(), dragScreen_);
     spreadActive_ = false;
   }
 

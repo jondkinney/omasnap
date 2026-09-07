@@ -84,6 +84,8 @@ The installer uses Omarchy's package helper for missing dependencies, builds in
 `~/.cache/omasnap`, and installs under `~/.local`. It does not modify
 Hyprland configuration.
 
+Pinned-window placement uses the Lua dispatcher on Omarchy’s Hyprland.
+
 ### Hyprland binding
 
 Paste this into a Lua config loaded after `require("default.hypr.omarchy")`:
