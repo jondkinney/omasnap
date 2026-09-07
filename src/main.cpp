@@ -336,6 +336,7 @@ int main(int argc, char **argv) {
       removeEditorHandoff(localFile);
     }
     describeFileCapture(capture, image, restoredLog);
+    capture.monitor.name = parser.value(QStringLiteral("handoff-monitor"));
     captureMode = CaptureEditor::CaptureMode::File;
     qInfo().noquote() << QStringLiteral("Opened %1 for annotation (%2x%3)")
                              .arg(inputName)

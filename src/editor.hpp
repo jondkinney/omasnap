@@ -444,6 +444,9 @@ private:
   [[nodiscard]] QRectF baseImageRect() const;
   /// Top of the toolbar row: just under the tab strip's fixed bottom edge,
   /// independent of the image, so the two can never overlap.
+  [[nodiscard]] QSizeF windowLegendSize() const;
+  mutable int legendWidth_ = -1;
+  mutable QSizeF legendSize_;
   [[nodiscard]] qreal toolbarTop() const;
   /// How much vertical room the tab strip and toolbar actually need, at the
   /// current window width — the image's top margin, not a guessed constant.

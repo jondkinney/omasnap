@@ -1796,14 +1796,22 @@ QRectF CaptureEditor::normalizedSelection(const QPointF &first,
   return QRectF(a, b).normalized();
 }
 
+QSizeF CaptureEditor::windowLegendSize() const {
+  // Chrome fonts are pinned in code; only available width changes layout.
+  if (legendWidth_ != width()) {
+    legendWidth_ = width();
+    legendSize_ = hotkeyLegendAnchoredSize(editorHotkeyEntries(), width() - 28.0);
+  }
+  return legendSize_;
+}
+
 qreal CaptureEditor::toolbarTop() const {
   if (windowedPresentation_) {
     // Pinned under the key guide, leaving a band tall enough for the tool
     // hint pill that hangs above the toolbar. On a resized window the free
     // space belongs to the canvas below, not to a drifting toolbar.
     return 14 +
-           hotkeyLegendAnchoredSize(editorHotkeyEntries(), width() - 28.0)
-               .height() +
+           windowLegendSize().height() +
            42;
   }
   // Just under the tab strip's fixed bottom edge — independent of the image,
@@ -1833,8 +1841,7 @@ qreal CaptureEditor::contentBandTop() const {
   if (!windowedPresentation_)
     return 60;
   return 14 +
-         hotkeyLegendAnchoredSize(editorHotkeyEntries(), width() - 28.0)
-             .height() +
+         windowLegendSize().height() +
          42 + 36;
 }
 
@@ -2945,6 +2952,8 @@ void CaptureEditor::handOffEditor(bool toWindow) {
                          pristineLogicalSize_};
   const QString program = QCoreApplication::applicationFilePath();
   const auto launcher = handoffLauncher_;
+  const QString monitor = windowedPresentation_ && screen()
+                              ? screen()->name() : capture_.monitor.name;
   auto *watcher = new QFutureWatcher<QString>(this);
   connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, snapshotsSuppressed] {
     const QString error = watcher->result();
@@ -2959,7 +2968,7 @@ void CaptureEditor::handOffEditor(bool toWindow) {
       setStatus(error);
     }
   });
-  watcher->setFuture(QtConcurrent::run([source, log, program, toWindow, launcher, pendingSnapshot]() mutable {
+  watcher->setFuture(QtConcurrent::run([source, log, program, toWindow, launcher, pendingSnapshot, monitor]() mutable {
     // A replacement process waits only briefly for the instance lock.
     // Finish existing persistence here, without blocking the GUI, before it
     // can ask this process to exit. Coalesced autosaves are suppressed above.
@@ -2974,7 +2983,8 @@ void CaptureEditor::handOffEditor(bool toWindow) {
       const QStringList arguments{QStringLiteral("--file"), path,
                                    QStringLiteral("--editor"),
                                    toWindow ? QStringLiteral("window")
-                                            : QStringLiteral("overlay")};
+                                            : QStringLiteral("overlay"),
+                                   QStringLiteral("--handoff-monitor"), monitor};
       const bool launched = launcher ? launcher(program, arguments)
                                     : QProcess::startDetached(program, arguments);
       if (launched)
@@ -5332,8 +5342,8 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
   if (tool_ == Tool::Select && !layerSelected) {
     if (viewZoom_ > 1.0) {
       const QSizeF shown = baseImageRect().size() * viewZoom_;
-      const bool verticalSlack = shown.height() > std::max(1, height() - 126);
-      const bool horizontalSlack = shown.width() > std::max(1, width() - 60);
+      const bool verticalSlack = shown.height() > editViewportRect().height();
+      const bool horizontalSlack = shown.width() > editViewportRect().width();
       QPointF pan = scrollDelta;
       if (!verticalSlack && horizontalSlack && pan.x() == 0.0)
         pan = QPointF(pan.y(), 0);
@@ -6282,7 +6292,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
       (background != BackgroundStyle::Custom || !customBackdrop_.isNull());
   const bool framedBackground =
       hasBackground && canvasBoundaryMode_ == CanvasBoundaryMode::Framed;
-  if (opaqueBackdrop && !hasBackground && !visibleSourceImage.isEmpty()) {
+  if (imageShadow_ && opaqueBackdrop && !hasBackground && !visibleSourceImage.isEmpty()) {
     // Two shadows, the macOS model: a tight even ambient halo that sits
     // the source card on the mat, and a wider key shadow offset downward.
     // The expanded canvas is not itself a card and never gets a shadow.

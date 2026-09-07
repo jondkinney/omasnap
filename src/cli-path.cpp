@@ -105,6 +105,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
                      "editor between the two."),
       QStringLiteral("mode"));
   parser.addOption(editorOption);
+  QCommandLineOption handoffMonitor(QStringLiteral("handoff-monitor"), QString(),
+                                     QStringLiteral("name"));
+  handoffMonitor.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(handoffMonitor);
   const QCommandLineOption scrollOption(
       QStringLiteral("scroll"),
       QStringLiteral("Capture a scrolling region and stitch it into one tall "

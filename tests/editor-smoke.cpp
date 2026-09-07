@@ -2055,7 +2055,8 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
     QTest::qWait(10);
   if (editor.isVisible() || path.isEmpty() ||
       launchArguments != QStringList{QStringLiteral("--file"), path,
-                                      QStringLiteral("--editor"), QStringLiteral("window")}) {
+                                      QStringLiteral("--editor"), QStringLiteral("window"),
+                                      QStringLiteral("--handoff-monitor"), QStringLiteral("TEST")}) {
     error = QStringLiteral("W did not launch the window presentation asynchronously");
     return false;
   }
@@ -5076,6 +5077,12 @@ bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
                 .arg(belowShadow.name());
     return false;
   }
+  QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
+  application.processEvents();
+  if (editor.grab().toImage().pixelColor(60, bandBottom + 6).red() <= belowShadow.red()) {
+    error = QStringLiteral("Shift+B did not remove the window shadow");
+    return false;
+  }
   QTest::keyClick(&editor, Qt::Key_A);
   const QPoint chrome(60, bandBottom + 12);
   if (!editor.editImageRectForTest().contains(chrome)) {
@@ -5091,6 +5098,38 @@ bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
     return false;
   }
   editor.close();
+
+  capture.source = QImage(1600, 900, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::green);
+  capture.previewSize = capture.source.size();
+  CaptureEditor scrolling(capture, CaptureEditor::CaptureMode::File);
+  scrolling.setWindowedPresentation(true);
+  scrolling.resize(1000, 800);
+  scrolling.show();
+  application.processEvents();
+  QTest::keyClick(&scrolling, Qt::Key_V);
+  for (int i = 0; i < 20; ++i) {
+    QWheelEvent zoom(QPointF(500, 450), QPointF(500, 450), {}, {0, 30},
+                     Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&scrolling, &zoom);
+    if (scrolling.editImageRectForTest().width() > scrolling.width() - 60)
+      break;
+  }
+  const QRectF before = scrolling.editImageRectForTest();
+  if (before.height() <= scrolling.height() - scrolling.contentBandTop() - 64 ||
+      before.height() >= scrolling.height() - 126) {
+    error = QStringLiteral("Window scrolling fixture missed the modest-zoom overflow");
+    return false;
+  }
+  QWheelEvent scroll(QPointF(500, 450), QPointF(500, 450), {}, {0, -120},
+                     Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+  QApplication::sendEvent(&scrolling, &scroll);
+  const QRectF after = scrolling.editImageRectForTest();
+  if (qFuzzyCompare(before.y(), after.y()) || !qFuzzyCompare(before.x(), after.x())) {
+    error = QStringLiteral("Vertical wheel was remapped sideways in a window");
+    return false;
+  }
+  scrolling.close();
   return true;
 }
 
