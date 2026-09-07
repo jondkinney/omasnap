@@ -279,8 +279,6 @@ public:
   [[nodiscard]] int selectedCountForTest() const {
     return static_cast<int>(selectedAnnotations_.size());
   }
-  /// The layer surface this editor lives on. The scroll state toggles its
-  /// keyboard interactivity and input mask while the page underneath is live.
   /** The editor runs as a normal compositor window, not the overlay. */
   void setWindowedPresentation(bool windowed) {
     windowedPresentation_ = windowed;
@@ -295,6 +293,12 @@ public:
   }
   /** Top of the content band (below the pinned chrome in a window). */
   [[nodiscard]] qreal contentBandTop() const;
+  void setOcrOverlayForTest(const QRectF &region, const QString &text) {
+    ocrRegion_ = region;
+    ocrResultText_ = text;
+    ocrClock_.restart();
+    update();
+  }
   /// Injects the process launcher for a smoke test of the actual W action.
   void setSnapshotFutureForTest(const QFuture<bool> &future) {
     snapshotBusy_ = true;
@@ -307,6 +311,8 @@ public:
   /** Re-presents this edit in the other editor (window or overlay) by
    *  spawning it on the handoff document and closing this one. */
   void handOffEditor(bool toWindow);
+  /// The layer surface this editor lives on. The scroll state toggles its
+  /// keyboard interactivity and input mask while the page underneath is live.
   void setLayerWindow(LayerShellQt::Window *layer) { layer_ = layer; }
   /// Whether the select phase is in scroll mode. Test accessor.
   [[nodiscard]] bool scrollModeForTest() const { return scrollMode_; }

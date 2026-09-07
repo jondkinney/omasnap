@@ -1969,9 +1969,9 @@ void CaptureEditor::resetView() {
 }
 
 QVector<QRectF> CaptureEditor::cropHandleRects() const {
-  const QRectF image = sourceFrameWidgetRect().intersected(
-      visibleEditImageRect());
-  if (image.isEmpty())
+  const QRectF image = sourceFrameWidgetRect();
+  const QRectF visible = image.intersected(visibleEditImageRect());
+  if (visible.isEmpty())
     return {};
   constexpr qreal outside = 7;
   constexpr qreal size = 12;
@@ -1985,10 +1985,21 @@ QVector<QRectF> CaptureEditor::cropHandleRects() const {
       QPointF(image.center().x(), image.bottom() + outside),
       image.bottomLeft() + QPointF(-outside, outside),
       QPointF(image.left() - outside, image.center().y())};
+  const std::array<QPointF, 8> edges{
+      image.topLeft(), QPointF(image.center().x(), image.top()), image.topRight(),
+      QPointF(image.right(), image.center().y()), image.bottomRight(),
+      QPointF(image.center().x(), image.bottom()), image.bottomLeft(),
+      QPointF(image.left(), image.center().y())};
   QVector<QRectF> handles;
   handles.reserve(static_cast<qsizetype>(centers.size()));
-  for (const QPointF &center : centers)
-    handles.push_back({center.x() - half, center.y() - half, size, size});
+  for (size_t index = 0; index < centers.size(); ++index) {
+    const QPointF center = centers[index];
+    // Keep handle indices stable, but never invent an edge at the viewport
+    // boundary: dragging maps against the real, unclipped source rectangle.
+    handles.push_back(visible.contains(edges[index])
+                          ? QRectF(center.x() - half, center.y() - half, size, size)
+                          : QRectF());
+  }
   return handles;
 }
 
@@ -3445,6 +3456,7 @@ void CaptureEditor::paintOcrOverlay(QPainter &painter, const QRectF &image,
                     qreal(kOcrSweepMs);
     const qreal bandHeight = std::clamp(region.height() * 0.35, 18.0, 64.0);
     const qreal y = region.top() - bandHeight + t * (region.height() + bandHeight);
+    painter.save();
     painter.setClipRect(region, Qt::IntersectClip);
     painter.fillRect(region, QColor(accent.red(), accent.green(), accent.blue(), 36));
     QLinearGradient gradient(0, y, 0, y + bandHeight);
@@ -3453,7 +3465,7 @@ void CaptureEditor::paintOcrOverlay(QPainter &painter, const QRectF &image,
     gradient.setColorAt(1.0, QColor(255, 255, 255, 230));
     painter.fillRect(QRectF(region.left(), y, region.width(), bandHeight),
                      gradient);
-    painter.setClipping(false);
+    painter.restore();
     painter.setPen(QPen(accent, 1.5));
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(region);
@@ -3526,7 +3538,7 @@ void CaptureEditor::paintOcrOverlay(QPainter &painter, const QRectF &image,
   const QRectF textRect(card.left() + kPad,
                         card.top() + kPad + headerHeight + kHeaderGap,
                         textWidth, textBounds.height());
-  painter.setClipRect(textRect);
+  painter.setClipRect(textRect, Qt::IntersectClip);
   painter.drawText(textRect, flags, ocrResultText_);
   painter.restore();
 }
@@ -6761,7 +6773,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     painter.setPen(QPen(QColor(QStringLiteral("#0a84ff")), 2));
     painter.setBrush(QColor(QStringLiteral("#f5f5f7")));
     for (const QRectF &handle : cropHandleRects())
-      painter.drawRoundedRect(handle, 3, 3);
+      if (!handle.isEmpty())
+        painter.drawRoundedRect(handle, 3, 3);
   }
 
   const QString currentTool = toolAction(tool_);

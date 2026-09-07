@@ -5077,6 +5077,33 @@ bool runWindowedZoomFramingCheck(QApplication &application, QString &error) {
                 .arg(belowShadow.name());
     return false;
   }
+  // Clipped viewport boundaries are not source crop edges.
+  const QImage beforeCrop = editor.renderCurrentOutput();
+  const QPoint syntheticHandle(500, bandTop - 7);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, syntheticHandle);
+  QTest::mouseMove(&editor, syntheticHandle + QPoint(0, 20), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      syntheticHandle + QPoint(0, 20));
+  if (editor.renderCurrentOutput() != beforeCrop) {
+    error = QStringLiteral("A clipped viewport boundary acted as a crop handle");
+    return false;
+  }
+  const QImage beforeOcr = editor.grab().toImage();
+  const QRect topChrome(0, 0, editor.width(), bandTop - 2);
+  const QRect bottomChrome(0, bandBottom + 2, editor.width(), editor.height() - bandBottom - 2);
+  const QRectF source = editor.sourceFrameWidgetRectForTest();
+  const qreal scale = editor.editScaleForTest();
+  const QRectF ocr((500 - source.left()) / scale, 0, 20 / scale, source.height() / scale);
+  for (const QString &result : {QString(), QStringLiteral("recognized words ").repeated(200)}) {
+    editor.setOcrOverlayForTest(ocr, result);
+    const QImage withOcr = editor.grab().toImage();
+    if (withOcr.copy(topChrome) != beforeOcr.copy(topChrome) ||
+        withOcr.copy(bottomChrome) != beforeOcr.copy(bottomChrome)) {
+      error = QStringLiteral("OCR painting escaped the window viewport");
+      return false;
+    }
+  }
+  editor.setOcrOverlayForTest({}, {});
   QTest::keyClick(&editor, Qt::Key_B, Qt::ShiftModifier);
   application.processEvents();
   if (editor.grab().toImage().pixelColor(60, bandBottom + 6).red() <= belowShadow.red()) {
