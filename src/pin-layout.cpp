@@ -49,7 +49,14 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
                                   int margin) {
   PinInsertionPlan plan;
   std::sort(column.begin(), column.end(),
-            [](const auto &a, const auto &b) {
+            [screenSize, gap, margin](const auto &a, const auto &b) {
+              const auto columnIndex = [screenSize, gap, margin](const QRect &rect) {
+                return qRound(qreal(screenSize.width() - margin - rect.right() - 1) /
+                                (rect.width() + gap));
+              };
+              const int aColumn = columnIndex(a.second), bColumn = columnIndex(b.second);
+              if (aColumn != bColumn)
+                return aColumn < bColumn;
               return a.second.y() > b.second.y();
             });
   // The dragged pin's place in the order comes from its center against the
@@ -57,7 +64,6 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
   // positions, so the preview does not chase its own moves.
   QVector<QRect> seed = blockers;
   QVector<QRect> packed;
-  QVector<int> packedCenters;
   for (const auto &pair : column) {
     const auto at =
         pinPackedPosition(seed, screenSize, pair.second.size(), gap, margin);
@@ -65,7 +71,6 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
       return {};
     seed.push_back(QRect(*at, pair.second.size()));
     packed.push_back(QRect(*at, pair.second.size()));
-    packedCenters.push_back(at->y() + pair.second.height() / 2);
   }
   // Touching any part of the stack joins it; fully outside stays out. The
   // stack includes the open spot on top, which is where a pin dragged off
@@ -90,9 +95,24 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
     band |= rect;
   if (!dragged.intersects(band))
     return plan;
+  // Choose the column with the largest horizontal overlap, then order
+  // vertically within it. Earlier columns remain ahead of the insertion.
+  int columnRight = screenSize.width() - margin - 1;
+  int overlap = 0;
+  for (const QRect &seat : stack) {
+    const int width = std::max(0, std::min(seat.right(), dragged.right()) -
+                                     std::max(seat.left(), dragged.left()) + 1);
+    if (width > overlap) {
+      overlap = width;
+      columnRight = seat.right();
+    }
+  }
   int index = 0;
-  for (const int centerY : packedCenters)
-    index += centerY > dragged.center().y() ? 1 : 0;
+  for (const QRect &seat : packed)
+    if (seat.right() > columnRight + 6 ||
+        (std::abs(seat.right() - columnRight) <= 6 &&
+         seat.center().y() > dragged.center().y()))
+      ++index;
   plan.index = index;
 
   // Pack again with a dragged-sized hole at the insertion point.
@@ -124,35 +144,38 @@ PinInsertionPlan pinInsertionPlan(QVector<QPair<QString, QRect>> column,
   return plan;
 }
 
-bool pinInColumn(const QRect &rect, const QSize &screenSize, int margin) {
+bool pinInColumn(const QRect &rect, const QSize &screenSize, int margin, int gap) {
   constexpr int tolerance = 6;
-  return std::abs(rect.right() + 1 - (screenSize.width() - margin)) <=
-         tolerance;
+  const int stride = rect.width() + gap;
+  if (stride <= 0 || rect.left() < margin - tolerance)
+    return false;
+  const int offset = screenSize.width() - margin - rect.right() - 1;
+  const int column = std::max(0, qRound(qreal(offset) / stride));
+  return std::abs(offset - column * stride) <= tolerance;
 }
 
 namespace {
-// The whole expression is one dispatch argument; the title has a space in
-// it, so the selector is quoted inside the expression rather than around it.
-QString windowSelector(const QString &title) {
-  return QStringLiteral("window = \"title:^(%1)$\"").arg(title);
+// Address selectors identify the exact client already filtered by app class.
+QString windowSelector(const QString &address) {
+  return QStringLiteral("window = \"address:%1\"").arg(address);
 }
 } // namespace
 
-QString pinFloatDispatch(const QString &title) {
+QString pinFloatDispatch(const QString &address) {
   return QStringLiteral("hl.dsp.window.float({ %1 })")
-      .arg(windowSelector(title));
+      .arg(windowSelector(address));
 }
 
-QString pinPinDispatch(const QString &title) {
-  return QStringLiteral("hl.dsp.window.pin({ %1 })").arg(windowSelector(title));
+QString pinPinDispatch(const QString &address) {
+  return QStringLiteral("hl.dsp.window.pin({ %1 })").arg(windowSelector(address));
 }
 
-QString pinMoveDispatch(const QString &title, int x, int y) {
+QString pinMoveDispatch(const QString &address, int x, int y) {
   return QStringLiteral(
              "hl.dsp.window.move({ x = %1, y = %2, relative = false, %3 })")
       .arg(x)
       .arg(y)
-      .arg(windowSelector(title));
+      .arg(windowSelector(address));
 }
 
 QRect pinMonitorGeometry(const QJsonObject &monitor) {

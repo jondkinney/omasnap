@@ -100,10 +100,26 @@ bool runPinLayoutSmoke(QString &error) {
 
   // Column membership is hugging the right edge; dragging a pin away from
   // it takes the pin out of the column, whatever its height.
-  if (!pinInColumn(QRect(286, 26, 100, 80), screen, 14) ||
-      !pinInColumn(QRect(282, 140, 104, 120), screen, 14) ||
-      pinInColumn(QRect(200, 26, 100, 80), screen, 14)) {
+  if (!pinInColumn(QRect(286, 26, 100, 80), screen, 14, 10) ||
+      !pinInColumn(QRect(282, 140, 104, 120), screen, 14, 10) ||
+      pinInColumn(QRect(200, 26, 100, 80), screen, 14, 10)) {
     error = QStringLiteral("Column membership did not follow the right edge");
+    return false;
+  }
+
+  if (!pinInColumn(QRect(176, 206, 100, 80), screen, 14, 10)) {
+    error = QStringLiteral("A wrapped pin was excluded from compaction");
+    return false;
+  }
+  const QVector<QPair<QString, QRect>> wrappedColumn{
+      {QStringLiteral("a"), QRect(286, 206, 100, 80)},
+      {QStringLiteral("b"), QRect(286, 116, 100, 80)},
+      {QStringLiteral("c"), QRect(286, 26, 100, 80)},
+      {QStringLiteral("d"), QRect(176, 206, 100, 80)}};
+  const auto wrappedPlan = pinInsertionPlan(
+      wrappedColumn, {}, QRect(176, 110, 100, 80), screen, 10, 14);
+  if (wrappedPlan.index != 4 || wrappedPlan.spot != QRect(176, 116, 100, 80)) {
+    error = QStringLiteral("Insertion did not target the wrapped column");
     return false;
   }
 
@@ -201,16 +217,16 @@ bool runPinLayoutSmoke(QString &error) {
 
   // The dispatch expressions are Lua for a Lua-configured Hyprland;
   // a placement that silently does nothing is exactly the failure these guard.
-  const QString title = QStringLiteral("omasnap-pin 1234");
+  const QString title = QStringLiteral("0x1234");
   if (pinFloatDispatch(title) !=
           QStringLiteral(
-              "hl.dsp.window.float({ window = \"title:^(omasnap-pin 1234)$\" })") ||
+              "hl.dsp.window.float({ window = \"address:0x1234\" })") ||
       pinPinDispatch(title) !=
           QStringLiteral(
-              "hl.dsp.window.pin({ window = \"title:^(omasnap-pin 1234)$\" })") ||
+              "hl.dsp.window.pin({ window = \"address:0x1234\" })") ||
       pinMoveDispatch(title, 120, 40) !=
           QStringLiteral("hl.dsp.window.move({ x = 120, y = 40, relative = "
-                         "false, window = \"title:^(omasnap-pin 1234)$\" })")) {
+                         "false, window = \"address:0x1234\" })")) {
     error = QStringLiteral("Hyprland dispatch expressions were malformed");
     return false;
   }

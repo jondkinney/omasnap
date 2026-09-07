@@ -43,17 +43,17 @@ pinInsertionPlan(QVector<QPair<QString, QRect>> column,
                  const QVector<QRect> &blockers, const QRect &dragged,
                  const QSize &screenSize, int gap, int margin);
 
-/// Whether a pin still hugs the right edge column; dragging one away from
-/// the edge takes it out of the column, and compaction leaves it alone.
+/// Whether a pin hugs one of the packed columns. Freely placed pins are
+/// left alone during compaction.
 [[nodiscard]] bool pinInColumn(const QRect &rect, const QSize &screenSize,
-                               int margin);
+                               int margin, int gap);
 
 /// Dispatch expressions for a Lua-configured Hyprland, which evaluates the
 /// dispatch argument as Lua; the classic dispatcher grammar parses as an
 /// expression there and fails while reporting success.
-[[nodiscard]] QString pinFloatDispatch(const QString &title);
-[[nodiscard]] QString pinPinDispatch(const QString &title);
-[[nodiscard]] QString pinMoveDispatch(const QString &title, int x, int y);
+[[nodiscard]] QString pinFloatDispatch(const QString &address);
+[[nodiscard]] QString pinPinDispatch(const QString &address);
+[[nodiscard]] QString pinMoveDispatch(const QString &address, int x, int y);
 /// Global logical geometry, including scale and quarter-turn transforms.
 [[nodiscard]] QRect pinMonitorGeometry(const QJsonObject &monitor);
 

@@ -120,6 +120,7 @@ QRect compositorScreenRect(const QPoint &point = {}, bool usePoint = false) {
 
 struct CompositorPin {
   QString title;
+  QString address;
   QRect rect;
   bool floating = false;
   bool pinned = false;
@@ -133,12 +134,14 @@ QVector<CompositorPin> compositorPinRects() {
   for (const QJsonValue &value : clients) {
     const QJsonObject client = value.toObject();
     const QString title = client.value(QStringLiteral("title")).toString();
-    if (!title.startsWith(kPinTitlePrefix + QLatin1Char(' ')))
+    if (client.value(QStringLiteral("class")).toString() != QStringLiteral("omasnap") ||
+        !title.startsWith(kPinTitlePrefix + QLatin1Char(' ')) ||
+        client.value(QStringLiteral("address")).toString().isEmpty())
       continue;
     const QJsonArray at = client.value(QStringLiteral("at")).toArray();
     const QJsonArray size = client.value(QStringLiteral("size")).toArray();
     if (at.size() == 2 && size.size() == 2)
-      pins.push_back({title, QRect(at.at(0).toInt(), at.at(1).toInt(),
+      pins.push_back({title, client.value(QStringLiteral("address")).toString(), QRect(at.at(0).toInt(), at.at(1).toInt(),
                                    size.at(0).toInt(), size.at(1).toInt()),
                       client.value(QStringLiteral("floating")).toBool(),
                       client.value(QStringLiteral("pinned")).toBool()});
@@ -185,6 +188,11 @@ public:
     save();
   }
   bool move(const QString &title, const QRect &rect) {
+    const auto pin = std::find_if(pins.cbegin(), pins.cend(), [&](const CompositorPin &p) {
+      return p.title == title;
+    });
+    if (pin == pins.cend())
+      return false;
     targets_.insert(title, QJsonObject{{QStringLiteral("x"), rect.x()},
                                       {QStringLiteral("y"), rect.y()},
                                       {QStringLiteral("w"), rect.width()},
@@ -192,7 +200,7 @@ public:
                                       {QStringLiteral("time"), QDateTime::currentMSecsSinceEpoch()}});
     if (!save())
       return false;
-    if (hyprDispatch(pinMoveDispatch(title, rect.x(), rect.y())))
+    if (hyprDispatch(pinMoveDispatch(pin->address, rect.x(), rect.y())))
       return true;
     targets_.remove(title);
     save();
@@ -230,12 +238,19 @@ void compactPinColumn(const QString &excludedTitle, const QRect &screen) {
       if (pin.title == excludedTitle || !screen.intersects(pin.rect))
         continue;
       pin.rect.translate(-screen.topLeft());
-      if (pinInColumn(pin.rect, screen.size(), qRound(kCornerMargin)))
+      if (pinInColumn(pin.rect, screen.size(), qRound(kCornerMargin), kPinGap))
         column.push_back(pin);
       else
         blockers.push_back(pin.rect);
     }
-    std::sort(column.begin(), column.end(), [](const CompositorPin &a, const CompositorPin &b) {
+    std::sort(column.begin(), column.end(), [screen](const CompositorPin &a, const CompositorPin &b) {
+      const auto columnIndex = [screen](const QRect &rect) {
+        return qRound(qreal(screen.width() - qRound(kCornerMargin) - rect.right() - 1) /
+                        (rect.width() + kPinGap));
+      };
+      const int aColumn = columnIndex(a.rect), bColumn = columnIndex(b.rect);
+      if (aColumn != bColumn)
+        return aColumn < bColumn;
       return a.rect.y() > b.rect.y();
     });
     for (const CompositorPin &pin : column) {
@@ -502,7 +517,8 @@ protected:
 
   void closeButtonWatch() {
     for (const auto &[fd, notifier] : buttonWatches_) {
-      delete notifier;
+      notifier->setEnabled(false);
+      notifier->deleteLater();
       ::close(fd);
     }
     buttonWatches_.clear();
@@ -551,7 +567,7 @@ protected:
     for (const CompositorPin &pin : cachedPins_) {
       if (pin.title == windowTitle() || !dragScreen_.intersects(pin.rect))
         continue;
-      if (pinInColumn(pin.rect.translated(-dragScreen_.topLeft()), dragScreen_.size(), qRound(kCornerMargin)))
+      if (pinInColumn(pin.rect.translated(-dragScreen_.topLeft()), dragScreen_.size(), qRound(kCornerMargin), kPinGap))
         column.push_back({pin.title, pin.rect.translated(-dragScreen_.topLeft())});
       else
         blockers.push_back(pin.rect.translated(-dragScreen_.topLeft()));
@@ -806,9 +822,9 @@ int runPinnedCapture(const QString &path) {
                               [&](const CompositorPin &pin) { return pin.title == title; });
       if (own == placement.pins.end())
         return {};
-      if (!own->floating && !hyprDispatch(pinFloatDispatch(title)))
+      if (!own->floating && !hyprDispatch(pinFloatDispatch(own->address)))
         return {};
-      if (!own->pinned && !hyprDispatch(pinPinDispatch(title)))
+      if (!own->pinned && !hyprDispatch(pinPinDispatch(own->address)))
         return {};
       QVector<QRect> blockers;
       for (const CompositorPin &pin : placement.pins) {
