@@ -440,7 +440,7 @@ into a scrolling capture. Explicit `region`, `windows`, `fullscreen`, and
 | `Ctrl+S` | Save PNG only |
 | `Enter` | Copy and save (with a text layer selected: edit it) |
 | `Ctrl+P` / `P` | Keep the capture pinned on screen and close the editor |
-| `Esc` | Dismiss the annotator; keep an originating pin in place with its edits and undo history |
+| `Esc` / `Super+W` | Dismiss the annotator; keep an originating pin in place with its edits and undo history |
 | Right-click | Return to Select; cancel active drawing |
 
 ### Capture previews and pins
@@ -501,6 +501,8 @@ the pin in place and gives focus to the editor. One `Esc` dismisses the editor
 and updates that same pin, including any text being typed. Reopening it restores
 the editable layers and undo history. `P` / `Ctrl+P` in that editor returns to
 the existing pin too.
+While the overlay is open, a compositor close aimed at a pin (including stock
+`Super+W`) dismisses the overlay as `Esc` would, leaving the pins in place.
 Automatic expiry compacts the stack without transferring keyboard focus.
 
 | Input on a pin | Action |

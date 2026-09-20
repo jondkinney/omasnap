@@ -20,6 +20,7 @@
 #include <QUuid>
 #include <QSignalBlocker>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QCursor>
 #include <QDateTime>
 #include <QDebug>
@@ -1072,7 +1073,8 @@ CaptureEditor::~CaptureEditor() {
 bool CaptureEditor::eventFilter(QObject *watched, QEvent *event) {
   if (watched == textEditor_ && event->type() == QEvent::KeyPress) {
     auto *key = static_cast<QKeyEvent *>(event);
-    if (key->key() == Qt::Key_P && key->modifiers() == Qt::ControlModifier) {
+    if ((key->key() == Qt::Key_P && key->modifiers() == Qt::ControlModifier) ||
+        (key->key() == Qt::Key_W && key->modifiers() == Qt::MetaModifier)) {
       keyPressEvent(key);
       return true;
     }
@@ -4134,6 +4136,21 @@ void CaptureEditor::handleToolbar(const QString &action) {
   update();
 }
 
+void CaptureEditor::closeEvent(QCloseEvent *event) {
+  if (!event->spontaneous()) {
+    QWidget::closeEvent(event);
+    return;
+  }
+  // A compositor close of the normal editor window must return its edits to
+  // the pin too. Wait until Qt has left its close handler before Escape can
+  // call close() again; programmatic completion and handoff still close normally.
+  event->ignore();
+  QTimer::singleShot(0, this, [this] {
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    keyPressEvent(&escape);
+  });
+}
+
 void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
   if (!ocrResultText_.isEmpty()) {
@@ -4149,8 +4166,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   }
   const Tool toolBefore = tool_;
   const QString statusBefore = status_;
+  const bool dismiss = event->key() == Qt::Key_Escape ||
+      (event->key() == Qt::Key_W && event->modifiers() == Qt::MetaModifier);
   if (capturePending_) {
-    if (event->key() == Qt::Key_Escape)
+    if (dismiss)
       handleEscape();
     event->accept();
     return;
@@ -4184,7 +4203,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     update();
     return;
   }
-  if (event->key() == Qt::Key_Escape) {
+  if (dismiss) {
     handleEscape();
     return;
   }

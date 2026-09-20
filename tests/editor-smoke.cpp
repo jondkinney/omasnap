@@ -21,6 +21,7 @@
 #include "pin-lifecycle-smoke.hpp"
 #include "pin-interaction-smoke.hpp"
 #include "pin-file.hpp"
+#include "overlay-dismissal.hpp"
 #include "text-band.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
@@ -30,6 +31,7 @@
 #include <QTextBlock>
 #include <QTextLayout>
 #include <QBuffer>
+#include <QCloseEvent>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -47,6 +49,7 @@
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QWheelEvent>
+#include <QWindow>
 #include <QtTest/QTest>
 
 #include <algorithm>
@@ -2797,6 +2800,14 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
  *  through the handoff document and file mode. */
 bool runPinEditorReturnChecks(QApplication &application, QString &error) {
   QTemporaryDir files;
+  const QByteArray previousRuntime = qgetenv("XDG_RUNTIME_DIR");
+  qputenv("XDG_RUNTIME_DIR", QFile::encodeName(files.path()));
+  const auto restoreRuntime = qScopeGuard([previousRuntime] {
+    if (previousRuntime.isNull())
+      qunsetenv("XDG_RUNTIME_DIR");
+    else
+      qputenv("XDG_RUNTIME_DIR", previousRuntime);
+  });
   QImage source(1600, 1200, QImage::Format_ARGB32_Premultiplied);
   source.fill(QColor(QStringLiteral("#203040")));
   const QString original = files.filePath(QStringLiteral("capture.png"));
@@ -2816,7 +2827,28 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
     return first.convertToFormat(QImage::Format_ARGB32) ==
            second.convertToFormat(QImage::Format_ARGB32);
   };
-  for (const bool windowed : {false, true}) {
+  enum class Dismissal { Escape, SuperW, Compositor, Forwarded };
+  struct DismissalCase { bool windowed; Dismissal dismissal; };
+  for (const auto &[windowed, dismissal] : {
+           DismissalCase{false, Dismissal::Escape}, {true, Dismissal::Escape},
+           {false, Dismissal::SuperW}, {true, Dismissal::SuperW},
+           {false, Dismissal::Compositor}, {true, Dismissal::Compositor},
+           {false, Dismissal::Forwarded}}) {
+    const auto dismiss = [&](CaptureEditor &editor, QWidget *input = nullptr) {
+      if (dismissal == Dismissal::Compositor) {
+        // A Close sent to QWindow (outside QWindow::close()) becomes a
+        // spontaneous QWidget close, exactly like the compositor's request.
+        QCloseEvent close;
+        QCoreApplication::sendEvent(editor.windowHandle(), &close);
+        return !close.isAccepted();
+      }
+      if (dismissal == Dismissal::Forwarded)
+        return dismissActiveOverlay();
+      QTest::keyClick(input ? input : &editor,
+                      dismissal == Dismissal::Escape ? Qt::Key_Escape : Qt::Key_W,
+                      dismissal == Dismissal::Escape ? Qt::NoModifier : Qt::MetaModifier);
+      return true;
+    };
     auto pin = copyPinDocument(original, error);
     if (!pin)
       return false;
@@ -2830,6 +2862,9 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
                             QuickOutputMode::None, originalLog);
       editor.setPinDocument(std::make_shared<PinSnapshotFile>(documentPath));
       editor.setWindowedPresentation(windowed);
+      std::unique_ptr<OverlayDismissal> overlayDismissal;
+      if (dismissal == Dismissal::Forwarded)
+        overlayDismissal = std::make_unique<OverlayDismissal>(editor);
       editor.resize(1000, 800);
       editor.show();
       application.processEvents();
@@ -2844,11 +2879,15 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
         return false;
       }
       expected = editor.renderCurrentOutput();
-      QTest::keyClick(&editor, Qt::Key_Escape);
-      if (!settled([&] { return !editor.isVisible(); }) ||
+      if (!dismiss(editor) || !settled([&] { return !editor.isVisible(); }) ||
           !samePixels(QImage(previewPath), expected) ||
           !samePixels(QImage(documentPath), source)) {
-        error = QStringLiteral("One Escape did not return an edited preview with an intact source");
+        error = QStringLiteral("Editor dismissal %1 did not return an edited preview with an intact source")
+                    .arg(static_cast<int>(dismissal));
+        return false;
+      }
+      if (dismissActiveOverlay()) {
+        error = QStringLiteral("The closed overlay still intercepted pin close requests");
         return false;
       }
     }
@@ -2860,6 +2899,9 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
                               QuickOutputMode::None, edited);
       reopened.setPinDocument(std::make_shared<PinSnapshotFile>(documentPath));
       reopened.setWindowedPresentation(windowed);
+      std::unique_ptr<OverlayDismissal> overlayDismissal;
+      if (dismissal == Dismissal::Forwarded)
+        overlayDismissal = std::make_unique<OverlayDismissal>(reopened);
       reopened.resize(1000, 800);
       reopened.show();
       application.processEvents();
@@ -2889,11 +2931,11 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
         return false;
       }
       QTest::keyClicks(input, QStringLiteral("Keep this label"));
-      QTest::keyClick(input, Qt::Key_Escape);
-      if (!settled([&] { return !reopened.isVisible(); }) ||
+      if (!dismiss(reopened, input) || !settled([&] { return !reopened.isVisible(); }) ||
           reopened.annotationCountForTest() != 2 ||
           !samePixels(QImage(previewPath), reopened.renderCurrentOutput())) {
-        error = QStringLiteral("Escape while typing did not keep the label and dismiss the editor");
+        error = QStringLiteral("Editor dismissal %1 while typing lost the label or left the editor open")
+                    .arg(static_cast<int>(dismissal));
         return false;
       }
     }

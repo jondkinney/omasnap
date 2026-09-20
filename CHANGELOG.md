@@ -45,6 +45,8 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 
 ### Fixed
 
+- Route compositor close requests from pins to the open editor overlay, so
+  `Super+W` returns to the pin like `Esc`, preserving edits and undo history.
 - Preserve monitor scaling when opening scrolling captures for annotation
   or from a floating preview, so 2× captures do not appear twice as large.
   Retain the original pixel dimensions when the logical size rounds.
