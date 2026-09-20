@@ -55,7 +55,8 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 - Give Super+left-drag the same pin stacking and drop recovery as an image drag.
 - Bring off-screen pin drops back inside the monitor where the drag started,
   using the stack's 14-pixel gap and allowing for bars on any edge.
-- Match padding across pin controls while keeping the drag-out handle narrow.
+- Match padding and colors across pin controls, use a neutral hover outline,
+  and keep the drag-out handle narrow.
 - Show a pointing-hand cursor when hovering over pin buttons.
 - Center labeled Edit and Copy buttons over previews, without tooltips, and
   place the Lucide pin icon beside Close. Other controls use compact, dark

@@ -780,11 +780,10 @@ protected:
     }
     painter.restore();
     painter.setBrush(Qt::NoBrush);
-    painter.setPen(QPen(hovered_ ? QColor(140, 179, 209, 210)
-                                : QColor(255, 255, 255, 75), 1.5));
+    painter.setPen(QPen(QColor(245, 245, 247, hovered_ ? 210 : 75), 1.5));
     painter.drawPath(card);
     if (expiry_.kept() && !hovered_)
-      drawControlButton(painter, pinButtonRect(), QStringLiteral("pin"), true);
+      drawControlButton(painter, pinButtonRect(), QStringLiteral("pin"));
     painter.restore();
     if (!toast_.isEmpty())
       paintToast(painter);
@@ -792,26 +791,24 @@ protected:
       return;
 
     drawControlButton(painter, dragButtonRect(), QStringLiteral("drag-handle"));
-    drawControlButton(painter, editButtonRect(), QStringLiteral("edit"), false,
+    drawControlButton(painter, editButtonRect(), QStringLiteral("edit"),
                        QStringLiteral("Edit"));
-    drawControlButton(painter, pinButtonRect(), QStringLiteral("pin"), expiry_.kept());
+    drawControlButton(painter, pinButtonRect(), QStringLiteral("pin"));
     drawControlButton(painter, pathButtonRect(), QStringLiteral("path"));
-    drawControlButton(painter, copyButtonRect(), QStringLiteral("copy"), false,
+    drawControlButton(painter, copyButtonRect(), QStringLiteral("copy"),
                        QStringLiteral("Copy"));
     drawControlButton(painter, closeButtonRect(), QStringLiteral("close"));
   }
 
   void drawControlButton(QPainter &painter, const QRectF &rect,
-                         const QString &action, bool active = false,
+                         const QString &action,
                          const QString &label = {}) const {
     painter.setPen(Qt::NoPen);
     const bool hovered = hovered_ && rect == controlRect(hoveredControl_);
-    painter.setBrush(active ? QColor(37, 58, 75, 235)
-                            : hovered ? QColor(37, 42, 52, 240)
-                                      : QColor(12, 12, 16, 210));
+    painter.setBrush(hovered ? QColor(37, 42, 52, 240)
+                             : QColor(12, 12, 16, 210));
     painter.drawRoundedRect(rect, 6, 6);
-    const QColor foreground = active ? QColor(140, 179, 209)
-                                     : QColor(245, 245, 247);
+    const QColor foreground(245, 245, 247);
     if (label.isEmpty()) {
       drawToolbarIcon(painter, rect, action, {}, foreground);
     } else {

@@ -449,7 +449,7 @@ Normal captures show a preview that fades after 10 seconds of idle time, replaci
 the completion notification. Hovering the stack, dragging, and in-progress
 actions pause the countdown; it resumes when the preview is idle again. Clicking,
 scrolling, copying, or editing does not pin the preview. Only the pin button or
-`Ctrl+P` on a focused preview keeps it until closed. Kept shots show a highlighted
+`Ctrl+P` on a focused preview keeps it until closed. Kept shots show a
 pin icon even when the other controls are hidden. Unpinning starts a fresh
 10-second countdown.
 New captures always go in front of the existing stack, including kept shots.
