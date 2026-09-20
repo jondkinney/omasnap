@@ -5,6 +5,7 @@
 #include <QSaveFile>
 #include <QDateTime>
 #include "pin.hpp"
+#include "card-stack.hpp"
 #include "capture.hpp"
 #include "pin-file.hpp"
 #include "pin-expiry.hpp"
@@ -343,7 +344,7 @@ public:
         columnRight = rect.right();
         depth = 0;
       }
-      tilts.insert(title, pinStackTilt(depth++, expanded));
+      tilts.insert(title, stackCardTilt(depth++, expanded ? 1.0 : 0.0));
     }
     if (tilts != state_.value(QStringLiteral("tilts")).toObject()) {
       state_.insert(QStringLiteral("tilts"), tilts);

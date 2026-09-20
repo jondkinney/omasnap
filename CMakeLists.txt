@@ -33,6 +33,7 @@ foreach(PROTOCOL_XML IN LISTS PROTOCOL_XMLS)
 endforeach()
 
 add_library(omasnap-core STATIC
+  src/card-stack.hpp
   src/cli-path.cpp
   src/cli-path.hpp
   src/icons.cpp
