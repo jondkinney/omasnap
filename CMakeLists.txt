@@ -8,6 +8,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core Gui Test Widgets)
 find_package(LayerShellQt REQUIRED)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
+pkg_check_modules(Libdeflate REQUIRED IMPORTED_TARGET libdeflate)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
 set(PROTOCOL_XMLS
@@ -46,6 +47,8 @@ add_library(omasnap-core STATIC
   src/pin-file.hpp
   src/pin-layout.cpp
   src/pin-layout.hpp
+  src/png.cpp
+  src/png.hpp
   src/capture.cpp
   src/capture.hpp
   src/cut.cpp
@@ -137,6 +140,7 @@ target_link_libraries(omasnap-core PUBLIC
   Qt6::Widgets
   LayerShellQt::Interface
   PkgConfig::WaylandClient
+  PkgConfig::Libdeflate
 )
 
 qt_add_executable(omasnap src/main.cpp src/pin.cpp src/pin.hpp)
@@ -158,6 +162,8 @@ qt_add_executable(omasnap-smoke
   tests/selection-repaint-smoke.hpp
   tests/clipboard-smoke.cpp
   tests/clipboard-smoke.hpp
+  tests/png-smoke.cpp
+  tests/png-smoke.hpp
   tests/instance-lock-smoke.cpp
   tests/instance-lock-smoke.hpp
   tests/transform-smoke.cpp

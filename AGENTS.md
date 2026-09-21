@@ -57,7 +57,7 @@ change that touches the principle, not just this summary.
   instead. No X11, no macOS/Windows. See
   [docs/platform-scope.md](docs/platform-scope.md).
 - **Lean, learned dependencies.** The dependency set is Qt6 + LayerShellQt +
-  wayland-client, plus shelling out to a few existing Omarchy tools
+  wayland-client + libdeflate, plus shelling out to a few existing Omarchy tools
   (`hyprctl`, `wl-copy`/`wl-paste`, `tesseract`, `omarchy-notification-send`)
   instead of linking their equivalents in-process. Know this list before
   proposing an addition to it. See [docs/dependencies.md](docs/dependencies.md).
@@ -124,7 +124,7 @@ Always run `make check` after behavioral changes. CI
 push and PR.
 
 Dependencies (Arch): `base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-wayland wayland-protocols wl-clipboard xdg-utils tesseract tesseract-data-eng`. See
+wayland wayland-protocols libdeflate wl-clipboard xdg-utils tesseract tesseract-data-eng`. See
 [docs/dependencies.md](docs/dependencies.md) before adding to this list.
 
 ## Release process

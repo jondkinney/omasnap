@@ -3,6 +3,8 @@
 #include <QTextOption>
 #include "capture.hpp"
 #include "pin-file.hpp"
+#include "pin-layout.hpp"
+#include "png.hpp"
 #include "recent-snaps.hpp"
 #include "stroke-smoothing.hpp"
 #include "output-config.hpp"
@@ -1641,6 +1643,7 @@ bool loadClipboardImage(QImage &image, QString &error) {
 }
 
 bool copyPngFileToClipboard(const QString &path, QString &error) {
+  StartupTimingScope timing("copy PNG to clipboard");
   QFile input(path);
   if (!input.open(QIODevice::ReadOnly)) {
     error = QStringLiteral("Could not read screenshot snapshot: %1").arg(path);
@@ -1657,7 +1660,7 @@ bool copyPngFileToClipboard(const QString &path, QString &error) {
 bool copyImageToClipboard(const QImage &image, QString &error) {
   QByteArray png;
   QBuffer buffer(&png);
-  if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG")) {
+  if (!buffer.open(QIODevice::WriteOnly) || !writePng(image, buffer)) {
     error = QStringLiteral("Could not encode screenshot as PNG");
     return false;
   }
@@ -1832,7 +1835,7 @@ QString editorHandoffPath() {
 bool saveEditorHandoff(const QImage &source, const QString &path,
                        const OperationLog &log, const QString &token,
                        QString &error) {
-  if (!saveTemporarySnapshot(source, path, error, -1) ||
+  if (!saveTemporarySnapshot(source, path, error) ||
       !saveOperationLog(operationLogPath(path), log, error))
     return false;
   QSaveFile marker(path + QStringLiteral(".handoff"));
@@ -1921,6 +1924,7 @@ QString launchPinnedCapture(
     PinLifetime lifetime, QString &error,
     const std::function<bool(const QString &, const QStringList &)> &launcher,
     const QString &recentId) {
+  StartupTimingScope timing("prepare and launch pin");
   prunePinnedSnapshots();
   const QString path = pinnedSnapshotPath(1);
   if (path.isEmpty()) {
@@ -1932,7 +1936,15 @@ QString launchPinnedCapture(
   const auto cleanup = [&] {
     QFile::remove(path);
     QFile::remove(operationLogPath(path));
+    QFile::remove(PinSnapshotFile::thumbnailPath(path));
   };
+  // The child only needs card-sized pixels to map its first frame. Its
+  // clipboard, file sharing, and editor still use the full-resolution PNG.
+  if (!saveTemporarySnapshot(pinDisplayImage(image),
+                             PinSnapshotFile::thumbnailPath(path), error)) {
+    cleanup();
+    return {};
+  }
   if (copy && !copyPngFileToClipboard(path, error)) {
     cleanup();
     return {};
@@ -1950,8 +1962,8 @@ QString launchPinnedCapture(
   return path;
 }
 
-bool saveTemporarySnapshot(const QImage &image, QString path, QString &error,
-                           int quality) {
+bool saveTemporarySnapshot(const QImage &image, QString path, QString &error) {
+  StartupTimingScope timing("encode and save PNG");
   if (image.isNull()) {
     error = QStringLiteral("Temporary snapshot is empty");
     return false;
@@ -1979,7 +1991,7 @@ bool saveTemporarySnapshot(const QImage &image, QString path, QString &error,
     return false;
   }
 
-  if (!image.save(&file, "PNG", quality)) {
+  if (!writePng(image, file)) {
     file.cancelWriting();
     error = QStringLiteral("Could not save temporary snapshot: %1").arg(path);
     return false;

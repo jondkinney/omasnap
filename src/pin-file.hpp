@@ -16,6 +16,9 @@ public:
   [[nodiscard]] bool isLocked() const;
   [[nodiscard]] QString path() const { return path_; }
   [[nodiscard]] QString previewPath() const { return path_ + QStringLiteral(".preview.png"); }
+  [[nodiscard]] static QString thumbnailPath(const QString &path) {
+    return path + QStringLiteral(".thumb.png");
+  }
   [[nodiscard]] static bool isOwnedPath(const QString &path);
   void preserveForEditor();
 

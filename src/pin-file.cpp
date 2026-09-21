@@ -35,6 +35,7 @@ PinSnapshotFile::~PinSnapshotFile() {
   if (lastOwner && isOwnedPath(path_)) {
     QFile::remove(path_);
     QFile::remove(operationLogPath(path_));
+    QFile::remove(thumbnailPath(path_));
     QFile::remove(previewPath());
     QFile::remove(operationLogPath(previewPath()));
   }

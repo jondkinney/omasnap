@@ -6,14 +6,45 @@
 #include "cli-path.hpp"
 #include <QCommandLineParser>
 #include <QJsonArray>
+#include <QImage>
 #include <QRectF>
+#include <QPainter>
 #include <QTransform>
 #include <QtTypes>
+#include <Qt>
 #include <cmath>
 
 #include <QSet>
 
 bool runPinLayoutSmoke(QString &error) {
+  // Keep the entire area any card can show. Long scrolls must not turn into
+  // a one-pixel-wide thumbnail, and ultrawides keep their centered crop.
+  QImage tallImage(80, 2000, QImage::Format_RGB32);
+  tallImage.fill(Qt::red);
+  QImage wideImage(2000, 80, QImage::Format_RGB32);
+  wideImage.fill(Qt::red);
+  {
+    QPainter painter(&tallImage);
+    painter.fillRect(0, 0, 80, 160, Qt::green);
+  }
+  {
+    QPainter painter(&wideImage);
+    painter.fillRect(840, 0, 320, 80, Qt::green);
+  }
+  QImage tallExpected(80, 160, QImage::Format_RGB32);
+  tallExpected.fill(Qt::green);
+  QImage wideExpected(320, 80, QImage::Format_RGB32);
+  wideExpected.fill(Qt::green);
+  QImage monitorImage(1920, 1080, QImage::Format_RGB32);
+  monitorImage.fill(Qt::blue);
+  if (pinDisplayImage(tallImage) != tallExpected ||
+      pinDisplayImage(wideImage) != wideExpected ||
+      pinDisplayImage(monitorImage).size() != QSize(800, 450) ||
+      !pinDisplayImage({}).isNull()) {
+    error = QStringLiteral("Pin thumbnails changed the visible crop or lost their size bound");
+    return false;
+  }
+
   // The frame follows the display's shape at a fixed width, clamps the
   // extremes, and guesses 16:9 when the display cannot be asked.
   if (pinFrameSize(QSize(2560, 1600)) != QSize(200, 125) ||

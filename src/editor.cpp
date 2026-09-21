@@ -3296,7 +3296,7 @@ void CaptureEditor::startSnapshotRender() {
   snapshotWatcher_.setFuture(QtConcurrent::run(
       [source, path, logPath, log, writeSource] {
         QString error;
-        if (writeSource && !saveTemporarySnapshot(source, path, error, -1))
+        if (writeSource && !saveTemporarySnapshot(source, path, error))
           return false;
         return saveOperationLog(logPath, log, error);
       }));
@@ -4120,7 +4120,7 @@ void CaptureEditor::finish(OutputMode mode) {
                  !workingSource.isEmpty()) {
         pendingSnapshot.waitForFinished();
         QString recoveryError;
-        if (!saveTemporarySnapshot(source, workingSource, recoveryError, -1) ||
+        if (!saveTemporarySnapshot(source, workingSource, recoveryError) ||
             !saveOperationLog(workingLog, log, recoveryError))
           qWarning().noquote() << recoveryError;
       }
@@ -4134,7 +4134,7 @@ void CaptureEditor::finish(OutputMode mode) {
     const QString exportPath = temporaryExportPath();
     QString error;
     if (image.isNull() || exportPath.isEmpty() ||
-        !saveTemporarySnapshot(image, exportPath, error, -1)) {
+        !saveTemporarySnapshot(image, exportPath, error)) {
       result.error = error.isEmpty()
                          ? QStringLiteral("Could not prepare screenshot snapshot")
                          : error;

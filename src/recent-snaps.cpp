@@ -1,4 +1,5 @@
 #include "recent-snaps.hpp"
+#include "png.hpp"
 
 #include "capture.hpp"
 #include "startup-timing.hpp"
@@ -182,7 +183,7 @@ bool RecentSnapWriter::record(const QImage &source, const OperationLog &log,
   sourceFile.setDirectWriteFallback(false);
   if (!sourceFile.open(QIODevice::WriteOnly) ||
       !sourceFile.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
-      !source.save(&sourceFile, "PNG") || !sourceFile.commit()) {
+      !writePng(source, sourceFile) || !sourceFile.commit()) {
     error = QStringLiteral("Could not write recent capture source: %1")
                 .arg(sourceFile.errorString());
     return false;
@@ -199,7 +200,7 @@ bool RecentSnapWriter::record(const QImage &source, const OperationLog &log,
   if (!thumbFile.open(QIODevice::WriteOnly) ||
       !thumbFile.setPermissions(QFileDevice::ReadOwner |
                                 QFileDevice::WriteOwner) ||
-      !thumb.save(&thumbFile, "PNG")) {
+      !writePng(thumb, thumbFile)) {
     error = QStringLiteral("Could not write recent capture thumbnail: %1")
                 .arg(thumbFile.errorString());
     removeRecentSnap(snap);

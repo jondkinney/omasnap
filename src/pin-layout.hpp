@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QPair>
+#include <QImage>
 #include <QJsonObject>
 #include <optional>
 #include <QPoint>
@@ -15,6 +16,10 @@
 /// so a tall pivot or an ultrawide still yields a pin rather than a line;
 /// 16:9 when the display cannot be asked.
 [[nodiscard]] QSize pinFrameSize(const QSize &screenSize);
+
+/// Bounded pixels for displaying any pin frame, including tall scroll captures.
+/// Call on a worker; never use this image for output or editing.
+[[nodiscard]] QImage pinDisplayImage(const QImage &image);
 
 /// Keep a freely dropped pin inside a monitor's work area with the stack's
 /// edge inset. If it is smaller than the pin, keep the top-left controls visible.

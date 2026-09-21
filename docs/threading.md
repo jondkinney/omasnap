@@ -177,6 +177,13 @@ processes (`tesseract`, `wl-copy`/`wl-paste`, `hyprctl`) these workers spawn.
 
 ## Floating pins
 
+The output worker encodes the full-resolution PNG with `writePng`, verifies
+clipboard output, and prepares a bounded display thumbnail before launching
+the pin process. Its first frame decodes only that thumbnail, avoiding a full
+6K PNG decode just to paint a 200-pixel-wide card. The thumbnail is protected
+and removed with its source lock. Copy, Save, drag payloads, and editing use
+the full-resolution file; thumbnails are never output or working documents.
+
 Pin placement, compositor polling, and move dispatches run on a single worker
 per pin process. The GUI applies completed geometry snapshots through a watcher;
 it never waits for `hyprctl` during a drag. A runtime lock serializes placement

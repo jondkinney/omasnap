@@ -13,14 +13,25 @@ From `CMakeLists.txt`, this is the entire list:
 | **Qt6** (Concurrent, Core, Gui, Test, Widgets) 6.8+ | Everything: windowing, painting, the editor UI, the worker-pool threading model ([threading.md](threading.md)), the test harness |
 | **LayerShellQt** | Layer-shell surfaces (the capture overlay and editor) |
 | **wayland-client** (pkg-config) | Raw protocol client code (`ext-image-copy-capture`, `zwlr_virtual_pointer_v1`) that LayerShellQt/QtWayland don't expose |
+| **libdeflate** (pkg-config) | Fast lossless PNG compression and CRCs for 8-bit screenshots; avoids seconds of Qt/zlib encoding before a 6K preview can appear |
 | **wayland-scanner** + protocol XML | Generates the C bindings for the above at build time; not a runtime dependency |
 
 That's it. No JSON library (Qt's `QJsonDocument` handles `hyprctl -j`
-output), no image codec beyond what Qt's own PNG support provides, no HTTP,
+output), no HTTP,
 no logging framework, no CLI-parsing library beyond `QCommandLineParser`,
 no general config-file parser beyond `QSettings` (used for the one optional INI
 file — see below). The theme adapter reads a bounded scalar subset of Omarchy's
 TOML color files with Qt; it adds no parser library.
+
+`src/png.cpp` writes ordinary 8-bit RGB/RGBA PNGs using libdeflate at level 1.
+On a captured 6K desktop, Qt's default PNG encoding took about 3 seconds;
+even its fastest compressed setting took about 700 ms. Libdeflate brought
+compression to about 150 ms with identical decoded pixels and similar file
+size. It earns its dependency by removing that capture-to-preview delay.
+Qt still reads every image and writes images with profiles/text/offset metadata,
+high-bit-depth formats, and captures exceeding the encoder's 128 MiB filtered
+buffer budget. Those use Qt's streaming writer at zlib level 1. PNG DPI metadata
+is preserved on both paths. No quality or compression setting is exposed.
 
 ## Runtime: external processes, not libraries
 

@@ -126,18 +126,26 @@ bool runPinRevealSmoke(QString &error) {
       QCoreApplication::sendPostedEvents();
     }
   };
-  QImage image(200, 113, QImage::Format_RGB32);
+  QImage image(1600, 904, QImage::Format_RGB32);
   image.fill(Qt::cyan);
+  image.setPixelColor(71, 41, Qt::red);
   const QString source = pinnedSnapshotPath(1);
   if (!image.save(source))
     return false;
   QString saved;
   {
-    PinWindow pin(image, source, image.size(), PinLifetime::Timed);
+    PinWindow pin(pinDisplayImage(image), source, QSize(200, 113), PinLifetime::Timed);
     pin.show();
     const QPoint folder = pinControlRect(pin.size(), 6).center().toPoint();
     QEnterEvent enter(folder, folder, pin.mapToGlobal(folder));
     QApplication::sendEvent(&pin, &enter);
+    QTest::keyClick(&pin, Qt::Key_C);
+    drain();
+    if (QImage::fromData(read(QStringLiteral("clipboard")), "PNG")
+            .convertToFormat(image.format()) != image) {
+      error = QStringLiteral("Copy from a thumbnail lost full-resolution screenshot pixels");
+      return false;
+    }
     QTest::mouseClick(&pin, Qt::LeftButton, Qt::NoModifier, folder);
     drain();
     const QStringList exports = QDir(screenshots).entryList({QStringLiteral("*.png")}, QDir::Files);
@@ -177,6 +185,26 @@ bool runPinRevealSmoke(QString &error) {
     error = QStringLiteral("Closing the preview removed its revealed file");
     return false;
   }
+  // Public --pin files need not already be PNGs. Copy still offers a PNG
+  // containing the full image, without changing or deleting the user file.
+  const QString bitmap = files.filePath(QStringLiteral("user.bmp"));
+  if (!image.save(bitmap, "BMP"))
+    return false;
+  {
+    PinWindow pin(image, bitmap, QSize(200, 113), PinLifetime::Timed);
+    pin.show();
+    QTest::keyClick(&pin, Qt::Key_C, Qt::ControlModifier);
+    drain();
+    if (QImage::fromData(read(QStringLiteral("clipboard")), "PNG")
+            .convertToFormat(image.format()) != image) {
+      error = QStringLiteral("Copying a non-PNG pin lost the original pixels");
+      return false;
+    }
+    pin.close();
+    drain();
+  }
+  if (!QFileInfo::exists(bitmap))
+    return false;
   // A changed default is queried afresh. Unsupported ShowItems opens the
   // folder via xdg-open, never an unrelated generic FileManager1 provider.
   if (!write(QStringLiteral("default-app"), "org.example.OtherBrowser.desktop\n") ||

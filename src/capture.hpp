@@ -421,11 +421,6 @@ bool removeEditorHandoff(const QString &path, const QString &token);
 [[nodiscard]] QSize editorWindowSize(const QSize &preview,
                                      const QSize &available,
                                      int legendHeight);
-/**
- * Writes `image` into the private runtime directory. `quality` is the Qt PNG
- * quality knob, which maps inversely onto zlib levels: -1 keeps the default
- * level, higher values compress less and encode faster.
- */
 /** Saves a pinned snapshot plus a sidecar log recording the logical size,
  *  so editing the pin later reopens at the captured scale. */
 [[nodiscard]] bool savePinnedSnapshot(const QImage &image, const QString &path,
@@ -439,8 +434,9 @@ bool removeEditorHandoff(const QString &path, const QString &token);
     PinLifetime lifetime, QString &error,
     const std::function<bool(const QString &, const QStringList &)> &launcher = {},
     const QString &recentId = {});
+/** Atomically writes a lossless PNG into the private runtime directory. */
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
-                                         QString &error, int quality = -1);
+                                         QString &error);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
 /** Builds the omarchy-notification-send argv. With an image, the click command
  *  follows --exec as separate words (program, then file URL) and nothing else

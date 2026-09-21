@@ -8,6 +8,7 @@
 #include "overlay-chrome.hpp"
 #include "cli-path.hpp"
 #include "clipboard-smoke.hpp"
+#include "png-smoke.hpp"
 #include "chrome-theme-smoke.hpp"
 #include "cut-mapping-smoke.hpp"
 #include "cut-smoke.hpp"
@@ -2526,10 +2527,12 @@ bool runPostCaptureChecks(QString &error) {
     const auto cleanup = qScopeGuard([&] {
       QFile::remove(pin);
       QFile::remove(operationLogPath(pin));
+      QFile::remove(PinSnapshotFile::thumbnailPath(pin));
     });
     OperationLog log;
     if (editor.isVisible() || pin.isEmpty() || !launchedOnWorker ||
         QImage(pin).convertToFormat(expected.format()) != expected ||
+        QImage(PinSnapshotFile::thumbnailPath(pin)).isNull() ||
         QImage(clipboard).convertToFormat(expected.format()) != expected ||
         !loadOperationLog(operationLogPath(pin), log, error) ||
         log.previewSize != logicalSize) {
@@ -2701,6 +2704,7 @@ bool runPostCaptureChecks(QString &error) {
       if (!pin.isEmpty()) {
         QFile::remove(pin);
         QFile::remove(operationLogPath(pin));
+        QFile::remove(PinSnapshotFile::thumbnailPath(pin));
       }
     });
     editor.resize(800, 600);
@@ -2784,6 +2788,7 @@ bool runPostCaptureChecks(QString &error) {
           if (!pin.isEmpty()) {
             QFile::remove(pin);
             QFile::remove(operationLogPath(pin));
+            QFile::remove(PinSnapshotFile::thumbnailPath(pin));
           }
         });
         CaptureEditor editor(framed, output == PinOutput::Preview
@@ -2866,6 +2871,7 @@ bool runPostCaptureChecks(QString &error) {
     const auto cleanup = qScopeGuard([&] {
       QFile::remove(pin);
       QFile::remove(operationLogPath(pin));
+      QFile::remove(PinSnapshotFile::thumbnailPath(pin));
     });
     if (editor.isVisible() || pin.isEmpty() ||
         (textDraft && editor.annotationCountForTest() != 1)) {
@@ -13612,6 +13618,12 @@ int main(int argc, char **argv) {
       qWarning().noquote() << clipboardError;
       return 64;
     }
+  }
+
+  QString pngError;
+  if (!runPngSmoke(pngError)) {
+    qWarning().noquote() << pngError;
+    return EXIT_FAILURE;
   }
 
   QString clipboardError;

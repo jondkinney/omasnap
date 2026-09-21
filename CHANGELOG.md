@@ -42,6 +42,9 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 
 ### Fixed
 
+- Speed up lossless PNG output and load a small display image for the corner
+  preview, removing the multi-second encoding delay on large monitors while
+  keeping full-resolution pixels for copying, saving, dragging, and editing.
 - Cancelling automatic scroll capture interrupts frame-settling retries instead
   of waiting several seconds for the retry window to expire.
 - Ignore delayed starts and queued status updates from stopped scrolling

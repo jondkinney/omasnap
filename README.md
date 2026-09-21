@@ -169,7 +169,7 @@ Install the complete build/runtime dependency set:
 ```bash
 sudo pacman -S --needed \
   base-devel cmake ninja pkgconf qt6-base layer-shell-qt \
-  wayland wayland-protocols hyprland wl-clipboard xdg-utils \
+  wayland wayland-protocols libdeflate hyprland wl-clipboard xdg-utils \
   tesseract tesseract-data-eng
 ```
 
@@ -525,6 +525,9 @@ monitor origins, scaling and rotation, respecting bars on any edge and leaving
 a 14-pixel gap inside the usable area. It reserves each new target while the
 compositor animates it. If no on-screen slot fits, automatic packing leaves the window
 where the compositor placed it.
+
+Captures use fast lossless PNG encoding. The corner card loads a separate small
+display image; the clipboard, saved files, and editor retain every original pixel.
 
 The preview is 200 logical pixels wide with the display's aspect ratio (height
 clamped to 50–400 pixels). It fills that frame with a top-anchored cover crop;

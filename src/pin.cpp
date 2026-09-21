@@ -14,6 +14,7 @@
 #include "icons.hpp"
 #include "overlay-chrome.hpp"
 #include "overlay-dismissal.hpp"
+#include "startup-timing.hpp"
 
 #include <QApplication>
 #include <QBuffer>
@@ -28,6 +29,7 @@
 #include <QGuiApplication>
 #include <QHash>
 #include <QImage>
+#include <QImageReader>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -825,6 +827,10 @@ protected:
   }
 
   void paintEvent(QPaintEvent *) override {
+    if (!painted_) {
+      startupTimingMark("pin first paint");
+      painted_ = true;
+    }
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
@@ -1256,9 +1262,14 @@ protected:
   }
 
   void copyImage() {
-    runAction([image = image_] {
+    runAction([path = path_, image = image_] {
       QString error;
-      static_cast<void>(copyImageToClipboard(image, error));
+      // Internal thumbnails are display-only. Public --pin files may use
+      // another format, in which case image still holds their full pixels.
+      if (QImageReader::imageFormat(path) == "png")
+        static_cast<void>(copyPngFileToClipboard(path, error));
+      else
+        static_cast<void>(copyImageToClipboard(image, error));
       return ActionResult{error, {}, {}};
     }, QStringLiteral("Copied to clipboard"));
   }
@@ -1622,6 +1633,7 @@ private:
   }
 
   QImage image_;
+  bool painted_ = false;
   PinExpiry expiry_;
   qreal opacity_ = 1.0;
   bool expired_ = false;
@@ -1682,7 +1694,14 @@ private:
 } // namespace
 
 int runPinnedCapture(const QString &path, PinLifetime lifetime) {
-  QImage image(path);
+  QImage image;
+  {
+    StartupTimingScope timing("load pin display image");
+    if (PinSnapshotFile::isOwnedPath(path))
+      image.load(PinSnapshotFile::thumbnailPath(path));
+    if (image.isNull())
+      image.load(path);
+  }
   if (image.isNull()) {
     qWarning("omasnap: could not load pinned image %s", qUtf8Printable(path));
     return 1;
@@ -1703,6 +1722,7 @@ int runPinnedCapture(const QString &path, PinLifetime lifetime) {
     const auto result = watcher->result();
     if (!result.first.isEmpty()) {
       window.setPlacementSnapshot(result.first, result.second);
+      startupTimingMark("pin placement complete");
       watcher->deleteLater();
       settle->deleteLater();
     } else if (++attempts < 10) {

@@ -20,7 +20,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-          wayland wayland-protocols wl-clipboard tesseract tesseract-data-eng
+          wayland wayland-protocols libdeflate wl-clipboard tesseract tesseract-data-eng
           clang
 
       - name: Check out source

@@ -274,11 +274,13 @@ bool runPinLifecycleSmoke(QString &error) {
 
   const QString path = pinnedSnapshotPath(987654);
   const QString preview = path + QStringLiteral(".preview.png");
+  const QString thumbnail = PinSnapshotFile::thumbnailPath(path);
   if (!savePinnedSnapshot(image, path, QSize(4, 4), error) ||
+      !saveTemporarySnapshot(image, thumbnail, error) ||
       !savePinnedSnapshot(image, preview, QSize(4, 4), error))
     return false;
   const QStringList documentFiles{path, operationLogPath(path), preview,
-                                   operationLogPath(preview)};
+                                   operationLogPath(preview), thumbnail};
   for (const QString &filePath : documentFiles) {
     QFile agedFile(filePath);
     if (!agedFile.open(QIODevice::ReadOnly) ||
