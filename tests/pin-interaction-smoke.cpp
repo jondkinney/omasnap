@@ -178,6 +178,22 @@ bool runPinRevealSmoke(QString &error) {
       error = QStringLiteral("Reveal and Copy path did not reuse the same saved capture");
       return false;
     }
+    // A drag recipient may move the source away. Copy must not silently
+    // substitute the card's smaller display image for the full screenshot.
+    {
+      const QString moved = source + QStringLiteral(".moved");
+      if (!QFile::rename(source, moved))
+        return false;
+      const auto restoreSource = qScopeGuard([&] { QFile::rename(moved, source); });
+      if (!write(QStringLiteral("clipboard"), "a newer clipboard item"))
+        return false;
+      QTest::keyClick(&pin, Qt::Key_C);
+      drain();
+      if (read(QStringLiteral("clipboard")) != "a newer clipboard item") {
+        error = QStringLiteral("Copy used a display thumbnail after its full image disappeared");
+        return false;
+      }
+    }
     pin.close();
     drain();
   }

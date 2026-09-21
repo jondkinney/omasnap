@@ -1266,7 +1266,9 @@ protected:
       QString error;
       // Internal thumbnails are display-only. Public --pin files may use
       // another format, in which case image still holds their full pixels.
-      if (QImageReader::imageFormat(path) == "png")
+      // A missing internal PNG must fail rather than copy its thumbnail.
+      if (PinSnapshotFile::isOwnedPath(path) ||
+          QImageReader::imageFormat(path) == "png")
         static_cast<void>(copyPngFileToClipboard(path, error));
       else
         static_cast<void>(copyImageToClipboard(image, error));
