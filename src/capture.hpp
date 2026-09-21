@@ -378,10 +378,6 @@ QImage applyRedactionsScaled(QImage image, const QVector<Annotation> &redactions
 [[nodiscard]] bool ensurePrivateDirectory(const QString &path);
 /** Returns Omasnap's private runtime directory, or empty on failure. */
 [[nodiscard]] QString secureRuntimeDirectory();
-/** Returns the screenshot output directory without creating it. */
-[[nodiscard]] QString screenshotRootDir();
-/** Returns a timestamped screenshot file name. */
-[[nodiscard]] QString defaultScreenshotFileName();
 /**
  * Filename-safe token for a window class: lowercase, `[a-z0-9-]` only,
  * last segment of a reverse-DNS class, at most 24 characters. Empty when
@@ -394,6 +390,13 @@ QImage applyRedactionsScaled(QImage image, const QVector<Annotation> &redactions
  */
 [[nodiscard]] QString dominantAppClass(const QVector<WindowTarget> &windows,
                                        const QRectF &selection);
+/** Suggested PNG destination from output config, without creating files.
+ * Reads config: call on a worker. */
+[[nodiscard]] QString suggestedScreenshotPath(const QString &appSlug = {});
+/** Atomically saves flattened PNG pixels, preserving an existing file on
+ * failure. PNG encoding and disk I/O must run on a worker. */
+[[nodiscard]] bool savePngFile(const QImage &image, const QString &path,
+                              QString &error);
 /**
  * Moves a finished export into the screenshots directory as
  * `screenshot-<yyyy-MM-dd_HH-mm-ss>[-<appSlug>].png`. The date leads so the

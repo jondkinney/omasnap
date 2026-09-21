@@ -13,6 +13,7 @@
 #include <QFutureWatcher>
 #include <QPlainTextEdit>
 #include <QPixmap>
+#include <QPointer>
 #include <QRegion>
 #include <QLineF>
 #include <QTimer>
@@ -21,6 +22,7 @@
 #include <optional>
 #include <memory>
 
+class QFileDialog;
 class QKeyEvent;
 class QCloseEvent;
 class QEnterEvent;
@@ -644,9 +646,14 @@ private:
   void replayLog();
   void redoEdit();
   void selectWindowInDirection(int key);
+  friend bool runSaveAsSmoke(QString &error);
+  void cancelSaveAs();
+  void restoreSaveAsFocus();
+  void saveAs();
+  void showSaveAsDialog(const QString &suggested);
+  void saveAsToPath(const QString &path);
   void finish(OutputMode mode);
   void completeFinish(const FinishResult &result);
-  void saveAs();
   void handleEscape();
   void handleToolbar(const QString &action);
   void paintEdit(QPainter &painter);
@@ -961,6 +968,10 @@ private:
   QColor textColor_;
   QFutureWatcher<OcrResult> ocrWatcher_;
   QFutureWatcher<FinishResult> finishWatcher_;
+  bool saveAsActive_ = false;
+  quint64 saveAsRequest_ = 0;
+  QPointer<QFileDialog> saveAsDialog_;
+  QString saveAsDirectory_;
   QFuture<QString> dismissFuture_;
   QFutureWatcher<ReopenResult> reopenWatcher_;
   QFutureWatcher<QImage> backdropWatcher_;

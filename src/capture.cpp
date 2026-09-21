@@ -366,7 +366,7 @@ QString runtimePath(const QString &name) {
   return runtime.isEmpty() ? QString() : QDir(runtime).filePath(name);
 }
 
-QString screenshotTargetPath(QString &error, const QString &appSlug) {
+QString suggestedScreenshotPathImpl(const QString &appSlug) {
   // Precedence: OMASNAP_SCREENSHOT_DIR, then [output] directory in the
   // config, then ~/Pictures/Screenshots. The filename pattern comes from
   // [output] filename; its default keeps the date first so the folder always
@@ -379,14 +379,21 @@ QString screenshotTargetPath(QString &error, const QString &appSlug) {
     root =
         QDir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation))
             .filePath(QStringLiteral("Screenshots"));
+  return QDir(root).filePath(formatScreenshotFilename(
+      config.filename, QDateTime::currentDateTime(), appSlug));
+}
+
+QString screenshotTargetPath(QString &error, const QString &appSlug) {
+  const QString suggested = suggestedScreenshotPathImpl(appSlug);
+  const QFileInfo file(suggested);
+  const QString root = file.absolutePath();
   if (!QDir().mkpath(root)) {
     error =
         QStringLiteral("Could not create screenshot directory: %1").arg(root);
     return {};
   }
 
-  const QString fileName = formatScreenshotFilename(
-      config.filename, QDateTime::currentDateTime(), appSlug);
+  const QString fileName = file.fileName();
   const QString stem = fileName.chopped(4);
   QString path = QDir(root).filePath(fileName);
   for (int suffix = 2; QFile::exists(path); ++suffix)
@@ -1711,21 +1718,6 @@ bool quickOutput(const QImage &image, QuickOutputMode mode, QString &error,
   return true;
 }
 
-QString screenshotRootDir() {
-  QString root = qEnvironmentVariable("OMASNAP_SCREENSHOT_DIR");
-  if (root.isEmpty())
-    root =
-        QDir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation))
-            .filePath(QStringLiteral("Screenshots"));
-  return root;
-}
-
-QString defaultScreenshotFileName() {
-  return QStringLiteral("screenshot-%1.png")
-      .arg(QDateTime::currentDateTime().toString(
-          QStringLiteral("yyyy-MM-dd_HH-mm-ss")));
-}
-
 QString appFilenameSlug(const QString &appClass) {
   // Reverse-DNS classes (org.gnome.Nautilus) name the app in their last
   // segment; everything before it is noise in a filename.
@@ -1767,6 +1759,10 @@ QString dominantAppClass(const QVector<WindowTarget> &windows,
     }
   }
   return best;
+}
+
+QString suggestedScreenshotPath(const QString &appSlug) {
+  return suggestedScreenshotPathImpl(appSlug);
 }
 
 QString moveSnapshotToScreenshots(const QString &sourcePath, QString &error,
@@ -1997,22 +1993,30 @@ bool saveTemporarySnapshot(const QImage &image, QString path, QString &error) {
     return false;
   }
 
+  return savePngFile(image, path, error);
+}
+
+bool savePngFile(const QImage &image, const QString &path, QString &error) {
+  if (image.isNull() || path.isEmpty()) {
+    error = QStringLiteral("Cannot save an empty image or filename");
+    return false;
+  }
   QSaveFile file(path);
   file.setDirectWriteFallback(false);
   if (!file.open(QIODevice::WriteOnly) ||
       !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
-    error = QStringLiteral("Could not open secure snapshot file: %1")
+    error = QStringLiteral("Could not open PNG file: %1")
                 .arg(file.errorString());
     return false;
   }
 
   if (!writePng(image, file)) {
     file.cancelWriting();
-    error = QStringLiteral("Could not save temporary snapshot: %1").arg(path);
+    error = QStringLiteral("Could not save PNG: %1").arg(path);
     return false;
   }
   if (!file.commit()) {
-    error = QStringLiteral("Could not replace temporary snapshot: %1")
+    error = QStringLiteral("Could not replace PNG: %1")
                 .arg(file.errorString());
     return false;
   }

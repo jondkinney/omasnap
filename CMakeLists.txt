@@ -88,6 +88,7 @@ add_library(omasnap-core STATIC
   src/stroke-smoothing.hpp
   ${PROTOCOL_SOURCES}
   src/editor.cpp
+  src/editor-save-as.cpp
   src/editor.hpp
 )
 qt_add_resources(omasnap-core "capture-fonts"
@@ -200,6 +201,8 @@ qt_add_executable(omasnap-smoke
   tests/stitch-smoke.hpp
   tests/scroll-startup-smoke.cpp
   tests/scroll-startup-smoke.hpp
+  tests/save-as-smoke.cpp
+  tests/save-as-smoke.hpp
 )
 target_include_directories(omasnap-smoke PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/tests"
