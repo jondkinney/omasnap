@@ -195,7 +195,8 @@ void initializeChromeTheme(const QString &directory) {
   Q_ASSERT(!applicationTheme);
   applicationTheme = new ChromeThemeWatcher(directory, qApp);
   const auto apply = [] {
-    qApp->setStyleSheet(chromeTheme().tooltipStyleSheet());
+    qApp->setStyleSheet(chromeTheme().tooltipStyleSheet() +
+                       chromeTheme().fileDialogStyleSheet());
     for (QWidget *widget : QApplication::topLevelWidgets())
       widget->update();
   };
@@ -231,6 +232,28 @@ QString ChromeTheme::tooltipStyleSheet() const {
              "selection-color: %5; }")
       .arg(cssColor(tooltipText), cssColor(tooltipBackground),
            cssColor(tooltipBorder), cssColor(accent), cssColor(accentText));
+}
+
+QString ChromeTheme::fileDialogStyleSheet() const {
+  // Scope every rule to the chooser: editor text remains transparent and
+  // annotation colors are independent of the desktop theme.
+  return QStringLiteral(
+             "QFileDialog, QFileDialog QWidget { background: %1; color: %2; }"
+             "QFileDialog QLineEdit, QFileDialog QAbstractItemView { "
+             "background: %3; selection-background-color: %4; "
+             "selection-color: %5; }"
+             "QFileDialog QPushButton, QFileDialog QToolButton, "
+             "QFileDialog QComboBox { background: %6; color: %7; "
+             "border: 1px solid %8; border-radius: 4px; padding: 5px; }"
+             "QFileDialog QPushButton:hover, QFileDialog QToolButton:hover { "
+             "background: %9; color: %10; }"
+             "QFileDialog QPushButton:default, QFileDialog QLineEdit:focus { "
+             "border: 1px solid %4; }"
+             "QFileDialog QWidget:disabled { color: %11; }")
+      .arg(cssColor(surface), cssColor(foreground), cssColor(canvasSurface),
+           cssColor(accent), cssColor(accentText), cssColor(button),
+           cssColor(buttonText), cssColor(tooltipBorder),
+           cssColor(buttonHover), cssColor(buttonHoverText), cssColor(muted));
 }
 
 QString chromeThemeDirectory() {

@@ -80,11 +80,14 @@ replaced, so idle windows do not poll the filesystem.
   the overlay's own chrome.
 
 Save As opens its chooser with `QFileDialog::open()` and restores the editor
-when it closes. Suggested output paths are prepared on a worker; accepting a
+when it closes. The floating-window rule and suggested output path are prepared
+on a worker; accepting a
 path renders and atomically writes PNG pixels on a worker too. Cancel keeps the
 text draft and operation log untouched. The editor remains open after saving. Closing or destroying the editor invalidates
 pending chooser/focus callbacks and closes its chooser; an already accepted
-write owns copied state and may finish without touching the editor. Save As
+write owns copied state; destruction drains it after the editor is hidden and
+the instance lock is released, before application teardown. The worker reports
+the completed save before retaining the editable capture in recents. Save As
 is unavailable during active drawing/panning gestures or initial backdrop loading.
 
 ## Pointer motion on large monitors

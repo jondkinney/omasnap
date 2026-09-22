@@ -2,9 +2,22 @@
 #include "save-as-smoke.hpp"
 #include "capture.hpp"
 #include "editor.hpp"
+#include "recent-snaps.hpp"
 
 #include <QApplication>
 #include <QCloseEvent>
+#include <QColor>
+#include <QCoreApplication>
+#include <QEvent>
+#include <QFutureWatcher>
+#include <QGuiApplication>
+#include <QImage>
+#include <QMetaObject>
+#include <QObject>
+#include <QRectF>
+#include <QScopeGuard>
+#include <QString>
+#include <QWidget>
 #include <QWindow>
 #include <QElapsedTimer>
 #include <QFile>
@@ -14,7 +27,12 @@
 #include <QTemporaryDir>
 #include <QSignalSpy>
 #include <QThread>
-#include <QtTest/QTest>
+#include <Qt>
+#include <QtTypes>
+#include <QtCore/qtenvironmentvariables.h>
+#include <QtTest/qtestkeyboard.h>
+
+#include <memory>
 
 namespace {
 template <typename Predicate> bool waitUntil(Predicate ready) {
@@ -37,11 +55,19 @@ QFileDialog *saveDialog() {
 } // namespace
 
 bool runSaveAsSmoke(QString &error) {
-  QTemporaryDir directory;
+  const QTemporaryDir directory;
   if (!directory.isValid()) {
     error = QStringLiteral("Could not create Save As test directory");
     return false;
   }
+  const QByteArray previousRecents = qgetenv("OMASNAP_RECENT_DIR");
+  const auto restoreRecents = qScopeGuard([&] {
+    if (previousRecents.isNull())
+      qunsetenv("OMASNAP_RECENT_DIR");
+    else
+      qputenv("OMASNAP_RECENT_DIR", previousRecents);
+  });
+  qputenv("OMASNAP_RECENT_DIR", directory.filePath(QStringLiteral("recent")).toUtf8());
   const QString target = directory.filePath(QStringLiteral("chosen.png"));
   QImage original(100, 80, QImage::Format_ARGB32);
   original.fill(Qt::red);
@@ -88,7 +114,7 @@ bool runSaveAsSmoke(QString &error) {
     const int before = editor.operationIndex();
     const QRectF selection = editor.currentSelection();
     const qreal zoom = editor.viewZoom_;
-    QSignalSpy closed(qApp, &QGuiApplication::lastWindowClosed);
+    const QSignalSpy closed(qApp, &QGuiApplication::lastWindowClosed);
     QTest::keyClick(textEditor, Qt::Key_S,
                      Qt::ControlModifier | Qt::ShiftModifier);
     if (!waitUntil([] { return saveDialog() != nullptr; })) {
@@ -176,6 +202,26 @@ bool runSaveAsSmoke(QString &error) {
       return false;
     }
     const int beforeNudge = editor.operationIndex();
+    const auto recent = findRecentSnap(editor.recentId_, &error);
+    const qsizetype recentCount = listRecentSnaps(false).size();
+    OperationLog savedLog;
+    if (!recent || !loadOperationLog(recent->logPath, savedLog, error) ||
+        savedLog.index != beforeNudge || savedLog.ops.size() != beforeNudge ||
+        QImage(recent->sourcePath).convertToFormat(QImage::Format_ARGB32) != capture.source) {
+      error = QStringLiteral("Save As did not retain its editable capture while open");
+      return false;
+    }
+    editor.saveAs();
+    if (!waitUntil([] { return saveDialog() != nullptr; }) ||
+        saveDialog()->directory().absolutePath() != directory.path()) {
+      error = QStringLiteral("Save As did not reopen the last successful folder");
+      return false;
+    }
+    saveDialog()->reject();
+    if (!waitUntil([&] { return !editor.busy_; })) {
+      error = QStringLiteral("Cancelling the repeated Save As left editing busy");
+      return false;
+    }
     editor.selectedAnnotation_ = 0;
     editor.selectedAnnotations_ = {0};
     editor.nudgeSelectedAnnotation(QPointF(3, 0));
@@ -190,6 +236,14 @@ bool runSaveAsSmoke(QString &error) {
       return false;
     }
     const int savedIndex = editor.operationIndex();
+    const auto updatedRecent = findRecentSnap(editor.recentId_, &error);
+    if (!updatedRecent ||
+        !loadOperationLog(updatedRecent->logPath, savedLog, error) ||
+        savedLog.index != savedIndex || savedLog.recentId != editor.recentId_ ||
+        listRecentSnaps(false).size() != recentCount || QFile::exists(recent->sourcePath)) {
+      error = QStringLiteral("Repeated Save As did not update the same recent capture");
+      return false;
+    }
     editor.saveAsToPath(directory.filePath(QStringLiteral("missing/file.png")));
     if (!waitUntil([&] { return !editor.busy_; }) || !editor.isVisible() ||
         editor.operationIndex() != savedIndex ||
@@ -290,13 +344,13 @@ bool runSaveAsSmoke(QString &error) {
       error = QStringLiteral("Destroyed editor left a save chooser");
       return false;
     }
-    // Accepted output owns copied pixels/state and finishes safely even if
-    // the editor is destroyed before its worker completion reaches the GUI.
+    // Accepted output owns copied pixels/state. Destruction drains it before
+    // application teardown, even with its GUI completion still pending.
     editor = std::make_unique<CaptureEditor>(capture, CaptureEditor::CaptureMode::File);
     const QString output = directory.filePath(QStringLiteral("destroyed.png"));
     editor->saveAsToPath(output);
     editor.reset();
-    if (!waitUntil([&] { return !QImage(output).isNull(); })) {
+    if (QImage(output).isNull()) {
       error = QStringLiteral("Destroying editor interrupted accepted Save As output");
       return false;
     }

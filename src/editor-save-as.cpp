@@ -1,14 +1,49 @@
 /** @fileoverview Nonblocking Save As for overlay and windowed editors. */
 #include "editor.hpp"
+#include "capture.hpp"
 #include "overlay-chrome.hpp"
+#include "recent-snaps.hpp"
 
 #include <LayerShellQt/Window>
 #include <QDialog>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QGuiApplication>
+#include <QObject>
+#include <QProcess>
+#include <QPromise>
+#include <QString>
 #include <QTimer>
+#include <Qt>
+#include <QtTypes>
+#include <QtLogging>
 #include <QtConcurrent/QtConcurrentRun>
+
+namespace {
+void prepareSaveAsWindow() {
+  // The overlay has no xdg-shell parent for its chooser. Without a rule,
+  // Hyprland tiles the independent dialog and rearranges the user's windows.
+  // Register before mapping, on the same worker that prepares the filename.
+  QProcess process;
+  process.start(QStringLiteral("hyprctl"),
+                {QStringLiteral("eval"),
+                 QStringLiteral("hl.window_rule({ name = \"omasnap-save-as\", "
+                                "match = { class = \"^omasnap$\", "
+                                "title = \"^Save screenshot as$\" }, "
+                                "float = true, center = true, opacity = 1 })")});
+  if (!process.waitForFinished(500)) {
+    process.kill();
+    process.waitForFinished(500);
+    qWarning("Could not configure the floating Save As window");
+  } else if (process.exitStatus() != QProcess::NormalExit ||
+             process.exitCode() != 0 ||
+             process.readAllStandardOutput().contains("error")) {
+    qWarning("Could not configure the floating Save As window");
+  }
+}
+} // namespace
 
 void CaptureEditor::cancelSaveAs() {
   // QObject stays alive after close(), and destruction can drain queued events.
@@ -42,7 +77,10 @@ void CaptureEditor::saveAs() {
     if (request == saveAsRequest_)
       showSaveAsDialog(suggested);
   });
-  watcher->setFuture(QtConcurrent::run([appSlug, directory = saveAsDirectory_] {
+  const bool wayland = QGuiApplication::platformName() == QStringLiteral("wayland");
+  watcher->setFuture(QtConcurrent::run([appSlug, directory = saveAsDirectory_, wayland] {
+    if (wayland)
+      prepareSaveAsWindow();
     const QString suggested = suggestedScreenshotPath(appSlug);
     return directory.isEmpty()
                ? suggested
@@ -59,16 +97,8 @@ void CaptureEditor::showSaveAsDialog(const QString &suggested) {
   saveAsDialog_ = dialog;
   const quint64 request = saveAsRequest_;
   dialog->setObjectName(QStringLiteral("omasnap-save-as"));
+  dialog->setScreen(screen());
   dialog->setFont(chromeFont(13));
-  dialog->setStyleSheet(QStringLiteral(
-      "QWidget { background: #18181c; color: #f5f5f7; }"
-      "QLineEdit, QAbstractItemView { background: #25252b; "
-      "selection-background-color: #3b82f6; selection-color: #ffffff; }"
-      "QPushButton, QToolButton, QComboBox { background: #303038; "
-      "border: 1px solid #56565f; border-radius: 4px; padding: 5px; }"
-      "QPushButton:hover, QToolButton:hover { background: #41414b; }"
-      "QPushButton:default { border-color: #60a5fa; }"
-      "QWidget:disabled { color: #858590; }"));
   dialog->resize(760, 520);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   // The overlay is hidden until the chooser has finished closing.
@@ -143,7 +173,7 @@ void CaptureEditor::saveAsToPath(const QString &path) {
   const quint64 request = saveAsRequest_;
   setStatus(QStringLiteral("Saving screenshot…"));
   auto *watcher = new QFutureWatcher<QString>(this);
-  connect(watcher, &QFutureWatcher<QString>::finished, this,
+  connect(watcher, &QFutureWatcher<QString>::resultReadyAt, this,
           [this, watcher, path, request] {
     const QString error = watcher->result();
     watcher->deleteLater();
@@ -158,14 +188,24 @@ void CaptureEditor::saveAsToPath(const QString &path) {
     saveAsDirectory_ = QFileInfo(path).absolutePath();
     setStatus(QStringLiteral("Saved to %1").arg(path));
   });
-  watcher->setFuture(QtConcurrent::run(
+  saveAsFuture_ = QtConcurrent::run(
       [capture = capture_, selection = selection_, annotations = annotations_,
        background = backgroundStyle_, shadow = imageShadow_,
-       boundary = canvasBoundaryMode_, backdrop = customBackdrop_, path] {
+       boundary = canvasBoundaryMode_, backdrop = customBackdrop_,
+       source = pristineSource_, log = currentOperationLog(),
+       previous = editingRecent_, path](QPromise<QString> &completion) {
+    RecentSnapWriter recent(log.recentId);
     const QImage image = renderCapture(capture, selection, annotations,
                                        background, shadow, boundary, backdrop);
     QString error;
     static_cast<void>(savePngFile(image, path, error));
-    return error;
-  }));
+    // Unlock editing as soon as the file is ready. Retain the editable source
+    // and log afterward, just as Copy/Save do, even if this editor stays open.
+    completion.addResult(error);
+    QString recentError;
+    if (!recent.record(source, log, image, recentError,
+                       previous ? &*previous : nullptr))
+      qWarning("Could not retain Save As capture: %s", qPrintable(recentError));
+  });
+  watcher->setFuture(saveAsFuture_);
 }

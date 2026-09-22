@@ -50,6 +50,7 @@ struct ChromeTheme {
   QColor toastBackground{12, 12, 16, 205};
   QColor toastText{240, 240, 245};
   [[nodiscard]] QString tooltipStyleSheet() const;
+  [[nodiscard]] QString fileDialogStyleSheet() const;
   bool operator==(const ChromeTheme &) const = default;
 };
 // NOLINTEND(misc-non-private-member-variables-in-classes)

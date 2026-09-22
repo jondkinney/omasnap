@@ -493,6 +493,10 @@ region after changing the display layout.
 | `Esc` / `Super+W` | Dismiss the annotator; keep an originating pin in place with its edits and undo history |
 | Right-click | Return to Select; cancel active drawing |
 
+Save As opens a centered file chooser and leaves the editor open. Cancelling
+preserves an unfinished text draft. A successful save also updates the recent
+captures shelf with its editable layers and undo history.
+
 ### Capture previews and pins
 
 Normal captures show a preview that fades after 10 seconds of idle time, replacing

@@ -10,7 +10,9 @@
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QImage>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPointF>
 #include <QSaveFile>
@@ -178,7 +180,24 @@ bool runChromeThemeSmoke(const QString &outputRoot, QString &error) {
                    Qt::NoButton, Qt::NoButton, Qt::NoModifier);
   QApplication::sendEvent(&selector, &move);
   QApplication::processEvents();
+  QKeyEvent saveAs(QEvent::KeyPress, Qt::Key_S,
+                   Qt::ControlModifier | Qt::ShiftModifier);
+  QApplication::sendEvent(&editor, &saveAs);
+  if (!waitFor([&] {
+        auto *dialog = editor.findChild<QFileDialog *>();
+        return dialog && dialog->isVisible();
+      })) {
+    error = QStringLiteral("Could not open the themed Save As chooser");
+    return false;
+  }
+  auto *saveDialog = editor.findChild<QFileDialog *>();
   const auto checkEditor = [&](const QString &name) {
+    const QImage chooser = saveDialog->grab().toImage();
+    if (!closeColor(pixelAt(chooser, {1, 1}), chromeTheme().surface) ||
+        !chooser.save(outputRoot + QStringLiteral("-save-as-theme-%1.png").arg(name))) {
+      error = QStringLiteral("Save As did not follow the %1 theme").arg(name);
+      return false;
+    }
     const QImage ui = editor.grab().toImage();
     if (!ui.save(outputRoot + QStringLiteral("-theme-%1.png").arg(name))) {
       error = QStringLiteral("Could not save the theme rendering fixture");

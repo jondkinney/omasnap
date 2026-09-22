@@ -1108,6 +1108,9 @@ CaptureEditor::~CaptureEditor() {
   finishWatcher_.waitForFinished();
   pinWatcher_.waitForFinished();
   dismissFuture_.waitForFinished();
+  // An accepted Save As owns its pixels. Finish it before application/static
+  // teardown, after the editor surface and instance lock have been released.
+  saveAsFuture_.waitForFinished();
   // Never remove the working snapshot under an in-flight write; drain the
   // current render (dropping any coalesced follow-up) before cleanup.
   snapshotDirty_ = false;

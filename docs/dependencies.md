@@ -85,7 +85,8 @@ palette, alter annotation/export colors, or change the pinned fonts.
 ## Save As dialog
 
 Save As uses the existing Qt Widgets file chooser asynchronously, with pinned
-chrome fonts and explicit colors. The overlay alone receives its layer-shell
+chrome fonts and the active Omarchy theme, including live theme changes.
+The overlay alone receives its layer-shell
 role through `LayerShellQt::Window::get`; the inherited global shell override
 is cleared so the chooser and overwrite prompts use ordinary xdg-shell windows.
 No native platform-theme plugin or new dependency is needed.

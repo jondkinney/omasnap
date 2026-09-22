@@ -972,6 +972,7 @@ private:
   quint64 saveAsRequest_ = 0;
   QPointer<QFileDialog> saveAsDialog_;
   QString saveAsDirectory_;
+  QFuture<QString> saveAsFuture_;
   QFuture<QString> dismissFuture_;
   QFutureWatcher<ReopenResult> reopenWatcher_;
   QFutureWatcher<QImage> backdropWatcher_;

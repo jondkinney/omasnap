@@ -39,7 +39,7 @@ preview keeps it, including a drag that only reorders the stack.
 `A` in the capture picker toggles the same behavior for that capture, including
 scrolling captures. A pin's Edit button also opens the editor on demand.
 During editing, output happens on **Copy**, **Save**, **Save As**, or both Copy
-and Save together (`CaptureEditor::finish()`), plus pinning a snapshot or
+and Save together (`CaptureEditor::finish()` / `saveAsToPath()`), plus pinning a snapshot or
 returning edits to an existing pin. Each render runs off the UI thread (see
 [threading.md](threading.md)), and writes the result. Until one of those
 happens, everything remains a log entry you can undo.
