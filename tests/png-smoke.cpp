@@ -15,8 +15,23 @@
 #include <QString>
 #include <Qt>
 #include <QtTypes>
+#include <QtEndian>
+#include <QtMinMax>
 
 namespace {
+QByteArray imageData(const QByteArray &png) {
+  QByteArray data;
+  for (qsizetype offset = 8; offset + 12 <= png.size();) {
+    const quint32 size = qFromBigEndian<quint32>(png.constData() + offset);
+    if (size > png.size() - offset - 12)
+      return {};
+    if (png.mid(offset + 4, 4) == "IDAT")
+      data.append(png.constData() + offset + 8, size);
+    offset += size + 12;
+  }
+  return data;
+}
+
 bool roundTrip(const QImage &source, QString &error) {
   QByteArray bytes;
   QBuffer buffer(&bytes);
@@ -80,6 +95,22 @@ bool runPngSmoke(QString &error) {
       if (!roundTrip(source.convertToFormat(format), error))
         return false;
     }
+    QByteArray ordinary;
+    QBuffer ordinaryBuffer(&ordinary);
+    ordinaryBuffer.open(QIODevice::WriteOnly);
+    if (!writePng(source, ordinaryBuffer))
+      return false;
+    const QSize logical(qMax(1, size.width() / 2), qMax(1, size.height() / 2));
+    setPngLogicalSize(source, logical);
+    QByteArray tagged;
+    QBuffer taggedBuffer(&tagged);
+    taggedBuffer.open(QIODevice::WriteOnly);
+    if (!writePng(source, taggedBuffer) || !roundTrip(source, error) ||
+        pngLogicalSize(QImage::fromData(tagged, "PNG")) != logical ||
+        imageData(ordinary).isEmpty() || imageData(ordinary) != imageData(tagged)) {
+      error = QStringLiteral("Logical size metadata changed PNG pixels, scale, or fast compression");
+      return false;
+    }
     source.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
     source.setOffset(QPoint(-12, 43));
     source.setText(QStringLiteral("Description"), QStringLiteral("Screenshot α with metadata"));
@@ -98,12 +129,25 @@ bool runPngSmoke(QString &error) {
 
   QImage image(13, 9, QImage::Format_RGBA8888);
   image.fill(Qt::transparent);
+  for (const QString &invalid : {QString(), QStringLiteral("0x4"),
+                                 QStringLiteral("4x0"), QStringLiteral("-1x4"),
+                                 QStringLiteral("14x4"), QStringLiteral("4x10"),
+                                 QStringLiteral("4x4x4"), QStringLiteral("4.5x4"),
+                                 QStringLiteral("999999999999999999x4"),
+                                 QStringLiteral("4x4α")}) {
+    image.setText(QStringLiteral("Omasnap logical size"), invalid);
+    if (!pngLogicalSize(image).isEmpty() || !roundTrip(image, error)) {
+      error = QStringLiteral("Malformed logical size was accepted or damaged PNG metadata");
+      return false;
+    }
+  }
+  setPngLogicalSize(image, QSize(6, 4));
   QBuffer closed;
   if (writePng(image, closed)) {
     error = QStringLiteral("PNG output accepted a closed device");
     return false;
   }
-  for (const int budget : {0, 8, 33, 55}) {
+  for (const int budget : {0, 8, 33, 55, 70, 90}) {
     FailingDevice failed(budget);
     if (writePng(image, failed) || writePng({}, failed)) {
       error = QStringLiteral("PNG output ignored a write failure or empty image");
@@ -115,10 +159,12 @@ bool runPngSmoke(QString &error) {
   QImage scroll(1024, 33000, QImage::Format_ARGB32);
   scroll.fill(Qt::white);
   scroll.setPixelColor(23, 32999, Qt::red);
+  setPngLogicalSize(scroll, QSize(512, 16500));
   QByteArray bytes;
   QBuffer buffer(&bytes);
   if (!buffer.open(QIODevice::WriteOnly) || !writePng(scroll, buffer) ||
-      QImage::fromData(bytes, "PNG").convertToFormat(scroll.format()) != scroll) {
+      QImage::fromData(bytes, "PNG").convertToFormat(scroll.format()) != scroll ||
+      pngLogicalSize(QImage::fromData(bytes, "PNG")) != QSize(512, 16500)) {
     error = QStringLiteral("A long scrolling capture lost pixels in PNG output");
     return false;
   }

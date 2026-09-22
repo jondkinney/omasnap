@@ -72,6 +72,11 @@ even when the logical size was rounded for a scaled display.
 Flattened pins and previews record the logical size of the entire rendered
 image, including its backdrop and expanded canvas, so reopening them preserves
 their proportions. The editable source's log still uses its original coordinates.
+Flattened PNG exports carry their complete logical dimensions in an
+`Omasnap logical size` text field, including crops, mats, and canvas growth.
+File and clipboard imports read it without needing the private sidecar;
+an editable document's operation log takes precedence. Untagged images retain
+their pixel dimensions: print DPI does not establish screenshot display scale.
 
 ## The two exceptions, and why they're still safe
 

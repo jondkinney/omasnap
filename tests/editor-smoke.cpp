@@ -2356,6 +2356,9 @@ bool runTextDraftNeverScrollsSmoke(QApplication &application, QString &error) {
 }
 
 bool runScrollScaleChecks(QString &error) {
+  const QTemporaryDir directory;
+  if (!directory.isValid())
+    return false;
   const QSize logicalSize(300, 500);
   for (const qreal scale : {1.0, 1.25, 1.5, 2.0}) {
     CaptureData capture;
@@ -2392,16 +2395,37 @@ bool runScrollScaleChecks(QString &error) {
       CaptureEditor fromPin(reopened, CaptureEditor::CaptureMode::File);
       fromPin.setSuppressSnapshots(true);
       fromPin.resize(1200, 1200);
+      // An external browser passes only the exported PNG, with no private
+      // operation log. Reopening must retain its size and every native row.
+      const QString exported = directory.filePath(QStringLiteral("renamed.png"));
+      if (!savePngFile(editor.renderCurrentOutput(), exported, error))
+        return false;
+      CaptureData fromPng;
+      describeFileCapture(fromPng, QImage(exported), {});
+      CaptureEditor fromFile(fromPng, CaptureEditor::CaptureMode::File);
+      fromFile.setSuppressSnapshots(true);
+      fromFile.resize(1200, 1200);
       for (const bool windowed : {false, true}) {
         editor.setWindowedPresentation(windowed);
         fromPin.setWindowedPresentation(windowed);
+        fromFile.setWindowedPresentation(windowed);
         if (editor.sourceFrameWidgetRectForTest().size() != QSizeF(expectedLogical) ||
             fromPin.sourceFrameWidgetRectForTest() != editor.sourceFrameWidgetRectForTest() ||
-            fromPin.renderCurrentOutput() != stitched) {
+            fromPin.renderCurrentOutput() != stitched ||
+            fromPng.previewSize != expectedLogical ||
+            fromFile.sourceFrameWidgetRectForTest() != editor.sourceFrameWidgetRectForTest() ||
+            fromFile.renderCurrentOutput() != stitched) {
           error = QStringLiteral("A reopened scrolling pin changed size or pixels at scale %1")
                       .arg(scale);
           return false;
         }
+      }
+      OperationLog overrideLog;
+      overrideLog.previewSize = stitched.size();
+      describeFileCapture(fromPng, QImage(exported), overrideLog);
+      if (fromPng.previewSize != stitched.size()) {
+        error = QStringLiteral("PNG metadata overrode the editable document's coordinates");
+        return false;
       }
     }
   }
@@ -2870,6 +2894,11 @@ bool runPostCaptureChecks(QString &error) {
           return false;
         }
         CaptureData reopened;
+        describeFileCapture(reopened, QImage(pin), {});
+        if (reopened.previewSize != sidecar.previewSize) {
+          error = QStringLiteral("A flattened PNG lost its backdrop or growing canvas dimensions");
+          return false;
+        }
         describeFileCapture(reopened, QImage(pin), sidecar);
         CaptureEditor restored(reopened, Mode::File, QuickOutputMode::None, sidecar);
         restored.setSuppressSnapshots(true);
@@ -3002,8 +3031,13 @@ bool runQuickOutputChecks(QString &error) {
     return false;
   }
   const auto recents = listRecentSnaps(false);
+  CaptureData reopened;
+  describeFileCapture(reopened,
+                      QImage(QDir(directory.path()).filePath(files.constFirst())), {});
   OperationLog log;
   if (recents.isEmpty() ||
+      reopened.previewSize != QSize(16, 12) ||
+      reopened.source.convertToFormat(image.format()) != image ||
       !loadOperationLog(recents.constFirst().logPath, log, error) ||
       log.previewSize != QSize(16, 12) ||
       QImage(recents.constFirst().sourcePath).convertToFormat(image.format()) != image) {

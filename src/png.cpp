@@ -2,11 +2,16 @@
 #include "png.hpp"
 
 #include <QByteArray>
+#include <QChar>
 #include <QColorSpace>
 #include <QImage>
 #include <QImageWriter>
 #include <QIODevice>
+#include <QLatin1StringView>
 #include <QPixelFormat>
+#include <QSize>
+#include <QString>
+#include <QStringList>
 #include <Qt>
 #include <QtEndian>
 #include <QtTypes>
@@ -18,6 +23,12 @@
 #include <memory>
 
 namespace {
+constexpr QLatin1StringView kLogicalSizeKey("Omasnap logical size");
+
+QString logicalSizeText(const QSize &size) {
+  return QStringLiteral("%1x%2").arg(size.width()).arg(size.height());
+}
+
 bool writeChunk(QIODevice &device, const char (&type)[5], const QByteArray &data) {
   std::array<char, 8> header{};
   qToBigEndian(static_cast<quint32>(data.size()), header.data());
@@ -32,6 +43,28 @@ bool writeChunk(QIODevice &device, const char (&type)[5], const QByteArray &data
 }
 } // namespace
 
+void setPngLogicalSize(QImage &image, const QSize &size) {
+  if (size.isEmpty() || size.width() > image.width() ||
+      size.height() > image.height())
+    return;
+  const QString text = logicalSizeText(size);
+  // Avoid detaching an already-tagged full-resolution render at output.
+  if (image.text(kLogicalSizeKey) != text)
+    image.setText(kLogicalSizeKey, text);
+}
+
+QSize pngLogicalSize(const QImage &image) {
+  const QString text = image.text(kLogicalSizeKey);
+  const auto dimensions = text.split(QLatin1Char('x'));
+  if (dimensions.size() != 2)
+    return {};
+  const QSize size(dimensions[0].toInt(), dimensions[1].toInt());
+  if (size.isEmpty() || size.width() > image.width() ||
+      size.height() > image.height() || text != logicalSizeText(size))
+    return {};
+  return size;
+}
+
 bool writePng(const QImage &image, QIODevice &device) {
   if (image.isNull() || !device.isWritable())
     return false;
@@ -40,6 +73,10 @@ bool writePng(const QImage &image, QIODevice &device) {
   const QPixelFormat format = image.pixelFormat();
   const qsizetype rowBytes = qsizetype(image.width()) * (alpha ? 4 : 3);
   const qsizetype stride = rowBytes + 1;
+  const auto textKeys = image.textKeys();
+  const bool captureSizeOnly = textKeys.size() == 1 &&
+                               textKeys.first() == kLogicalSizeKey &&
+                               !pngLogicalSize(image).isEmpty();
   // libdeflate compresses a whole buffer. Keep its extra working memory
   // bounded for long scroll captures, and let Qt preserve uncommon formats
   // and metadata without maintaining a second general-purpose PNG codec.
@@ -47,7 +84,7 @@ bool writePng(const QImage &image, QIODevice &device) {
   if (image.height() > maxFilteredBytes / stride || image.depth() > 32 ||
       format.redSize() > 8 || format.greenSize() > 8 ||
       format.blueSize() > 8 || format.alphaSize() > 8 ||
-      image.colorSpace().isValid() || !image.textKeys().isEmpty() ||
+      image.colorSpace().isValid() || (!textKeys.isEmpty() && !captureSizeOnly) ||
       !image.offset().isNull()) {
     QImageWriter writer(&device, "PNG");
     writer.setCompression(11); // Qt's 0..100 scale maps this to zlib level 1.
@@ -96,5 +133,11 @@ bool writePng(const QImage &image, QIODevice &device) {
     if (!writeChunk(device, "pHYs", resolution))
       return false;
   }
+  // Our bounded ASCII size tag must not send every capture through Qt's
+  // slower encoder. Other text/profile metadata still uses Qt above.
+  if (captureSizeOnly &&
+      !writeChunk(device, "tEXt", QByteArray(kLogicalSizeKey.data(), kLogicalSizeKey.size()) + '\0' +
+                                     image.text(kLogicalSizeKey).toLatin1()))
+    return false;
   return writeChunk(device, "IDAT", compressed) && writeChunk(device, "IEND", {});
 }

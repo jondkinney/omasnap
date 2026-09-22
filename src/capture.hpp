@@ -267,9 +267,8 @@ private:
 [[nodiscard]] bool loadOperationLog(const QString &path, OperationLog &log,
                                     QString &error);
 [[nodiscard]] QString temporaryExportPath();
-/** Presents a loaded image as the thing being edited. A log written by the
- *  editor carries the logical size its ops were laid out in; a source taken
- *  on a scaled monitor then opens at that scale rather than at 1:1. */
+/** Restore a document's logical size from its operation log or, for flattened
+ *  exports, its PNG metadata. Untagged images use their pixel dimensions. */
 void describeFileCapture(CaptureData &capture, QImage image,
                          const OperationLog &log);
 /** Returns an upright image for captured Wayland buffer contents. */
@@ -302,7 +301,7 @@ void describeFileCapture(CaptureData &capture, QImage image,
 [[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
 [[nodiscard]] bool copyImageToClipboard(const QImage &image, QString &error);
-[[nodiscard]] bool quickOutput(const QImage &image, QuickOutputMode mode,
+[[nodiscard]] bool quickOutput(QImage image, QuickOutputMode mode,
                                QString &error, const QSize &logicalSize = {});
 [[nodiscard]] bool copyTextToClipboard(const QString &text, QString &error);
 /** Paints one annotation. `arrowDisplayScale` affects only the on-screen tail
@@ -433,7 +432,7 @@ bool removeEditorHandoff(const QString &path, const QString &token);
                                      int legendHeight);
 /** Saves a pinned snapshot plus a sidecar log recording the logical size,
  *  so editing the pin later reopens at the captured scale. */
-[[nodiscard]] bool savePinnedSnapshot(const QImage &image, const QString &path,
+[[nodiscard]] bool savePinnedSnapshot(QImage image, const QString &path,
                                       const QSize &logicalSize, QString &error,
                                       const QString &recentId = {},
                                       const QString &savedPath = {});

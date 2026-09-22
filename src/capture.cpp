@@ -1495,6 +1495,7 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
     layerPainter.setClipRect(canvas);
     paintDefaultLayer(layerPainter, layerSource, layerBounds, annotations);
     layerPainter.end();
+    setPngLogicalSize(output, renderedCaptureLogicalSize(capture, output.size()));
     return output;
   }
 
@@ -1541,6 +1542,7 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
                     annotations);
   painter.restore();
   painter.end();
+  setPngLogicalSize(output, renderedCaptureLogicalSize(capture, output.size()));
   return output;
 }
 
@@ -1674,7 +1676,7 @@ bool copyImageToClipboard(const QImage &image, QString &error) {
   return copyToWaylandClipboard(QStringLiteral("image/png"), png, error);
 }
 
-bool quickOutput(const QImage &image, QuickOutputMode mode, QString &error,
+bool quickOutput(QImage image, QuickOutputMode mode, QString &error,
                  const QSize &logicalSize) {
   if (image.isNull() || mode == QuickOutputMode::None ||
       mode == QuickOutputMode::CopyAndPreview) {
@@ -1683,6 +1685,7 @@ bool quickOutput(const QImage &image, QuickOutputMode mode, QString &error,
   }
   OperationLog log;
   log.previewSize = logicalSize.isEmpty() ? image.size() : logicalSize;
+  setPngLogicalSize(image, log.previewSize);
   QString recentError;
   if (!recordRecentSnap(image, log, image, recentError))
     qWarning().noquote() << recentError;
@@ -1910,10 +1913,11 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
   return {std::max(size.width(), 640), std::max(size.height(), 420)};
 }
 
-bool savePinnedSnapshot(const QImage &image, const QString &path,
+bool savePinnedSnapshot(QImage image, const QString &path,
                         const QSize &logicalSize, QString &error,
                         const QString &recentId, const QString &savedPath) {
   if (savedPath.isEmpty()) {
+    setPngLogicalSize(image, logicalSize);
     if (!saveTemporarySnapshot(image, path, error))
       return false;
   } else {
@@ -2644,20 +2648,23 @@ void sendCaptureNotification(const QString &message, const QString &imagePath) {
                           captureNotificationArguments(message, imagePath));
 }
 
-/// Presents a loaded image as the thing being edited. A log written by the
-/// editor carries the logical size its ops were laid out in; a source taken
-/// on a scaled monitor then opens at that scale rather than at 1:1.
 void describeFileCapture(CaptureData &capture, QImage image,
                          const OperationLog &log) {
   capture = CaptureData();
   capture.previewSize = image.size();
   capture.monitor.scale = 1.0;
+  QSize logicalSize = pngLogicalSize(image);
+  // Editable documents take precedence: their operations use the source
+  // canvas's coordinates, whereas a PNG tag describes its flattened pixels.
   if (log.previewSize.isValid() && !log.previewSize.isEmpty() &&
       log.previewSize.width() <= image.width() &&
       log.previewSize.height() <= image.height()) {
-    capture.previewSize = log.previewSize;
+    logicalSize = log.previewSize;
+  }
+  if (!logicalSize.isEmpty()) {
+    capture.previewSize = logicalSize;
     capture.monitor.scale =
-        image.width() / static_cast<qreal>(log.previewSize.width());
+        image.width() / static_cast<qreal>(logicalSize.width());
   }
   capture.monitor.pixelSize = image.size();
   capture.monitor.geometry = QRect(QPoint(0, 0), capture.previewSize);

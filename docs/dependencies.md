@@ -28,7 +28,9 @@ On a captured 6K desktop, Qt's default PNG encoding took about 3 seconds;
 even its fastest compressed setting took about 700 ms. Libdeflate brought
 compression to about 150 ms with identical decoded pixels and similar file
 size. It earns its dependency by removing that capture-to-preview delay.
-Qt still reads every image and writes images with profiles/text/offset metadata,
+The fast encoder also writes Omasnap's small logical-size PNG text field, so
+standalone captures reopen at their original display size without resampling.
+Qt still reads every image and writes images with profiles/other text/offset metadata,
 high-bit-depth formats, and captures exceeding the encoder's 128 MiB filtered
 buffer budget. Those use Qt's streaming writer at zlib level 1. PNG DPI metadata
 is preserved on both paths. No quality or compression setting is exposed.

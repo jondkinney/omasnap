@@ -52,6 +52,9 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 
 ### Fixed
 
+- Retain logical display dimensions inside exported PNGs, so captures from
+  scaled monitors reopen at the correct size from Omaroll, files, or the
+  clipboard without downsampling or slowing the fast PNG encoder.
 - Remove the screen-share exclusion rule from the recommended Hyprland setup.
   It blacks out the scrolling capture region, including its transparent hole.
 - Report a missing preview image when copying instead of using its smaller

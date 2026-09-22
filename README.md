@@ -302,6 +302,12 @@ omasnap ~/Pictures/Screenshots/screenshot-2026-08-11_10-00-00.png
 omasnap --file /path/to/capture.png
 ```
 
+New PNG exports retain their logical display size, so reopening a 2× capture
+from Omaroll or a file browser keeps its original size in the annotator while
+preserving every native pixel. This also covers cropped, framed, and scrolling
+captures. Images without this metadata use their pixel dimensions; print DPI
+alone is not treated as a screenshot's display scale.
+
 To open the image currently on the Wayland clipboard:
 
 ```bash

@@ -108,11 +108,11 @@ bool runSaveAsSmoke(QString &error) {
   };
   CaptureData capture;
   capture.monitor.geometry = QRect(0, 0, 800, 600);
-  capture.monitor.pixelSize = QSize(800, 600);
-  capture.monitor.scale = 1;
-  capture.source = QImage(800, 600, QImage::Format_ARGB32);
+  capture.monitor.pixelSize = QSize(1600, 1200);
+  capture.monitor.scale = 2;
+  capture.source = QImage(1600, 1200, QImage::Format_ARGB32);
   capture.source.fill(QColor(QStringLiteral("#354f68")));
-  capture.previewSize = capture.source.size();
+  capture.previewSize = capture.monitor.geometry.size();
   for (const bool windowed : {false, true}) {
     CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
     preparePreview(editor);
@@ -219,6 +219,12 @@ bool runSaveAsSmoke(QString &error) {
       return false;
     }
     const int beforeNudge = editor.operationIndex();
+    CaptureData reopened;
+    describeFileCapture(reopened, QImage(output), {});
+    if (reopened.previewSize != (QSizeF(reopened.source.size()) / 2).toSize()) {
+      error = QStringLiteral("Save As lost the capture's logical size in its standalone PNG");
+      return false;
+    }
     const auto recent = findRecentSnap(editor.recentId_, &error);
     const qsizetype recentCount = listRecentSnaps(false).size();
     OperationLog savedLog;
