@@ -7,11 +7,13 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 
 ### Added
 
-- Save As (`Ctrl+Shift+S`): choose a PNG destination without closing the editor.
+- Save As (`Ctrl+Shift+S`): choose a PNG destination.
   The chooser follows the active theme, remembers its folder during editing,
   and saves lossless PNGs atomically on a worker.
   It opens centered without rearranging the desktop and retains editable layers
-  in recent captures while the editor stays open.
+  in recent captures. Save, Save As, and Copy + Save close the editor after success
+  and replace its originating preview or pin with a fresh unpinned preview.
+  Reveal and Copy path use the saved PNG without creating another file.
   Closing during preparation or chooser cancellation cannot reopen the editor;
   unfinished drawing gestures and initial backdrop loading finish before saving.
   Explicit non-PNG filenames are rejected without changing the draft or file.

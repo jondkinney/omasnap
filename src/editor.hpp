@@ -235,6 +235,7 @@ private:
     QString saved;
     QString error;
     bool snapshotsSuppressed = false;
+    bool savedPreview = false;
   };
   /// What reopening a shelved capture reads off disk: the full-resolution
   /// source plus its operation log. Loaded on the worker pool, not the UI

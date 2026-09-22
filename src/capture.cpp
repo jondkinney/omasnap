@@ -1912,9 +1912,18 @@ QSize editorWindowSize(const QSize &preview, const QSize &available,
 
 bool savePinnedSnapshot(const QImage &image, const QString &path,
                         const QSize &logicalSize, QString &error,
-                        const QString &recentId) {
-  if (!saveTemporarySnapshot(image, path, error))
-    return false;
+                        const QString &recentId, const QString &savedPath) {
+  if (savedPath.isEmpty()) {
+    if (!saveTemporarySnapshot(image, path, error))
+      return false;
+  } else {
+    // Reuse the PNG that was just saved instead of encoding it a second time.
+    // An owned runtime copy lets expiry/drag-out leave the user's file intact.
+    if (!QFile::copy(savedPath, path)) {
+      error = QStringLiteral("Screenshot saved, but could not prepare its preview");
+      return false;
+    }
+  }
   // The snapshot holds device pixels; the sidecar records the logical size
   // the capture was presented at, the same way a shelf entry's log does, so
   // a later edit of the pin reconstructs the scale instead of opening the
@@ -1922,6 +1931,8 @@ bool savePinnedSnapshot(const QImage &image, const QString &path,
   OperationLog sidecar;
   sidecar.previewSize = logicalSize;
   sidecar.recentId = recentId;
+  if (!savedPath.isEmpty())
+    sidecar.savedPath = QFileInfo(savedPath).absoluteFilePath();
   if (!logicalSize.isEmpty() &&
       !saveOperationLog(operationLogPath(path), sidecar, error)) {
     QFile::remove(path);
@@ -1934,7 +1945,7 @@ QString launchPinnedCapture(
     const QImage &image, const QSize &logicalSize, bool copy,
     PinLifetime lifetime, QString &error,
     const std::function<bool(const QString &, const QStringList &)> &launcher,
-    const QString &recentId) {
+    const QString &recentId, const QString &savedPath) {
   StartupTimingScope timing("prepare and launch pin");
   prunePinnedSnapshots();
   const QString path = pinnedSnapshotPath(1);
@@ -1942,7 +1953,7 @@ QString launchPinnedCapture(
     error = QStringLiteral("Could not create private runtime directory");
     return {};
   }
-  if (!savePinnedSnapshot(image, path, logicalSize, error, recentId))
+  if (!savePinnedSnapshot(image, path, logicalSize, error, recentId, savedPath))
     return {};
   const auto cleanup = [&] {
     QFile::remove(path);
@@ -2495,6 +2506,8 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
   root.insert(QStringLiteral("nextMarker"), log.nextMarker);
   if (!log.recentId.isEmpty())
     root.insert(QStringLiteral("recentId"), log.recentId);
+  if (!log.savedPath.isEmpty())
+    root.insert(QStringLiteral("savedPath"), log.savedPath);
   if (log.previewSize.isValid()) {
     root.insert(QStringLiteral("previewWidth"), log.previewSize.width());
     root.insert(QStringLiteral("previewHeight"), log.previewSize.height());
@@ -2542,6 +2555,7 @@ bool loadOperationLog(const QString &path, OperationLog &log, QString &error) {
   loaded.nextId = root.value(QStringLiteral("nextId")).toString().toULongLong();
   loaded.nextMarker = root.value(QStringLiteral("nextMarker")).toInt(1);
   loaded.recentId = root.value(QStringLiteral("recentId")).toString();
+  loaded.savedPath = root.value(QStringLiteral("savedPath")).toString();
   loaded.previewSize =
       QSize(root.value(QStringLiteral("previewWidth")).toInt(),
             root.value(QStringLiteral("previewHeight")).toInt());

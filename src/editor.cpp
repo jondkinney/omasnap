@@ -4102,10 +4102,12 @@ void CaptureEditor::finish(OutputMode mode) {
   const QString appSlug =
       appFilenameSlug(dominantAppClass(capture_.windows, selection_));
   const auto launcher = processLauncher_;
+  const bool savedPreview = phase_ == Phase::Edit;
   finishWatcher_.setFuture(QtConcurrent::run([captureCopy, source, log, previous, selection,
                                               annotations, background,
                                               imageShadow, canvasBoundary,
-                                              backdrop, appSlug, mode, launcher,
+                                              backdrop, appSlug, mode, launcher, savedPreview,
+                                              document = pinDocument_,
                                               snapshotsSuppressed, pendingSnapshot,
                                               workingSource, workingLog](QPromise<FinishResult> &completion) mutable {
     FinishResult result;
@@ -4167,6 +4169,19 @@ void CaptureEditor::finish(OutputMode mode) {
         result.error = error;
         return;
       }
+      if (savedPreview) {
+        const QString preview = launchPinnedCapture(
+            image, renderedCaptureLogicalSize(captureCopy, image.size()), false,
+            PinLifetime::Timed, result.error, launcher, log.recentId, result.saved);
+        if (preview.isEmpty()) {
+          result.error = QStringLiteral("Saved to %1, but could not show its preview: %2")
+                             .arg(result.saved, result.error);
+          return;
+        }
+        result.savedPreview = true;
+        if (document)
+          document->finishSavedPreview(log, result.saved);
+      }
     } else {
       QFile::remove(exportPath);
     }
@@ -4187,6 +4202,12 @@ void CaptureEditor::completeFinish(const FinishResult &result) {
     return;
   }
   snapshotPath_.clear();
+  if (result.savedPreview) {
+    // The saved preview is the completion UI, and its originating preview
+    // has already been retired by the worker.
+    close();
+    return;
+  }
   if (result.mode == OutputMode::CopyAndPreview) {
     // The pin is the completion UI; a second notification would repeat it.
     dismissEditor(false);

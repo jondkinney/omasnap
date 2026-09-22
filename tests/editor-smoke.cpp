@@ -2735,6 +2735,49 @@ bool runPostCaptureChecks(QString &error) {
     }
   }
 
+  // Explicit editor Save and Copy + Save close into an unpinned preview that
+  // points Reveal at the saved PNG. Only Copy + Save changes the clipboard.
+  for (const auto key : {Qt::Key_S, Qt::Key_Return}) {
+    const QTemporaryDir savedDirectory;
+    const QByteArray oldOutputDir = qgetenv("OMASNAP_SCREENSHOT_DIR");
+    const auto restoreOutput = qScopeGuard([&] {
+      oldOutputDir.isNull() ? qunsetenv("OMASNAP_SCREENSHOT_DIR")
+                           : qputenv("OMASNAP_SCREENSHOT_DIR", oldOutputDir);
+    });
+    qputenv("OMASNAP_SCREENSHOT_DIR", savedDirectory.path().toUtf8());
+    const QImage previousClipboard(clipboard);
+    QString preview;
+    const auto cleanup = qScopeGuard([&] {
+      if (!preview.isEmpty()) {
+        const PinSnapshotFile owned(preview);
+      }
+    });
+    CaptureEditor editor(capture, Mode::File);
+    bool launchedOnWorker = false;
+    editor.setProcessLauncherForTest([&](const QString &, const QStringList &args) {
+      launchedOnWorker = QThread::currentThread() != qApp->thread();
+      if (args.size() != 2 || args.first() != QStringLiteral("--preview"))
+        return false;
+      preview = args.last();
+      return true;
+    });
+    editor.show();
+    const QImage expected = editor.renderCurrentOutput();
+    QTest::keyClick(&editor, key, key == Qt::Key_S ? Qt::ControlModifier : Qt::NoModifier);
+    editor.waitForExport();
+    OperationLog metadata;
+    const QImage expectedClipboard = key == Qt::Key_S ? previousClipboard : expected;
+    if (editor.isVisible() || !launchedOnWorker || preview.isEmpty() ||
+        !loadOperationLog(operationLogPath(preview), metadata, error) ||
+        QFileInfo(metadata.savedPath).absolutePath() != savedDirectory.path() ||
+        QImage(metadata.savedPath).convertToFormat(expected.format()) != expected ||
+        QImage(preview).convertToFormat(expected.format()) != expected ||
+        QImage(clipboard).convertToFormat(expectedClipboard.format()) != expectedClipboard) {
+      error = QStringLiteral("Saving from the editor did not return the correct unpinned preview");
+      return false;
+    }
+  }
+
   // A flattened pin includes the backdrop and any canvas growth. Reopen it
   // at that complete size, not the original selection's aspect ratio.
   enum class PinOutput { Preview, Pin, Return };
@@ -3178,6 +3221,7 @@ bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
     QBuffer referenceBuffer(&reference);
     referenceBuffer.open(QIODevice::WriteOnly);
     current.save(&referenceBuffer, "PNG");
+    editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
     QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
     editor.waitForExport();
     const QStringList files =
@@ -5899,6 +5943,7 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
       return false;
     }
     firstOutput = editor.renderCurrentOutput();
+    editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
     QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
     editor.waitForExport();
   }
@@ -5992,6 +6037,7 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
       return false;
     }
     // Finishing again replaces the shelf entry instead of shelving a twin.
+    editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
     QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
     editor.waitForExport();
 
@@ -13601,6 +13647,7 @@ int main(int argc, char **argv) {
             .convertToFormat(QImage::Format_ARGB32);
     if (snapshotBeforeSave.isNull())
       return 59;
+    finishEditor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
     QTest::keyClick(&finishEditor, Qt::Key_S, Qt::ControlModifier);
     finishEditor.waitForExport();
     const QStringList savedFiles =

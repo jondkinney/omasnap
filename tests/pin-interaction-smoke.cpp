@@ -2,7 +2,9 @@
 // window API or test hooks to the production binary. pin.cpp is not otherwise
 // linked into the smoke executable.
 #include "../src/pin.cpp"
+#include "capture.hpp"
 #include "chrome-theme.hpp"
+#include "pin-file.hpp"
 #include "pin-layout.hpp"
 #include "pin-interaction-smoke.hpp"
 
@@ -21,6 +23,7 @@
 #include <QTest>
 #include <QThreadPool>
 #include <Qt>
+#include <QtCore/qtestsupport_core.h>
 #include <QtEnvironmentVariables>
 #include <QtMath>
 
@@ -199,6 +202,55 @@ bool runPinRevealSmoke(QString &error) {
   }
   if (QFileInfo::exists(source) || !QFileInfo::exists(saved)) {
     error = QStringLiteral("Closing the preview removed its revealed file");
+    return false;
+  }
+  // Save As returns a timed runtime preview, but Reveal/Copy path must use
+  // the exact user-chosen file. Further editing starts a fresh working log.
+  const QString chosen = files.filePath(QStringLiteral("chosen # ' ü.png"));
+  const QString savedPreview = pinnedSnapshotPath(3);
+  if (!savePngFile(image, chosen, error) ||
+      !savePinnedSnapshot(image, savedPreview, image.size(), error, {}, chosen))
+    return false;
+  {
+    PinWindow pin(pinDisplayImage(image), savedPreview, QSize(200, 113), PinLifetime::Timed);
+    pin.show();
+    const QPoint folder = pinControlRect(pin.size(), 6).center().toPoint();
+    QEnterEvent enter(folder, folder, pin.mapToGlobal(folder));
+    QApplication::sendEvent(&pin, &enter);
+    QTest::mouseClick(&pin, Qt::LeftButton, Qt::NoModifier, folder);
+    drain();
+    QTest::keyClick(&pin, Qt::Key_L);
+    drain();
+    if (pin.expiry_.kept() || read(QStringLiteral("clipboard")) != chosen.toUtf8() ||
+        !read(QStringLiteral("bus-args")).contains(
+            QUrl::fromLocalFile(chosen).toString(QUrl::FullyEncoded).toUtf8()) ||
+        QDir(screenshots).entryList({QStringLiteral("*.png")}, QDir::Files).size() != 1) {
+      error = QStringLiteral("Saved preview was pinned or revealed an extra saved copy");
+      return false;
+    }
+    auto document = copyPinDocument(savedPreview, error);
+    OperationLog working;
+    if (!document || !loadOperationLog(operationLogPath(document->path()), working, error) ||
+        !working.savedPath.isEmpty()) {
+      error = QStringLiteral("Editing a saved preview retained its completed-export marker");
+      return false;
+    }
+    pin.pinDocument_ = document;
+    pin.documentFiles_.addPath(operationLogPath(document->path()));
+    QTest::keyClick(&pin, Qt::Key_T);
+    if (!pin.expiry_.kept()) {
+      error = QStringLiteral("Could not keep the originating preview for the save test");
+      return false;
+    }
+    document->finishSavedPreview(working, chosen);
+    if (!QTest::qWaitFor([&] { return !pin.isVisible(); }, 3000)) {
+      error = QStringLiteral("Saved replacement left its originating pin visible");
+      return false;
+    }
+    drain();
+  }
+  if (QFile::exists(savedPreview) || QImage(chosen).convertToFormat(image.format()) != image) {
+    error = QStringLiteral("Closing the saved preview damaged its durable PNG");
     return false;
   }
   // Public --pin files need not already be PNGs. Copy still offers a PNG

@@ -487,15 +487,18 @@ region after changing the display layout.
 | `Ctrl+Shift+Z`, `Ctrl+Y` | Redo |
 | `Ctrl+C` | Copy PNG only |
 | `Ctrl+S` | Save PNG only |
-| `Ctrl+Shift+S` | Save As: choose a PNG destination (`.png` is added when omitted; other formats are rejected) and keep editing; remembers the folder within this editor session |
+| `Ctrl+Shift+S` | Save As: choose a PNG destination (`.png` is added when omitted; other formats are rejected) |
 | `Enter` | Copy and save (with a text layer selected: edit it) |
 | `Ctrl+P` / `P` | Keep the capture pinned on screen and close the editor |
 | `Esc` / `Super+W` | Dismiss the annotator; keep an originating pin in place with its edits and undo history |
 | Right-click | Return to Select; cancel active drawing |
 
-Save As opens a centered file chooser and leaves the editor open. Cancelling
-preserves an unfinished text draft. A successful save also updates the recent
-captures shelf with its editable layers and undo history.
+Save As opens a centered file chooser. Saving from the editor with Save, Save As,
+or Copy + Save closes it and shows an unpinned preview in the lower-right stack,
+replacing an originating preview or pin. The preview has the usual 10-second idle
+timeout; its folder and Copy path buttons refer to the exact PNG you saved.
+Cancel or a failed save keeps the editor open. Recent captures retain the editable
+layers and undo history.
 
 ### Capture previews and pins
 

@@ -2,7 +2,9 @@
 #include "editor.hpp"
 #include "capture.hpp"
 #include "overlay-chrome.hpp"
+#include "pin.hpp"
 #include "recent-snaps.hpp"
+#include "pin-file.hpp"
 
 #include <LayerShellQt/Window>
 #include <QDialog>
@@ -174,7 +176,7 @@ void CaptureEditor::saveAsToPath(const QString &path) {
   setStatus(QStringLiteral("Saving screenshot…"));
   auto *watcher = new QFutureWatcher<QString>(this);
   connect(watcher, &QFutureWatcher<QString>::resultReadyAt, this,
-          [this, watcher, path, request] {
+          [this, watcher, request] {
     const QString error = watcher->result();
     watcher->deleteLater();
     if (request != saveAsRequest_)
@@ -185,22 +187,34 @@ void CaptureEditor::saveAsToPath(const QString &path) {
       setStatus(error);
       return;
     }
-    saveAsDirectory_ = QFileInfo(path).absolutePath();
-    setStatus(QStringLiteral("Saved to %1").arg(path));
+    close();
   });
+  saveAsDirectory_ = QFileInfo(path).absolutePath();
   saveAsFuture_ = QtConcurrent::run(
       [capture = capture_, selection = selection_, annotations = annotations_,
        background = backgroundStyle_, shadow = imageShadow_,
        boundary = canvasBoundaryMode_, backdrop = customBackdrop_,
        source = pristineSource_, log = currentOperationLog(),
-       previous = editingRecent_, path](QPromise<QString> &completion) {
+       previous = editingRecent_, document = pinDocument_,
+       launcher = processLauncher_, path](QPromise<QString> &completion) {
     RecentSnapWriter recent(log.recentId);
     const QImage image = renderCapture(capture, selection, annotations,
                                        background, shadow, boundary, backdrop);
     QString error;
-    static_cast<void>(savePngFile(image, path, error));
-    // Unlock editing as soon as the file is ready. Retain the editable source
-    // and log afterward, just as Copy/Save do, even if this editor stays open.
+    if (savePngFile(image, path, error)) {
+      const QString preview = launchPinnedCapture(
+          image, renderedCaptureLogicalSize(capture, image.size()), false,
+          PinLifetime::Timed, error, launcher, log.recentId, path);
+      if (!preview.isEmpty()) {
+        if (document)
+          document->finishSavedPreview(log, path);
+      } else {
+        error = QStringLiteral("Saved to %1, but could not show its preview: %2")
+                    .arg(path, error);
+      }
+    }
+    // Close as soon as the saved preview is ready; retain the editable source
+    // and log afterward, just as other completed captures do.
     completion.addResult(error);
     QString recentError;
     if (!recent.record(source, log, image, recentError,

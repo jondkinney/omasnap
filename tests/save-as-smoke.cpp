@@ -1,8 +1,9 @@
-/** @fileoverview Save As preserves the editor and atomically exports PNG. */
+/** @fileoverview Save As atomically exports PNG and returns a saved preview. */
 #include "save-as-smoke.hpp"
 #include "capture.hpp"
 #include "editor.hpp"
 #include "recent-snaps.hpp"
+#include "pin-file.hpp"
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -17,6 +18,7 @@
 #include <QRectF>
 #include <QScopeGuard>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <QWindow>
 #include <QElapsedTimer>
@@ -90,6 +92,20 @@ bool runSaveAsSmoke(QString &error) {
   }
   error.clear();
 
+  QStringList previews;
+  const auto cleanupPreviews = qScopeGuard([&] {
+    for (const QString &path : previews) {
+      const PinSnapshotFile owned(path);
+    }
+  });
+  const auto preparePreview = [&](CaptureEditor &editor) {
+    editor.setProcessLauncherForTest([&](const QString &, const QStringList &args) {
+      if (args.size() != 2 || args.first() != QStringLiteral("--preview"))
+        return false;
+      previews.push_back(args.last());
+      return true;
+    });
+  };
   CaptureData capture;
   capture.monitor.geometry = QRect(0, 0, 800, 600);
   capture.monitor.pixelSize = QSize(800, 600);
@@ -99,6 +115,7 @@ bool runSaveAsSmoke(QString &error) {
   capture.previewSize = capture.source.size();
   for (const bool windowed : {false, true}) {
     CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+    preparePreview(editor);
     editor.setWindowedPresentation(windowed);
     editor.resize(800, 600);
     editor.show();
@@ -190,11 +207,11 @@ bool runSaveAsSmoke(QString &error) {
     filename->selectAll();
     QTest::keyClicks(filename, windowed ? output.chopped(4) : output);
     QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
-    if (!waitUntil([&] { return !editor.busy_; }) || !editor.isVisible() ||
+    if (!waitUntil([&] { return !editor.busy_; }) || editor.isVisible() ||
         editor.textEditing() || QImage(output).convertToFormat(QImage::Format_ARGB32) !=
             editor.renderCurrentOutput().convertToFormat(QImage::Format_ARGB32) ||
         editor.saveAsDirectory_ != directory.path()) {
-      error = QStringLiteral("Save As did not export the draft and keep editing: "
+      error = QStringLiteral("Save As did not export the draft and close: "
                              "visible=%1 draft=%2 busy=%3 output=%4x%5 directory=%6 status=%7")
                   .arg(editor.isVisible()).arg(editor.textEditing()).arg(editor.busy_)
                   .arg(QImage(output).width()).arg(QImage(output).height())
@@ -208,20 +225,22 @@ bool runSaveAsSmoke(QString &error) {
     if (!recent || !loadOperationLog(recent->logPath, savedLog, error) ||
         savedLog.index != beforeNudge || savedLog.ops.size() != beforeNudge ||
         QImage(recent->sourcePath).convertToFormat(QImage::Format_ARGB32) != capture.source) {
-      error = QStringLiteral("Save As did not retain its editable capture while open");
+      error = QStringLiteral("Save As did not retain its editable capture");
       return false;
     }
-    editor.saveAs();
-    if (!waitUntil([] { return saveDialog() != nullptr; }) ||
-        saveDialog()->directory().absolutePath() != directory.path()) {
-      error = QStringLiteral("Save As did not reopen the last successful folder");
+    OperationLog previewLog;
+    if (previews.isEmpty() ||
+        !loadOperationLog(operationLogPath(previews.last()), previewLog, error) ||
+        previewLog.savedPath != output || previewLog.recentId != savedLog.recentId ||
+        QImage(previews.last()) != QImage(output)) {
+      error = QStringLiteral("Saved preview lost its file, pixels, or capture identity");
       return false;
     }
-    saveDialog()->reject();
-    if (!waitUntil([&] { return !editor.busy_; })) {
-      error = QStringLiteral("Cancelling the repeated Save As left editing busy");
+    editor.show();
+    const auto document = copyPinDocument(previews.last(), error);
+    if (!document)
       return false;
-    }
+    editor.setPinDocument(document);
     editor.selectedAnnotation_ = 0;
     editor.selectedAnnotations_ = {0};
     editor.nudgeSelectedAnnotation(QPointF(3, 0));
@@ -236,6 +255,12 @@ bool runSaveAsSmoke(QString &error) {
       return false;
     }
     const int savedIndex = editor.operationIndex();
+    OperationLog completedDocument;
+    if (!loadOperationLog(operationLogPath(document->path()), completedDocument, error) ||
+        completedDocument.savedPath != nudged || editor.isVisible()) {
+      error = QStringLiteral("Save As did not retire the originating preview and close");
+      return false;
+    }
     const auto updatedRecent = findRecentSnap(editor.recentId_, &error);
     if (!updatedRecent ||
         !loadOperationLog(updatedRecent->logPath, savedLog, error) ||
@@ -244,11 +269,22 @@ bool runSaveAsSmoke(QString &error) {
       error = QStringLiteral("Repeated Save As did not update the same recent capture");
       return false;
     }
+    editor.show();
+    editor.setPinDocument({});
     editor.saveAsToPath(directory.filePath(QStringLiteral("missing/file.png")));
     if (!waitUntil([&] { return !editor.busy_; }) || !editor.isVisible() ||
         editor.operationIndex() != savedIndex ||
         !editor.statusForTest().contains(QStringLiteral("Could not"))) {
       error = QStringLiteral("Failed Save As changed or closed the editor");
+      return false;
+    }
+    const QString failedPreview = directory.filePath(QStringLiteral("preview-failed.png"));
+    editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return false; });
+    editor.saveAsToPath(failedPreview);
+    if (!waitUntil([&] { return !editor.busy_; }) || !editor.isVisible() ||
+        QImage(failedPreview).isNull() ||
+        !editor.statusForTest().contains(QStringLiteral("could not show its preview"))) {
+      error = QStringLiteral("A failed preview launch lost its saved PNG or closed the editor");
       return false;
     }
     editor.close();
@@ -275,6 +311,7 @@ bool runSaveAsSmoke(QString &error) {
   // arrives. Closing must invalidate that completion, even without destruction.
   for (const bool windowed : {false, true}) {
     CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+    preparePreview(editor);
     editor.setWindowedPresentation(windowed);
     editor.show();
     editor.saveAs();
@@ -348,6 +385,7 @@ bool runSaveAsSmoke(QString &error) {
     // application teardown, even with its GUI completion still pending.
     editor = std::make_unique<CaptureEditor>(capture, CaptureEditor::CaptureMode::File);
     const QString output = directory.filePath(QStringLiteral("destroyed.png"));
+    preparePreview(*editor);
     editor->saveAsToPath(output);
     editor.reset();
     if (QImage(output).isNull()) {

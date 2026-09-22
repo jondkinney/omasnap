@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QString>
+#include <QtLogging>
 #include <memory>
 
 #include <fcntl.h>
@@ -55,6 +56,15 @@ bool PinSnapshotFile::isOwnedPath(const QString &path) {
 
 void PinSnapshotFile::preserveForEditor() { preserve_ = true; }
 
+void PinSnapshotFile::finishSavedPreview(const OperationLog &log,
+                                        const QString &savedPath) {
+  OperationLog completed = log;
+  completed.savedPath = savedPath;
+  QString error;
+  if (!saveOperationLog(operationLogPath(path_), completed, error))
+    qWarning("Could not replace the originating preview: %s", qPrintable(error));
+}
+
 std::shared_ptr<PinSnapshotFile> copyPinDocument(const QString &path, QString &error) {
   OperationLog log;
   const QString sidecar = operationLogPath(path);
@@ -73,6 +83,9 @@ std::shared_ptr<PinSnapshotFile> copyPinDocument(const QString &path, QString &e
     error = recentError;
     return {};
   }
+  // This is a new working document, not a completed export. Further editing
+  // must not keep pointing Reveal at the preceding saved version.
+  log.savedPath.clear();
   const QString copy = pinnedSnapshotPath(1);
   if (copy.isEmpty() || !QFile::copy(source, copy)) {
     error = QStringLiteral("Could not retain the pinned capture for editing");

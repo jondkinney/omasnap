@@ -42,7 +42,11 @@ During editing, output happens on **Copy**, **Save**, **Save As**, or both Copy
 and Save together (`CaptureEditor::finish()` / `saveAsToPath()`), plus pinning a snapshot or
 returning edits to an existing pin. Each render runs off the UI thread (see
 [threading.md](threading.md)), and writes the result. Until one of those
-happens, everything remains a log entry you can undo.
+happens, everything remains a log entry you can undo. Successful Save, Save As,
+and Copy + Save actions close the editor and return a fresh timed preview to the
+stack. Its private metadata points to the saved PNG for Reveal and Copy path;
+expiry removes only the runtime copy. An originating preview or pin closes once
+its replacement is ready. Cancelling the chooser or failing to save keeps editing open.
 
 Every completed capture also keeps a private source, operation log, and rendered
 thumbnail in the five-entry recents shelf, including untouched timed previews,

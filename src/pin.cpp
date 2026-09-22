@@ -115,6 +115,18 @@ QString sharedPinPath(const QString &path, const QString &shared,
                       QString &error) {
   if (!shared.isEmpty() && QFileInfo::exists(shared))
     return shared;
+  OperationLog metadata;
+  const QString sidecar = operationLogPath(path);
+  if (QFile::exists(sidecar)) {
+    if (!loadOperationLog(sidecar, metadata, error))
+      return {};
+    if (!metadata.savedPath.isEmpty()) {
+      if (QFileInfo(metadata.savedPath).isFile())
+        return metadata.savedPath;
+      error = QStringLiteral("Saved screenshot is no longer available");
+      return {};
+    }
+  }
   const QFileInfo source(path);
   if (!source.isFile()) {
     error = QStringLiteral("Screenshot file is no longer available");
@@ -571,9 +583,11 @@ struct PinPreview {
   QImage image;
   QByteArray png;
   QImage drag;
+  bool replaced = false;
 };
 
 class PinWindow final : public QWidget {
+  friend bool runPinRevealSmoke(QString &error);
 public:
   explicit PinWindow(QImage image, QString path, const QSize &frame,
                       PinLifetime lifetime = PinLifetime::Persistent)
@@ -650,6 +664,10 @@ public:
     connect(&documentWatcher_, &QFutureWatcher<PinPreview>::finished, this, [this] {
       documentLoading_ = false;
       const auto preview = documentWatcher_.result();
+      if (preview.replaced) {
+        close();
+        return;
+      }
       if (!closing_ && !preview.image.isNull()) {
         image_ = preview.image;
         dragPng_ = preview.png;
@@ -1322,6 +1340,13 @@ protected:
     documentLoading_ = true;
     documentWatcher_.setFuture(QtConcurrent::run([document = pinDocument_] {
       PinPreview result;
+      OperationLog log;
+      QString error;
+      if (loadOperationLog(operationLogPath(document->path()), log, error) &&
+          !log.savedPath.isEmpty()) {
+        result.replaced = true;
+        return result;
+      }
       QFile file(document->previewPath());
       if (file.open(QIODevice::ReadOnly)) {
         result.png = file.readAll();

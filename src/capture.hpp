@@ -147,6 +147,9 @@ struct OperationLog {
   QSize previewSize;
   /// Identity shared by a capture's recent entry, preview, and editor handoffs.
   QString recentId = {};
+  /// Durable PNG represented by a rendered preview. A returned pin document
+  /// sets this only after its replacement saved preview has been launched.
+  QString savedPath = {};
 
   bool operator==(const OperationLog &) const = default;
 };
@@ -432,7 +435,8 @@ bool removeEditorHandoff(const QString &path, const QString &token);
  *  so editing the pin later reopens at the captured scale. */
 [[nodiscard]] bool savePinnedSnapshot(const QImage &image, const QString &path,
                                       const QSize &logicalSize, QString &error,
-                                      const QString &recentId = {});
+                                      const QString &recentId = {},
+                                      const QString &savedPath = {});
 /** Saves and launches a private pin, optionally copying the same PNG first.
  *  Call on a worker: encoding, clipboard verification and process launch block.
  *  Returns the owned snapshot path, or removes it on failure. */
@@ -440,7 +444,7 @@ bool removeEditorHandoff(const QString &path, const QString &token);
     const QImage &image, const QSize &logicalSize, bool copy,
     PinLifetime lifetime, QString &error,
     const std::function<bool(const QString &, const QStringList &)> &launcher = {},
-    const QString &recentId = {});
+    const QString &recentId = {}, const QString &savedPath = {});
 /** Atomically writes a lossless PNG into the private runtime directory. */
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error);

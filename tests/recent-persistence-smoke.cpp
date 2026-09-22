@@ -95,6 +95,7 @@ bool checkBackdrop(QApplication &application, const CaptureData &capture,
   pending.start();
   editor.setBackdropFutureForTest(pending.future());
   const auto initialLog = editor.operationLog();
+  editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
   const bool started =
       editor.statusForTest().contains(QStringLiteral("Saving screenshot"));
@@ -241,6 +242,7 @@ bool checkRecentHandoff(QApplication &application, const CaptureData &capture,
   receiver.setWindowedPresentation(true);
   receiver.resize(800, 600);
   receiver.show();
+  receiver.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&receiver, Qt::Key_S, Qt::ControlModifier);
   receiver.waitForExport();
   if (receiver.isVisible() || QFile::exists(replaced) ||
@@ -274,6 +276,7 @@ bool checkFreshSelection(QApplication &application, const CaptureData &capture,
   QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(150, 150));
   QTest::mouseMove(&editor, QPoint(400, 350), 20);
   QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 350));
+  editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
   editor.waitForExport();
   const auto after = listRecentSnaps(false);
@@ -348,6 +351,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
   QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
   QTest::mouseMove(&editor, QPoint(400, 320), 20);
   const auto unfinishedLog = editor.operationLog();
+  editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
   QTest::qWait(30);
   if (editor.operationLog() != unfinishedLog ||
@@ -391,6 +395,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
   watchdog.setSingleShot(true);
   QObject::connect(&watchdog, &QTimer::timeout, &application, release);
   watchdog.start(1500);
+  editor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
   const auto lockedAnnotations = editor.currentAnnotationsForTest();
   const auto lockedLog = editor.operationLog();
@@ -460,6 +465,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
     error = QStringLiteral("Recovery did not preserve undo and redo of final edits");
     return false;
   }
+  recovered.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&recovered, Qt::Key_S, Qt::ControlModifier);
   recovered.waitForExport();
   const auto recent = listRecentSnaps();
@@ -500,6 +506,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
         "Working snapshot baked in a cut still present in history");
     return false;
   }
+  cutEditor.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&cutEditor, Qt::Key_S, Qt::ControlModifier);
   cutEditor.waitForExport();
   const auto withCut = listRecentSnaps();
@@ -544,6 +551,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
           QStringLiteral("Old document fixture was not held before adoption");
       return false;
     }
+    replaced.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
     if (immediateSave)
       QTest::keyClick(&replaced, Qt::Key_S, Qt::ControlModifier);
     releaseOld();
@@ -554,6 +562,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
             QStringLiteral("Old autosave completion hid the adopted source");
         return false;
       }
+      replaced.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
       QTest::keyClick(&replaced, Qt::Key_S, Qt::ControlModifier);
     }
     replaced.waitForExport();
@@ -592,6 +601,7 @@ bool runRecentPersistenceSmoke(QApplication &application, QString &error) {
   QImage newDocument(300, 400, QImage::Format_RGB32);
   newDocument.fill(Qt::yellow);
   fresh.adoptStitchedForTest(newDocument);
+  fresh.setProcessLauncherForTest([](const QString &, const QStringList &) { return true; });
   QTest::keyClick(&fresh, Qt::Key_S, Qt::ControlModifier);
   fresh.waitForExport();
   if (fresh.isVisible() || !QFile::exists(reopenedSource) ||
